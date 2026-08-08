@@ -429,6 +429,78 @@ struct SettingsFilePersistenceTests {
     #expect(!reloaded.global.confirmCloseSurface)
   }
 
+  @Test(.dependencies) func decodesLegacyConfirmCloseSurfaceTrueAsBusy() throws {
+    let legacy = LegacySettingsFileWithCloseSurface(
+      global: LegacyGlobalSettingsWithCloseSurface(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: false,
+        updatesAutomaticallyDownloadUpdates: true,
+        confirmCloseSurface: true
+      ),
+      repositories: [:]
+    )
+    let storage = MutableTestStorage(initialData: try JSONEncoder().encode(legacy))
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.confirmCloseTab == .busy)
+  }
+
+  @Test(.dependencies) func decodesLegacyConfirmCloseSurfaceFalseAsNever() throws {
+    let legacy = LegacySettingsFileWithCloseSurface(
+      global: LegacyGlobalSettingsWithCloseSurface(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: false,
+        updatesAutomaticallyDownloadUpdates: true,
+        confirmCloseSurface: false
+      ),
+      repositories: [:]
+    )
+    let storage = MutableTestStorage(initialData: try JSONEncoder().encode(legacy))
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.confirmCloseTab == .never)
+  }
+
+  @Test(.dependencies) func freshInstallDefaultsConfirmCloseTabToBusy() throws {
+    let storage = SettingsTestStorage()
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+    #expect(settings.global.confirmCloseTab == .busy)
+  }
+
+  @Test(.dependencies) func roundTripsExplicitConfirmCloseTabAlways() throws {
+    let storage = SettingsTestStorage()
+    withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      $settings.withLock { $0.global.confirmCloseTab = .always }
+    }
+    let reloaded: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var reloaded: SettingsFile
+      return reloaded
+    }
+    #expect(reloaded.global.confirmCloseTab == .always)
+  }
+
   @Test(.dependencies) func decodesMissingRemoteSessionPersistenceEnabledAsTrue() throws {
     let legacy = LegacySettingsFile(
       global: LegacyGlobalSettings(
@@ -729,6 +801,18 @@ private struct LegacyGlobalSettingsWithQuitToggle: Codable {
   var updatesAutomaticallyCheckForUpdates: Bool
   var updatesAutomaticallyDownloadUpdates: Bool
   var confirmBeforeQuit: Bool
+}
+
+private struct LegacySettingsFileWithCloseSurface: Codable {
+  var global: LegacyGlobalSettingsWithCloseSurface
+  var repositories: [String: RepositorySettings]
+}
+
+private struct LegacyGlobalSettingsWithCloseSurface: Codable {
+  var appearanceMode: AppearanceMode
+  var updatesAutomaticallyCheckForUpdates: Bool
+  var updatesAutomaticallyDownloadUpdates: Bool
+  var confirmCloseSurface: Bool
 }
 
 private struct SettingsFileWithRawAppVisibility: Codable {

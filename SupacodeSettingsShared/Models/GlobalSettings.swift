@@ -91,7 +91,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var confirmQuitMode: ConfirmQuitMode
   /// When true, user-initiated closes ask for confirmation when a terminal
   /// surface has foreground work that Ghostty considers unsafe to interrupt.
+  /// Superseded by `confirmCloseTab`; read only by the legacy terminal path.
   public var confirmCloseSurface: Bool
+  /// How aggressively to confirm before closing a tab: only when the tab is
+  /// busy (default), always, or never.
+  public var confirmCloseTab: ConfirmCloseTabMode
   /// When true, quitting Supacode also closes every terminal tab and tears
   /// down zmx sessions, local and host-side, so nothing keeps running in the
   /// background. Default off because persistence is the headline feature.
@@ -137,6 +141,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled: true,
     confirmQuitMode: .auto,
     confirmCloseSurface: true,
+    confirmCloseTab: .busy,
     terminateSessionsOnQuit: false,
     remoteSessionPersistenceEnabled: true,
     appVisibility: .dockAndMenuBar
@@ -174,6 +179,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled: Bool = true,
     confirmQuitMode: ConfirmQuitMode = .auto,
     confirmCloseSurface: Bool = true,
+    confirmCloseTab: ConfirmCloseTabMode = .busy,
     terminateSessionsOnQuit: Bool = false,
     remoteSessionPersistenceEnabled: Bool = true,
     appVisibility: AppVisibility = .dockAndMenuBar,
@@ -210,6 +216,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.agentPresenceBadgesEnabled = agentPresenceBadgesEnabled
     self.confirmQuitMode = confirmQuitMode
     self.confirmCloseSurface = confirmCloseSurface
+    self.confirmCloseTab = confirmCloseTab
     self.terminateSessionsOnQuit = terminateSessionsOnQuit
     self.remoteSessionPersistenceEnabled = remoteSessionPersistenceEnabled
     self.appVisibility = appVisibility
@@ -372,6 +379,15 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     confirmCloseSurface =
       try container.decodeIfPresent(Bool.self, forKey: .confirmCloseSurface)
       ?? Self.default.confirmCloseSurface
+    // Prefer the explicit mode; otherwise carry the legacy bool's intent
+    // (confirm-when-busy vs never), and default to `.busy`.
+    if let raw = try container.decodeIfPresent(String.self, forKey: .confirmCloseTab),
+      let mode = ConfirmCloseTabMode(rawValue: raw)
+    {
+      confirmCloseTab = mode
+    } else {
+      confirmCloseTab = confirmCloseSurface ? .busy : .never
+    }
     terminateSessionsOnQuit =
       try container.decodeIfPresent(Bool.self, forKey: .terminateSessionsOnQuit)
       ?? Self.default.terminateSessionsOnQuit
