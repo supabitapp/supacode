@@ -11,10 +11,20 @@ struct LayoutContentView: View {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   var dividerColor: Color = Color(nsColor: .separatorColor)
+  /// Chrome fill behind each tab strip: the strip sits inside the window
+  /// tint's mask hole, so it must repaint the tint or transparent windows
+  /// show raw blur above every pane.
+  var stripFill: Color = .clear
   /// The `unfocused-split-fill` dim painted over visible unfocused panes.
   var unfocusedOverlay: (fill: Color?, opacity: Double) = (nil, 0)
   /// Resolves a content id to its observable unseen-notification counter.
   var surfaceState: (UUID) -> WorktreeSurfaceState? = { _ in nil }
+  /// Workspace lifecycle work, represented on the focused pane's selected tab.
+  var isLifecycleBusy = false
+  // Captured here, in the outer SwiftUI world, and re-injected past the
+  // NSHostingView boundary, which environment objects do not cross.
+  @Environment(GhosttyShortcutManager.self) private var ghosttyShortcuts
+  @Environment(CommandKeyObserver.self) private var commandKeyObserver
 
   var body: some View {
     // Body reads register the observation; the AppKit container below only
@@ -25,8 +35,12 @@ struct LayoutContentView: View {
       store: store,
       runtime: runtime,
       dividerColor: dividerColor,
+      stripFill: stripFill,
       unfocusedOverlay: unfocusedOverlay,
       surfaceState: surfaceState,
+      isLifecycleBusy: isLifecycleBusy,
+      ghosttyShortcuts: ghosttyShortcuts,
+      commandKeyObserver: commandKeyObserver,
       panes: visiblePaneIDs.compactMap { paneID in
         store.layout.panes[id: paneID]?.selectedTab.flatMap { runtime.renderer(for: $0.content.id) }
       }
@@ -40,18 +54,28 @@ struct LayoutPaneTreeView: View {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let dividerColor: Color
+  var stripFill: Color = .clear
   var unfocusedOverlay: (fill: Color?, opacity: Double) = (nil, 0)
   var surfaceState: (UUID) -> WorktreeSurfaceState? = { _ in nil }
+  var isLifecycleBusy = false
+  var ghosttyShortcuts: GhosttyShortcutManager?
+  var commandKeyObserver: CommandKeyObserver?
 
   var body: some View {
-    if let node = store.layout.tree.visibleNode {
-      PaneNodeView(
-        node: node, store: store, runtime: runtime, dividerColor: dividerColor,
-        unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState)
+    Group {
+      if let node = store.layout.tree.visibleNode {
+        PaneNodeView(
+          node: node, store: store, runtime: runtime, dividerColor: dividerColor,
+          stripFill: stripFill, unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState,
+          isLifecycleBusy: isLifecycleBusy
+        )
         .id(store.layout.tree.structuralIdentity)
-    } else {
-      EmptyLayoutView()
+      } else {
+        EmptyLayoutView()
+      }
     }
+    .environment(ghosttyShortcuts)
+    .environment(commandKeyObserver)
   }
 }
 
@@ -61,8 +85,12 @@ private struct LayoutAXContainer: NSViewRepresentable {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let dividerColor: Color
+  let stripFill: Color
   let unfocusedOverlay: (fill: Color?, opacity: Double)
   let surfaceState: (UUID) -> WorktreeSurfaceState?
+  let isLifecycleBusy: Bool
+  let ghosttyShortcuts: GhosttyShortcutManager?
+  let commandKeyObserver: CommandKeyObserver?
   let panes: [NSView]
 
   func makeNSView(context: Context) -> LayoutAXContainerView {
@@ -73,7 +101,9 @@ private struct LayoutAXContainer: NSViewRepresentable {
     nsView.update(
       rootView: LayoutPaneTreeView(
         store: store, runtime: runtime, dividerColor: dividerColor,
-        unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState),
+        stripFill: stripFill, unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState,
+        isLifecycleBusy: isLifecycleBusy,
+        ghosttyShortcuts: ghosttyShortcuts, commandKeyObserver: commandKeyObserver),
       panes: panes
     )
   }
@@ -93,6 +123,9 @@ final class LayoutAXContainerView: NSView, WindowTintMaskRegion {
       hostingView.rootView = rootView
     } else {
       let hostingView = NSHostingView(rootView: rootView)
+      // The window uses a full-size content view; without this the hosted
+      // tree insets below the titlebar wherever the container overlaps it.
+      hostingView.safeAreaRegions = []
       hostingView.translatesAutoresizingMaskIntoConstraints = false
       addSubview(hostingView)
       NSLayoutConstraint.activate([
@@ -153,8 +186,8 @@ final class LayoutAXContainerView: NSView, WindowTintMaskRegion {
   }
 }
 
-/// Shown when a layout has no panes: closing the final tab empties it until a
-/// new tab is created.
+/// Defense in depth: the parent gates on non-empty panes, so a consistent
+/// layout always has a visible node; this only renders if that invariant slips.
 private struct EmptyLayoutView: View {
   var body: some View {
     ContentUnavailableView("No Terminals", systemImage: "terminal")
@@ -168,19 +201,23 @@ private struct PaneNodeView: View {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let dividerColor: Color
+  let stripFill: Color
   let unfocusedOverlay: (fill: Color?, opacity: Double)
   let surfaceState: (UUID) -> WorktreeSurfaceState?
+  let isLifecycleBusy: Bool
 
   var body: some View {
     switch node {
     case .leaf(let paneID):
       PaneStripView(
-        paneID: paneID, store: store, runtime: runtime, unfocusedOverlay: unfocusedOverlay,
-        surfaceState: surfaceState)
+        paneID: paneID, store: store, runtime: runtime, stripFill: stripFill,
+        unfocusedOverlay: unfocusedOverlay,
+        surfaceState: surfaceState, isLifecycleBusy: isLifecycleBusy)
     case .split(let split):
       PaneSplitView(
         node: node, split: split, store: store, runtime: runtime, dividerColor: dividerColor,
-        unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState)
+        stripFill: stripFill, unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState,
+        isLifecycleBusy: isLifecycleBusy)
     }
   }
 }
@@ -193,8 +230,10 @@ private struct PaneSplitView: View {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let dividerColor: Color
+  let stripFill: Color
   let unfocusedOverlay: (fill: Color?, opacity: Double)
   let surfaceState: (UUID) -> WorktreeSurfaceState?
+  let isLifecycleBusy: Bool
 
   var body: some View {
     SplitView(
@@ -204,12 +243,14 @@ private struct PaneSplitView: View {
       left: {
         PaneNodeView(
           node: split.left, store: store, runtime: runtime, dividerColor: dividerColor,
-          unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState)
+          stripFill: stripFill, unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState,
+          isLifecycleBusy: isLifecycleBusy)
       },
       right: {
         PaneNodeView(
           node: split.right, store: store, runtime: runtime, dividerColor: dividerColor,
-          unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState)
+          stripFill: stripFill, unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState,
+          isLifecycleBusy: isLifecycleBusy)
       },
       onResize: { store.send(.resizePane(node: node, ratio: $0)) },
       onEqualize: { store.send(.equalizePanes) }
@@ -223,11 +264,18 @@ private struct PaneStripView: View {
   let paneID: PaneID
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
+  let stripFill: Color
   let unfocusedOverlay: (fill: Color?, opacity: Double)
   let surfaceState: (UUID) -> WorktreeSurfaceState?
+  let isLifecycleBusy: Bool
 
   private var pane: Pane? { store.layout.panes[id: paneID] }
   private var isFocused: Bool { store.layout.focusedPaneID == paneID }
+  private var isZoomed: Bool {
+    guard case .leaf(let leaf) = store.layout.tree.zoomed else { return false }
+    return leaf == paneID
+  }
+
   /// Only a multi-pane view dims; the sole visible pane (single pane or
   /// zoomed) is always the working one.
   private var isDimmed: Bool {
@@ -238,8 +286,15 @@ private struct PaneStripView: View {
     if let pane {
       VStack(spacing: 0) {
         PaneTabStrip(
-          pane: pane, isFocused: isFocused, store: store, runtime: runtime, surfaceState: surfaceState)
-        Divider()
+          pane: pane,
+          isFocusedPane: isFocused,
+          isZoomed: isZoomed,
+          isLifecycleBusy: isLifecycleBusy,
+          store: store,
+          runtime: runtime,
+          surfaceState: surfaceState
+        )
+        .background(stripFill)
         if let contentID = pane.selectedTab?.content.id {
           // The epoch read keeps this branch re-evaluating on hibernate/wake;
           // a visible content without a renderer (failed wake, vanished
@@ -262,309 +317,6 @@ private struct PaneStripView: View {
           Color.clear
         }
       }
-      .contentShape(.rect)
-      .onTapGesture { store.send(.focusPane(.pane(paneID))) }
-      .accessibilityAddTraits(.isButton)
-    }
-  }
-}
-
-/// The horizontal strip of a pane's tabs plus the new-tab accessory; a drop
-/// past the last tab appends to this pane.
-private struct PaneTabStrip: View {
-  let pane: Pane
-  let isFocused: Bool
-  let store: StoreOf<LayoutFeature>
-  let runtime: ContentRuntime
-  let surfaceState: (UUID) -> WorktreeSurfaceState?
-
-  var body: some View {
-    HStack(spacing: 0) {
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 2) {
-          ForEach(pane.tabs) { tab in
-            PaneTabButton(
-              tab: tab,
-              pane: pane,
-              isSelected: pane.selectedTabID == tab.id,
-              store: store,
-              runtime: runtime,
-              surfaceState: surfaceState
-            )
-          }
-        }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 3)
-      }
-      newTabButton
-    }
-    .background(isFocused ? Color(nsColor: .controlBackgroundColor) : Color(nsColor: .windowBackgroundColor))
-    .dropDestination(for: String.self) { items, _ in
-      // A drop on the strip body (past the tabs) appends to this pane.
-      PaneTabDrag.performDrop(items, into: pane, at: pane.tabs.count, store: store)
-    }
-  }
-
-  private var newTabButton: some View {
-    Button {
-      guard let contentID = pane.selectedTab?.content.id else { return }
-      store.send(.contentRequestedNewTab(content: contentID))
-    } label: {
-      Image(systemName: "plus")
-        .imageScale(.small)
-        .frame(width: 22, height: 22)
-        .contentShape(.rect)
-    }
-    .buttonStyle(.plain)
-    .accessibilityLabel("New tab")
-    .help("Open a new tab in this pane (⌘T).")
-    .padding(.trailing, 4)
-  }
-}
-
-/// Resolves tab-strip drag payloads into `moveTab` sends. The payload is the
-/// tab's UUID string, so a drop from another worktree's window simply fails
-/// the local lookup and is ignored.
-private enum PaneTabDrag {
-  @MainActor
-  static func performDrop(
-    _ items: [String],
-    into pane: Pane,
-    at index: Int,
-    store: StoreOf<LayoutFeature>
-  ) -> Bool {
-    guard let raw = items.first, let uuid = UUID(uuidString: raw) else { return false }
-    let tabID = TabID(rawValue: uuid)
-    guard let sourcePane = store.layout.pane(containingTab: tabID) else { return false }
-    var target = index
-    if sourcePane.id == pane.id,
-      let sourceIndex = sourcePane.tabs.index(id: tabID), sourceIndex < index {
-      // The reducer removes the source before inserting; compensate so a
-      // rightward drag still inserts before the tab it was dropped on.
-      target -= 1
-    }
-    store.send(.moveTab(id: tabID, toPane: pane.id, index: target))
-    return true
-  }
-}
-
-/// A single tab in a pane strip: chrome (icon, tint, badges, progress
-/// stripe), selection, hover close, context menu, inline rename, and drag
-/// reorder within or across strips.
-private struct PaneTabButton: View {
-  let tab: TabItem
-  let pane: Pane
-  let isSelected: Bool
-  let store: StoreOf<LayoutFeature>
-  let runtime: ContentRuntime
-  let surfaceState: (UUID) -> WorktreeSurfaceState?
-
-  @State private var isHovering = false
-  @State private var isEditing = false
-  @State private var editingTitle = ""
-  @FocusState private var isFieldFocused: Bool
-  @Environment(\.pixelLength) private var pixelLength
-
-  var body: some View {
-    let badge = store.agentBadges[tab.content.id]
-    let _ = store.renderEpoch
-    let surface = runtime.renderer(for: tab.content.id) as? GhosttySurfaceView
-    let progress = surface.flatMap { live in
-      TerminalTabProgressDisplay.make(
-        progressState: live.bridge.state.progressState,
-        progressValue: live.bridge.state.progressValue
-      )
-    }
-    HStack(spacing: 4) {
-      if surface == nil {
-        // Semibold compensates for the zzz glyph's thin strokes.
-        Image(systemName: "zzz")
-          .imageScale(.small)
-          .fontWeight(.semibold)
-          .foregroundStyle(.secondary)
-          .accessibilityLabel("Hibernated tab")
-          .help("Hibernated to save resources. Select to reconnect.")
-      }
-      if let badge, !badge.agents.isEmpty {
-        AgentAvatarGroupView(instances: badge.agents, size: 14)
-      }
-      if let icon = tab.icon {
-        Image(systemName: icon)
-          .imageScale(.small)
-          .foregroundStyle(tab.tintColor?.color ?? .primary)
-          .accessibilityHidden(true)
-      }
-      if isEditing {
-        renameField
-      } else {
-        selectButton(isShimmering: badge?.isWorking == true)
-      }
-      trailingAccessory
-    }
-    .padding(.horizontal, 8)
-    .padding(.vertical, 4)
-    .background(isSelected ? Color(nsColor: .selectedControlColor) : .clear, in: .rect(cornerRadius: 6))
-    .overlay(alignment: .top) {
-      PaneTabStripe(
-        isSelected: isSelected,
-        tintColor: tab.tintColor,
-        progressDisplay: progress,
-        pixelLength: pixelLength
-      )
-    }
-    .onHover { isHovering = $0 }
-    .draggable(tab.id.rawValue.uuidString)
-    .dropDestination(for: String.self) { items, _ in
-      // Dropping on a tab inserts before it.
-      guard let index = pane.tabs.index(id: tab.id) else { return false }
-      return PaneTabDrag.performDrop(items, into: pane, at: index, store: store)
-    }
-    .contextMenu { contextMenuItems }
-  }
-
-  private func selectButton(isShimmering: Bool) -> some View {
-    Button {
-      store.send(.selectTab(id: tab.id))
-    } label: {
-      Text(tab.customTitle ?? tab.title)
-        .lineLimit(1)
-        .font(.callout)
-        .shimmer(isActive: isShimmering)
-        .contentShape(.rect)
-    }
-    .buttonStyle(.plain)
-    .help("Select this tab.")
-    .simultaneousGesture(
-      TapGesture(count: 2).onEnded {
-        beginRename()
-      }
-    )
-  }
-
-  private var renameField: some View {
-    TextField("", text: $editingTitle)
-      .textFieldStyle(.plain)
-      .font(.callout)
-      .focused($isFieldFocused)
-      .frame(minWidth: 60)
-      .onSubmit { commitRename() }
-      .onExitCommand {
-        isEditing = false
-      }
-      .onChange(of: isFieldFocused) {
-        // Focus loss commits like Enter; only Escape cancels.
-        if !isFieldFocused, isEditing {
-          commitRename()
-        }
-      }
-  }
-
-  @ViewBuilder
-  private var trailingAccessory: some View {
-    if isHovering, !isEditing {
-      Button {
-        // Through the confirm gate: the three-way close-tab mode decides
-        // whether this needs an alert.
-        store.send(.contentRequestedClose(content: tab.content.id, scope: .tab))
-      } label: {
-        Image(systemName: "xmark")
-          .imageScale(.small)
-          .accessibilityLabel("Close tab")
-          .contentShape(.rect)
-      }
-      .buttonStyle(.plain)
-      .help("Close this tab (⌘W).")
-    } else if store.agentBadges[tab.content.id] == nil,
-      let state = surfaceStateForUnseenDot, state.hasUnseenNotification {
-      Circle()
-        .fill(.tint)
-        .frame(width: 6, height: 6)
-        .accessibilityLabel("Unread notifications")
-    }
-  }
-
-  /// The per-content unseen counter, observable so a read here re-renders
-  /// only this tab when the count moves.
-  private var surfaceStateForUnseenDot: WorktreeSurfaceState? {
-    surfaceState(tab.content.id.rawValue)
-  }
-
-  @ViewBuilder
-  private var contextMenuItems: some View {
-    Button("Rename Tab…") { beginRename() }
-      .disabled(tab.isTitleLocked)
-    Divider()
-    Button("Close Tab") {
-      store.send(.contentRequestedClose(content: tab.content.id, scope: .tab))
-    }
-    Button("Close Other Tabs") {
-      store.send(.contentRequestedClose(content: tab.content.id, scope: .otherTabs))
-    }
-    .disabled(pane.tabs.count < 2)
-    Button("Close Tabs to the Right") {
-      store.send(.contentRequestedClose(content: tab.content.id, scope: .tabsToTheRight))
-    }
-    .disabled(pane.tabs.last?.id == tab.id)
-  }
-
-  private func beginRename() {
-    guard !tab.isTitleLocked else { return }
-    editingTitle = tab.customTitle ?? ""
-    isEditing = true
-    isFieldFocused = true
-  }
-
-  private func commitRename() {
-    guard isEditing else { return }
-    isEditing = false
-    // An empty commit clears the override on every commit path.
-    store.send(.renameTab(id: tab.id, title: editingTitle))
-  }
-}
-
-/// Top-of-tab stripe carrying the tint and the OSC 9 progress signal.
-private struct PaneTabStripe: View {
-  let isSelected: Bool
-  let tintColor: RepositoryColor?
-  let progressDisplay: TerminalTabProgressDisplay?
-  let pixelLength: CGFloat
-
-  var body: some View {
-    if isSelected || tintColor != nil || progressDisplay != nil {
-      ZStack(alignment: .leading) {
-        Rectangle()
-          .fill(isDeterminate ? color.opacity(0.3) : color)
-        if case .determinate(let percent) = progressDisplay?.style {
-          // scaleEffect composites the fill (no relayout); the percent is
-          // bucketed upstream so agent ticks don't thrash layout.
-          Rectangle()
-            .fill(color)
-            .scaleEffect(x: CGFloat(max(0, min(percent, 100))) / 100, anchor: .leading)
-        }
-      }
-      .frame(maxWidth: .infinity)
-      .frame(height: 2)
-      .padding(.horizontal, -pixelLength)
-      .opacity(isSelected ? 1 : 0.7)
-      .allowsHitTesting(false)
-      .accessibilityLabel(progressDisplay?.accessibilityValue ?? "")
-    }
-  }
-
-  private var isDeterminate: Bool {
-    if case .determinate = progressDisplay?.style { return true }
-    return false
-  }
-
-  /// Progress states override the tab tint; the untinted fallback paints
-  /// `.secondary` so the selected indicator stays visible without an
-  /// accent-color flash.
-  private var color: Color {
-    switch progressDisplay?.style {
-    case .error: .red
-    case .paused: .orange
-    case .indeterminate, .determinate: tintColor?.color ?? .accentColor
-    case nil: tintColor?.color ?? .secondary
     }
   }
 }
@@ -589,18 +341,33 @@ private struct ContentHostView: NSViewRepresentable {
   }
 
   private func mount(into container: NSView) {
-    let renderer = runtime.renderer(for: contentID)
-    // Already showing the right renderer (or both nil): nothing to do.
-    if container.subviews.first === renderer { return }
+    guard let renderer = runtime.renderer(for: contentID) else {
+      container.subviews.forEach { $0.removeFromSuperview() }
+      return
+    }
+    let hostedView: NSView
+    if let surface = renderer as? GhosttySurfaceView {
+      // Terminals mount through the scroll wrapper: it owns the surface's
+      // frame, the overlay scroller, and zeroes the window safe-area insets.
+      if let wrapper = container.subviews.first as? GhosttySurfaceScrollView,
+        surface.scrollWrapper === wrapper
+      {
+        return
+      }
+      hostedView = GhosttySurfaceScrollView(surfaceView: surface)
+    } else {
+      // Already showing the right renderer: nothing to do.
+      if container.subviews.first === renderer { return }
+      hostedView = renderer
+    }
     container.subviews.forEach { $0.removeFromSuperview() }
-    guard let renderer else { return }
-    renderer.translatesAutoresizingMaskIntoConstraints = false
-    container.addSubview(renderer)
+    hostedView.translatesAutoresizingMaskIntoConstraints = false
+    container.addSubview(hostedView)
     NSLayoutConstraint.activate([
-      renderer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-      renderer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-      renderer.topAnchor.constraint(equalTo: container.topAnchor),
-      renderer.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+      hostedView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      hostedView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+      hostedView.topAnchor.constraint(equalTo: container.topAnchor),
+      hostedView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
     ])
   }
 }

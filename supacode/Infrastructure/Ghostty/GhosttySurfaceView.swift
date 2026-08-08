@@ -435,10 +435,12 @@ final class GhosttySurfaceView: NSView, Identifiable {
         // Only reclaim from the no-owner or sibling-terminal case. Stealing
         // from a non-terminal responder (command palette, inline rename text
         // field) mid-rebuild would yank focus from whatever the user is
-        // actively typing into.
+        // actively typing into. The window itself is the no-owner case: AppKit
+        // parks firstResponder there when the previous owner leaves the
+        // hierarchy, e.g. after a split collapse.
         let responder = window.firstResponder
         guard responder !== self else { return }
-        if responder == nil || responder is GhosttySurfaceView {
+        if responder == nil || responder === window || responder is GhosttySurfaceView {
           _ = window.makeFirstResponder(self)
         }
       }

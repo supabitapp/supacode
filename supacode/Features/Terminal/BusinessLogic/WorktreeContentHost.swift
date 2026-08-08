@@ -37,6 +37,7 @@ final class WorktreeContentHost {
   @ObservationIgnored var onDormancyChanged: (() -> Void)?
   @ObservationIgnored var onAgentHookEvent: ((AgentHookEvent) -> Void)?
   @ObservationIgnored var onTabProgressDisplayChanged: ((TabID, TerminalTabProgressDisplay?) -> Void)?
+  @ObservationIgnored var onScriptLocksChanged: ((Set<TabID>) -> Void)?
 
   var socketPath: String?
   var notificationsEnabled = true
@@ -79,7 +80,12 @@ final class WorktreeContentHost {
   @ObservationIgnored private var lastBlockingScriptTabByKind: [BlockingScriptKind: TabID] = [:]
   /// Blocking tabs whose script already finished; their parked shell must not
   /// count as busy nor confirm on close.
-  @ObservationIgnored private(set) var completedBlockingScriptTabs: Set<TabID> = []
+  @ObservationIgnored private(set) var completedBlockingScriptTabs: Set<TabID> = [] {
+    didSet {
+      guard oldValue != completedBlockingScriptTabs else { return }
+      onScriptLocksChanged?(completedBlockingScriptTabs)
+    }
+  }
   @ObservationIgnored private var pendingSetupScript: Bool
 
   private static let logger = SupaLogger("WorktreeContentHost")

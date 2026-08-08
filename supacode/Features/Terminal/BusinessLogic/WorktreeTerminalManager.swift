@@ -360,9 +360,9 @@ final class WorktreeTerminalManager {
       // One content per tab: closing the focused surface closes its tab.
       guard let tab = host(for: worktree).focusedTab else { break }
       sendLayout(worktree.id, .contentRequestedClose(content: tab.content.id, scope: .tab))
-    case .beginTabRename(let worktree, _):
-      // The pane strips have no inline rename affordance yet.
-      terminalLogger.info("beginTabRename is not available on the pane strip yet (worktree \(worktree.id)).")
+    case .beginTabRename(let worktree, let tabID):
+      guard let target = tabID ?? host(for: worktree).focusedTab?.id else { break }
+      sendLayout(worktree.id, .beginTabRename(id: target))
     case .renameTab(let worktree, let tabID, let title):
       let tab = layoutState(for: worktree.id)?.layout.pane(containingTab: tabID)?.tabs[id: tabID]
       let applied = tab != nil && tab?.isTitleLocked != true
@@ -679,6 +679,9 @@ final class WorktreeTerminalManager {
     }
     host.onTabProgressDisplayChanged = { [weak self] tabID, display in
       self?.emit(.tabProgressDisplayChanged(worktreeID: worktree.id, tabID: tabID, display: display))
+    }
+    host.onScriptLocksChanged = { [weak self] tabIDs in
+      self?.sendLayout(worktree.id, .scriptLocksChanged(tabIDs))
     }
     hosts[worktree.id] = host
     // Seed the lifecycle baseline from the hydrated layout, or the first

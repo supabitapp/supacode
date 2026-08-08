@@ -718,6 +718,95 @@ struct LayoutFeatureTests {
     #expect(harness.store.state.layout.isConsistent)
   }
 
+  @Test func beginTabRenameOpensTheFieldAndEndCloses() async {
+    let harness = await makeHarness()
+    await harness.store.send(.beginTabRename(id: harness.tabID)) {
+      $0.editingTabID = harness.tabID
+    }
+    await harness.store.send(.endTabRename) {
+      $0.editingTabID = nil
+    }
+    // An unknown tab must not open a field pointing at nothing.
+    await harness.store.send(.beginTabRename(id: TabID()))
+  }
+
+  @Test func beginTabRenameRefusesALockedTitle() async {
+    let harness = await makeHarness()
+    let paneID = harness.paneID
+    var locked = harness.store.state.layout
+    locked.panes[id: paneID]?.tabs[id: harness.tabID]?.isTitleLocked = true
+    let bundle = makeStore(layout: locked)
+    await bundle.store.send(.beginTabRename(id: harness.tabID))
+    #expect(bundle.store.state.editingTabID == nil)
+  }
+
+  @Test(.dependencies) func closingTheEditingTabEndsTheRename() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .never }
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let paneID = harness.paneID
+    await harness.store.send(.beginTabRename(id: second.tabID)) {
+      $0.editingTabID = second.tabID
+    }
+    await harness.store.send(.closeTab(id: second.tabID)) {
+      $0.editingTabID = nil
+      $0.layout.panes[id: paneID]?.tabs.remove(id: second.tabID)
+      $0.layout.panes[id: paneID]?.selectedTabID = harness.tabID
+    }
+    await harness.store.receive(.runtime(.killConfirmed(id: second.contentID)))
+  }
+
+  // MARK: - Progress and script locks.
+
+  @Test(.dependencies) func tabProgressTracksPerTabAndClearsOnClose() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .never }
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let paneID = harness.paneID
+    let display = TerminalTabProgressDisplay(style: .determinate(percent: 40))
+    await harness.store.send(.tabProgressChanged(id: second.tabID, display: display)) {
+      $0.tabProgress[second.tabID] = display
+    }
+    // Unknown tabs are refused so a late report cannot leak an entry.
+    await harness.store.send(.tabProgressChanged(id: TabID(), display: display))
+    await harness.store.send(.closeTab(id: second.tabID)) {
+      $0.tabProgress = [:]
+      $0.layout.panes[id: paneID]?.tabs.remove(id: second.tabID)
+      $0.layout.panes[id: paneID]?.selectedTabID = harness.tabID
+    }
+    await harness.store.receive(.runtime(.killConfirmed(id: second.contentID)))
+  }
+
+  @Test func tabProgressClearsOnANilDisplay() async {
+    let harness = await makeHarness()
+    let display = TerminalTabProgressDisplay(style: .indeterminate)
+    await harness.store.send(.tabProgressChanged(id: harness.tabID, display: display)) {
+      $0.tabProgress[harness.tabID] = display
+    }
+    await harness.store.send(.tabProgressChanged(id: harness.tabID, display: nil)) {
+      $0.tabProgress = [:]
+    }
+  }
+
+  @Test(.dependencies) func scriptLocksReplaceAndClearOnClose() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .never }
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let paneID = harness.paneID
+    await harness.store.send(.scriptLocksChanged([second.tabID])) {
+      $0.scriptLockedTabs = [second.tabID]
+    }
+    await harness.store.send(.closeTab(id: second.tabID)) {
+      $0.scriptLockedTabs = []
+      $0.layout.panes[id: paneID]?.tabs.remove(id: second.tabID)
+      $0.layout.panes[id: paneID]?.selectedTabID = harness.tabID
+    }
+    await harness.store.receive(.runtime(.killConfirmed(id: second.contentID)))
+  }
+
   // MARK: - Resize, equalize, zoom.
 
   @Test func resizePaneClampsRatioAndIgnoresLeaves() async throws {
@@ -1112,6 +1201,40 @@ struct LayoutFeatureTests {
     }
     await harness.store.receive(.runtime(.killConfirmed(id: third.contentID)))
     #expect(harness.store.state.layout.panes[id: paneID]?.tabs.map(\.id) == [harness.tabID, second.tabID])
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test(.dependencies) func contentRequestedCloseAllTabsCollapsesThePane() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .never }
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    // Close All drops every tab of the pane and collapses it.
+    await harness.store.send(.contentRequestedClose(content: second.contentID, scope: .allTabs)) {
+      $0.layout.tree = SplitTree()
+      $0.layout.panes = []
+      $0.layout.focusedPaneID = nil
+    }
+    // The merged reaps confirm in no guaranteed order.
+    harness.store.exhaustivity = .off
+    await harness.store.finish()
+    #expect(harness.runtime.pendingKill.isEmpty)
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test(.dependencies) func contentRequestedCloseAllTabsLeavesSiblingPanesAlone() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .never }
+    let harness = await makeHarness()
+    let sibling = await splitPane(harness, anchor: harness.paneID)
+    // Close All is pane-scoped: the split partner keeps its tabs. Off
+    // exhaustivity: the collapse diff (tree, focus retarget) is pinned by the
+    // single-pane test above.
+    harness.store.exhaustivity = .off
+    await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .allTabs))
+    await harness.store.finish()
+    #expect(harness.store.state.layout.panes[id: harness.paneID] == nil)
+    #expect(harness.store.state.layout.panes[id: sibling.paneID]?.tabs.isEmpty == false)
     #expect(harness.store.state.layout.isConsistent)
   }
 

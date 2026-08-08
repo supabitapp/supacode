@@ -51,10 +51,11 @@ final class ContentRuntime {
     contents[id]
   }
 
-  /// Unregisters; when `tombstone` is true the ID is blocked from
-  /// re-provisioning until the caller's async kill lands and `confirmKill`
-  /// clears it.
+  /// Unregisters and tears the content down; when `tombstone` is true the ID
+  /// is blocked from re-provisioning until the caller's async kill lands and
+  /// `confirmKill` clears it.
   func remove(_ id: ContentID, tombstone: Bool) {
+    contents[id]?.tearDown()
     contents[id] = nil
     guard tombstone else { return }
     pendingKill.insert(id)

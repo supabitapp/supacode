@@ -107,14 +107,16 @@ extension ContentGeometry {
       let geometry = candidate(
         pointSize: window.contentLayoutRect.size,
         scale: window.backingScaleFactor
-      ) {
+      )
+    {
       return geometry
     }
     if let screen = NSScreen.main,
       let geometry = candidate(
         pointSize: screen.visibleFrame.size,
         scale: screen.backingScaleFactor
-      ) {
+      )
+    {
       return geometry
     }
     return .fallback

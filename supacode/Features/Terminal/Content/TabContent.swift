@@ -20,6 +20,9 @@ protocol TabContent: AnyObject {
   /// Tears down the renderer while the underlying session lives on, recording
   /// whatever the content needs to restore.
   func hibernate()
+  /// Releases the renderer and its live resources immediately on discard, so
+  /// teardown runs at a deterministic point instead of a later dealloc.
+  func tearDown()
   /// The current persistable state, including restoration data.
   func snapshot() -> ContentSnapshot
 }
@@ -30,6 +33,8 @@ extension TabContent {
   // Hibernation is opt-in: only content whose session outlives the renderer
   // may claim it.
   var isHibernatable: Bool { false }
+  // Renderless content has nothing to release.
+  func tearDown() {}
 }
 
 /// Where in the layout a content is being created; a runtime hint for the
@@ -159,6 +164,13 @@ final class TerminalContent: TabContent {
     state = recordedState(from: surfaceView)
     surfaceView.closeSurface()
     self.surfaceView = nil
+  }
+
+  // Free the Ghostty surface at event time: deferring to the view's dealloc
+  // would run it mid-render when SwiftUI drops the last reference.
+  func tearDown() {
+    surfaceView?.closeSurface()
+    surfaceView = nil
   }
 
   func snapshot() -> ContentSnapshot {

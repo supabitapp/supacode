@@ -52,7 +52,8 @@ extension RepositoriesFeature {
         // gate prevents stale UUIDs from being re-injected after the user
         // closes every tab (which emits an empty projection).
         if !item.hasTerminalProjection, item.surfaceIDs.isEmpty,
-          let record = layouts.worktrees[id.rawValue] {
+          let record = layouts.worktrees[id.rawValue]
+        {
           let ids = record.layout.allContentIDs.map(\.rawValue)
           if !ids.isEmpty {
             item.surfaceIDs = ids

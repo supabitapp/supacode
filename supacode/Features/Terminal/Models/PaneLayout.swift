@@ -267,7 +267,8 @@ nonisolated struct Pane: Equatable, Identifiable, Codable, Sendable {
     id = try container.decode(PaneID.self, forKey: .id)
     // Element-wise so a tab a rollback build cannot read (a future content
     // kind) drops that tab, not the whole layout.
-    let decodedTabs = try container
+    let decodedTabs =
+      try container
       .decode([FailableDecodable<TabItem>].self, forKey: .tabs)
       .compactMap(\.value)
     // Duplicate tab IDs would trap IdentifiedArray; keep the first occurrence.

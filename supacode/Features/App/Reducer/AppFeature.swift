@@ -1749,9 +1749,10 @@ struct AppFeature {
         // The manager already detached the layout; nothing app-level remains.
         return .none
 
-      case .terminalEvent(.tabProgressDisplayChanged):
-        // Strip progress chrome re-lands with the pane-strip polish.
-        return .none
+      case .terminalEvent(.tabProgressDisplayChanged(let worktreeID, let tabID, let display)):
+        return .send(
+          .terminals(.layouts(.element(id: worktreeID, action: .tabProgressChanged(id: tabID, display: display))))
+        )
 
       case .terminals:
         return .none
