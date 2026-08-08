@@ -99,7 +99,7 @@ struct DeeplinkReferenceView: View {
     ),
     .init(
       url: "supacode://worktree/<worktree_id>/tab/<tab_id>/surface/<surface_id>",
-      description: "Focus a surface.",
+      description: "Focus a surface; the surface ID resolves worktree-wide, the tab ID is a hint.",
       params: "?input=<cmd>"
     ),
     .init(

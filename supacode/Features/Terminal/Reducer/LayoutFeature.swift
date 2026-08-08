@@ -328,7 +328,7 @@ extension LayoutFeature {
       content: ContentSnapshot(id: identity.contentID, state: spec.content),
       isTitleLocked: spec.isTitleLocked
     )
-    // Mirror TerminalTabManager.createTab: insert after the selection;
+    // Insert after the selection;
     // background tabs append so a run of them keeps its order.
     if spec.select, let selectedID = pane.selectedTabID, let index = pane.tabs.index(id: selectedID) {
       pane.tabs.insert(tab, at: index + 1)
@@ -511,7 +511,7 @@ extension LayoutFeature {
       return reaping
     }
     if pane.selectedTabID == tabID {
-      // Mirror TerminalTabManager.closeTab: previous tab, else the first.
+      // Selection retargets to the previous tab, else the first.
       pane.selectedTabID = index > 0 ? pane.tabs[index - 1].id : pane.tabs.first?.id
     }
     state.layout.panes[id: pane.id] = pane
@@ -530,8 +530,8 @@ extension LayoutFeature {
     if source.id == targetPaneID {
       let tab = source.tabs.remove(at: sourceIndex)
       source.tabs.insert(tab, at: min(max(index, 0), source.tabs.count))
-      // Reordering deliberately selects the dragged tab, unlike the keyboard
-      // move in TerminalTabManager.
+      // Reordering deliberately selects the dragged tab, unlike a keyboard
+      // move.
       source.selectedTabID = tab.id
       state.layout.panes[id: source.id] = source
       focus(&state, paneID: source.id)
@@ -567,8 +567,8 @@ extension LayoutFeature {
     guard var pane = state.layout.pane(containingTab: tabID) else { return .none }
     // A script tab owns its title.
     guard pane.tabs[id: tabID]?.isTitleLocked != true else { return .none }
-    // Empty rename clears the override; normalization mirrors the tab manager.
-    pane.tabs[id: tabID]?.customTitle = TerminalTabManager.normalizedCustomTitle(title)
+    // Empty rename clears the override on every commit path.
+    pane.tabs[id: tabID]?.customTitle = TabItem.normalizedCustomTitle(title)
     state.layout.panes[id: pane.id] = pane
     return .none
   }

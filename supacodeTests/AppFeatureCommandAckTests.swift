@@ -50,19 +50,7 @@ struct AppFeatureCommandAckTests {
     )
     #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
 
-    await store.send(
-      .terminalEvent(
-        .tabProjectionChanged(
-          worktreeID: worktree.id,
-          WorktreeTabProjection(
-            tabID: TabID(rawValue: tabID),
-            surfaceIDs: [tabID],
-            activeSurfaceID: tabID,
-            unseenNotificationCount: 0
-          )
-        )
-      )
-    )
+    await store.send(.terminalEvent(.surfaceCreated(worktreeID: worktree.id, id: tabID)))
     await store.finish()
 
     #expect(store.state.pendingCommandAcks.isEmpty)

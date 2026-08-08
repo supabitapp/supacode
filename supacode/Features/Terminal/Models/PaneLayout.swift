@@ -228,6 +228,19 @@ nonisolated struct TabItem: Equatable, Identifiable, Codable, Sendable {
     tintColor = (try? container.decodeIfPresent(RepositoryColor.self, forKey: .tintColor)) ?? nil
     content = try container.decode(ContentSnapshot.self, forKey: .content)
   }
+
+  /// Sanitized user-supplied tab title; nil (clears the override) when
+  /// nothing printable remains.
+  static func normalizedCustomTitle(_ title: String) -> String? {
+    // Blank control scalars, not the whole control-characters set, so emoji joiners survive.
+    let scalars = title.unicodeScalars.map { scalar in
+      scalar.properties.generalCategory == .control || CharacterSet.newlines.contains(scalar)
+        ? UnicodeScalar(" ") : scalar
+    }
+    let sanitized = String(String.UnicodeScalarView(scalars))
+    let trimmed = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
 }
 
 /// A split-tree leaf: an ordered strip of tabs with one selected.

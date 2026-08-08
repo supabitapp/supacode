@@ -72,6 +72,9 @@ supacode://worktree/<worktree_id>/tab/<tab_id>/surface/<surface_id>/split?direct
 supacode://worktree/<worktree_id>/tab/<tab_id>/surface/<surface_id>/destroy     # Close a surface.
 ```
 
+Surface routes resolve `surface_id` first within the worktree; `tab_id` is only
+a disambiguation hint, so a surface that moved to another tab still resolves.
+
 ## Repository
 
 ```

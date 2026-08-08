@@ -61,8 +61,8 @@ final class WorktreeTerminalManager {
   private var pendingIdleHookEvents: [IdleDebounceKey: Task<Void, Never>] = [:]
   @ObservationIgnored
   private let hookEventSleep: @Sendable (Duration) async throws -> Void
-  /// Injected clock, handed to each `WorktreeTerminalState` so its hibernation
-  /// grace timers run on the same time source as the manager.
+  /// Injected clock, handed to each content host so its OSC hold and dedupe
+  /// windows run on the same time source as the manager.
   @ObservationIgnored private let clock: any Clock<Duration>
   @ObservationIgnored @Dependency(\.zmxClient) private var zmxClient
   @ObservationIgnored @Dependency(\.analyticsClient) private var analyticsClient
@@ -97,7 +97,6 @@ final class WorktreeTerminalManager {
   /// piece of state, so an identical repeat is a no-op and is dropped.
   private enum CoalesceKey: Hashable {
     case worktreeProjection(Worktree.ID)
-    case tabProjection(TabID)
     case tabProgress(TabID)
     case taskStatus(Worktree.ID)
     case focus(Worktree.ID)
@@ -111,7 +110,6 @@ final class WorktreeTerminalManager {
   private static func coalesceKey(for event: TerminalClient.Event) -> CoalesceKey? {
     switch event {
     case .worktreeProjectionChanged(let worktreeID, _): .worktreeProjection(worktreeID)
-    case .tabProjectionChanged(_, let projection): .tabProjection(projection.tabID)
     case .tabProgressDisplayChanged(_, let tabID, _): .tabProgress(tabID)
     case .taskStatusChanged(let worktreeID, _): .taskStatus(worktreeID)
     case .focusChanged(let worktreeID, _): .focus(worktreeID)
@@ -127,8 +125,6 @@ final class WorktreeTerminalManager {
   private static func label(for event: TerminalClient.Event) -> String {
     switch event {
     case .worktreeProjectionChanged(let worktreeID, _): "worktreeProjectionChanged(\(worktreeID))"
-    case .tabProjectionChanged(let worktreeID, let projection):
-      "tabProjectionChanged(\(worktreeID), tab: \(projection.tabID))"
     case .tabProgressDisplayChanged(let worktreeID, let tabID, _):
       "tabProgressDisplayChanged(\(worktreeID), tab: \(tabID))"
     case .notificationReceived(let worktreeID, let surfaceID, _, _, _):
@@ -791,12 +787,27 @@ final class WorktreeTerminalManager {
     if let customTitle, let newTabID = spec.tabID {
       sendLayout(worktree.id, .renameTab(id: newTabID, title: customTitle))
     }
-    if let tabID, layoutState(for: worktree.id)?.layout.tab(containingContent: ContentID(rawValue: tabID)) == nil {
+    let after = layoutState(for: worktree.id)?.layout
+    guard let tabID else {
+      // No addressed id to verify; a grown strip is the success signal.
+      if Self.tabCount(in: after) > Self.tabCount(in: layout) {
+        emit(.tabCreated(worktreeID: worktree.id))
+      }
+      return
+    }
+    guard after?.tab(containingContent: ContentID(rawValue: tabID)) != nil else {
       // Drain a waiting CLI ack now instead of stranding it until the timeout.
       emit(
         .surfaceCreationFailed(
           worktreeID: worktree.id, attemptedID: tabID, message: "Could not create the tab."))
+      return
     }
+    emit(.tabCreated(worktreeID: worktree.id))
+    emit(.surfaceCreated(worktreeID: worktree.id, id: tabID))
+  }
+
+  private static func tabCount(in layout: PaneLayout?) -> Int {
+    layout?.panes.reduce(0) { $0 + $1.tabs.count } ?? 0
   }
 
   /// The next "<prefix> N" suffix, scanning every strip like the tab manager did.
@@ -989,13 +1000,16 @@ final class WorktreeTerminalManager {
       worktree.id,
       .splitPane(id: anchorPane.id, direction: direction == .vertical ? .down : .right, spec: spec)
     )
-    if let id, layoutState(for: worktree.id)?.layout.tab(containingContent: ContentID(rawValue: id)) == nil {
+    guard let id else { return }
+    guard layoutState(for: worktree.id)?.layout.tab(containingContent: ContentID(rawValue: id)) != nil else {
       terminalLogger.warning("splitSurface: failed for surface \(surfaceID) in worktree \(worktree.id).")
       emit(
         .surfaceCreationFailed(
           worktreeID: worktree.id, attemptedID: id,
           message: "Could not create the split surface."))
+      return
     }
+    emit(.surfaceCreated(worktreeID: worktree.id, id: id))
   }
 
   func prune(
@@ -1657,7 +1671,7 @@ final class WorktreeTerminalManager {
   /// persisted tab UUIDs) would otherwise be wrongly deduped and dropped.
   private static func invalidatedCoalesceKeys(by event: TerminalClient.Event) -> [CoalesceKey] {
     switch event {
-    case .tabRemoved(_, let tabID): [.tabProjection(tabID), .tabProgress(tabID)]
+    case .tabRemoved(_, let tabID): [.tabProgress(tabID)]
     case .worktreeStateTornDown(let worktreeID):
       [.worktreeProjection(worktreeID), .taskStatus(worktreeID), .focus(worktreeID)]
     default: []

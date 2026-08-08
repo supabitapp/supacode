@@ -70,7 +70,7 @@ struct ContentRuntimeTests {
     let runtime = ContentRuntime()
     let content = MockContent()
     #expect(runtime.provision(content, at: .fallback))
-    runtime.hibernate(content.id)
+    content.hibernate()
     #expect(content.hibernateCalls == 1)
     #expect(runtime.content(for: content.id) === content)
   }
@@ -81,7 +81,7 @@ struct ContentRuntimeTests {
     let content = MockContent()
     #expect(runtime.provision(content, at: .fallback))
     #expect(runtime.renderer(for: content.id) != nil)
-    runtime.hibernate(content.id)
+    content.hibernate()
     #expect(runtime.renderer(for: content.id) == nil)
   }
 

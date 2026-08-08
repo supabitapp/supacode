@@ -51,11 +51,6 @@ final class ContentRuntime {
     contents[id]
   }
 
-  /// Hibernates while keeping the entry registered: renderer nil, entry present.
-  func hibernate(_ id: ContentID) {
-    contents[id]?.hibernate()
-  }
-
   /// Unregisters; when `tombstone` is true the ID is blocked from
   /// re-provisioning until the caller's async kill lands and `confirmKill`
   /// clears it.

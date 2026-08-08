@@ -1,7 +1,9 @@
+import AppKit
 import ConcurrencyExtras
 import Darwin
 import Dependencies
 import Foundation
+import IdentifiedCollections
 import SupacodeSettingsShared
 import Testing
 
@@ -529,144 +531,104 @@ struct ZmxDormantWatcherRegistryTests {
     )
   }
 
-  private func makeState() -> WorktreeTerminalState {
-    WorktreeTerminalState(
-      runtime: GhosttyRuntime(),
-      worktree: makeWorktree(),
-      splitPreserveZoomOnNavigation: { false }
-    )
-  }
-
-  private func firstSurfaceID(_ state: WorktreeTerminalState, tab: TabID) -> UUID {
-    state.splitTree(for: tab).root!.leftmostLeaf().id
-  }
-
-  @Test func hibernateStartsWatchersForTabLeaves() {
-    let state = makeState()
-    let tab = state.createTab(activation: .selected)!
-    let surface = firstSurfaceID(state, tab: tab)
-
-    state.hibernateTabForTesting(tab)
-
-    #expect(state.watchedDormantSurfaceIDsForTesting == [surface])
-  }
-
-  @Test func wakeStopsOnlyTheWokenTabsWatchers() {
-    let state = makeState()
-    let first = state.createTab(activation: .selected)!
-    let firstSurface = firstSurfaceID(state, tab: first)
-    let second = state.createTab(activation: .selected)!
-    let secondSurface = firstSurfaceID(state, tab: second)
-
-    state.hibernateTabForTesting(first)
-    state.hibernateTabForTesting(second)
-    #expect(state.watchedDormantSurfaceIDsForTesting == [firstSurface, secondSurface])
-
-    state.wakeTab(first)
-    #expect(state.watchedDormantSurfaceIDsForTesting == [secondSurface])
-  }
-
-  @Test func closingDormantTabStopsItsWatchers() {
-    let state = makeState()
-    let tab = state.createTab(activation: .selected)!
-    _ = firstSurfaceID(state, tab: tab)
-
-    state.hibernateTabForTesting(tab)
-    #expect(!state.watchedDormantSurfaceIDsForTesting.isEmpty)
-
-    state.closeTab(tab)
-    #expect(state.watchedDormantSurfaceIDsForTesting.isEmpty)
-  }
-
-  @Test func closeAllSurfacesStopsAllWatchers() {
-    let state = makeState()
-    let first = state.createTab(activation: .selected)!
-    _ = firstSurfaceID(state, tab: first)
-    let second = state.createTab(activation: .selected)!
-    _ = firstSurfaceID(state, tab: second)
-
-    state.hibernateTabForTesting(first)
-    state.hibernateTabForTesting(second)
-    #expect(state.watchedDormantSurfaceIDsForTesting.count == 2)
-
-    state.closeAllSurfaces()
-    #expect(state.watchedDormantSurfaceIDsForTesting.isEmpty)
-  }
-
-  @Test func watchedSetEqualsDormantLeavesAfterEveryMutation() {
-    let state = makeState()
-    let first = state.createTab(activation: .selected)!
-    let firstSurface = firstSurfaceID(state, tab: first)
-    let second = state.createTab(activation: .selected)!
-    let secondSurface = firstSurfaceID(state, tab: second)
-
-    func dormantLeaves() -> Set<UUID> {
-      Set(state.dormantTabLayouts.values.flatMap { $0.layout.leafSurfaceIDs })
-    }
-
-    state.hibernateTabForTesting(first)
-    #expect(state.watchedDormantSurfaceIDsForTesting == dormantLeaves())
-
-    state.hibernateTabForTesting(second)
-    #expect(state.watchedDormantSurfaceIDsForTesting == dormantLeaves())
-    #expect(state.watchedDormantSurfaceIDsForTesting == [firstSurface, secondSurface])
-
-    state.wakeTab(first)
-    #expect(state.watchedDormantSurfaceIDsForTesting == dormantLeaves())
-
-    state.closeTab(second)
-    #expect(state.watchedDormantSurfaceIDsForTesting == dormantLeaves())
-    #expect(state.watchedDormantSurfaceIDsForTesting.isEmpty)
-  }
-}
-
-// MARK: - Registry delivery (real client end-to-end)
-
-@MainActor
-@Suite(.serialized)
-struct ZmxSessionWatcherRegistryDeliveryTests {
-  @Test func deliversSequenceThroughOnOSCSequenceOnMainActor() async {
-    let surfaceID = UUID()
-    let socketDir = "/tmp/zmxw-reg-\(UUID().uuidString.prefix(8))"
-    try? FileManager.default.createDirectory(atPath: socketDir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(atPath: socketDir) }
-    let socketPath = "\(socketDir)/\(ZmxSessionID.make(surfaceID: surfaceID))"
-
-    guard let daemon = FakeZmxDaemon(explicitPath: socketPath) else {
-      Issue.record("Failed to bind fake zmx daemon socket")
-      return
-    }
-    defer { daemon.stop() }
-    daemon.serveOnce(
-      payload: ZmxWireFixture.frame(
-        tag: ZmxIPCTag.output,
-        payload: ZmxWireFixture.oscBEL(9, "hi")
+  private func makeLayout(contentIDs: [UUID], bypassZmx: Set<UUID> = []) -> PaneLayout {
+    let paneID = PaneID()
+    let tabs = contentIDs.map { id in
+      TabItem(
+        id: TabID(rawValue: id),
+        title: "Tab",
+        content: ContentSnapshot(
+          id: ContentID(rawValue: id),
+          state: .terminal(
+            TerminalContentState(
+              workingDirectory: nil,
+              launch: bypassZmx.contains(id) ? LaunchOverride(bypassZmx: true) : nil
+            )
+          )
+        )
       )
+    }
+    return PaneLayout(
+      tree: SplitTree(view: paneID),
+      panes: [Pane(id: paneID, tabs: .init(uniqueElements: tabs), selectedTabID: tabs.first?.id)],
+      focusedPaneID: paneID
     )
+  }
 
-    let received = LockIsolated<[(UUID, ZmxOSCSequence)]>([])
-    let delivered = DispatchSemaphore(value: 0)
-    let registry = withDependencies {
-      $0.zmxSessionWatcherClient = .liveValue
-    } operation: {
-      ZmxSessionWatcherRegistry(socketDirectory: socketDir)
-    }
-    registry.onOSCSequence = { id, sequence in
-      received.withValue { $0.append((id, sequence)) }
-      delivered.signal()
-    }
-    registry.reconcile(dormantSurfaceIDs: [surfaceID])
-    defer { registry.stopAll() }
+  private func makeHost(layout: PaneLayout, runtime: ContentRuntime = ContentRuntime()) -> WorktreeContentHost {
+    let host = WorktreeContentHost(
+      worktree: makeWorktree(),
+      runtime: runtime,
+      clock: ContinuousClock(),
+      runSetupScript: false
+    )
+    host.layout = { layout }
+    return host
+  }
 
-    // Block off the main actor so the registry's MainActor delivery Task can
-    // run while we await the signal.
-    let result: DispatchTimeoutResult = await withCheckedContinuation { continuation in
-      Thread.detachNewThread {
-        continuation.resume(returning: delivered.wait(timeout: .now() + ZmxTestBudget.signalTimeout))
-      }
+  @Test func reconcileWatchesEveryDormantZmxContent() {
+    let first = UUID()
+    let second = UUID()
+    let host = makeHost(layout: makeLayout(contentIDs: [first, second]))
+
+    host.reconcileDormantWatchers()
+
+    #expect(host.watchedDormantSurfaceIDsForTesting == [first, second])
+  }
+
+  @Test func reconcileSkipsBypassZmxContent() {
+    let zmx = UUID()
+    let script = UUID()
+    let host = makeHost(layout: makeLayout(contentIDs: [zmx, script], bypassZmx: [script]))
+
+    host.reconcileDormantWatchers()
+
+    #expect(host.watchedDormantSurfaceIDsForTesting == [zmx])
+  }
+
+  @Test func reconcileStopsWatchersWhenContentGoesLive() {
+    let surface = UUID()
+    let runtime = ContentRuntime()
+    let layout = makeLayout(contentIDs: [surface])
+    let host = makeHost(layout: layout, runtime: runtime)
+
+    host.reconcileDormantWatchers()
+    #expect(host.watchedDormantSurfaceIDsForTesting == [surface])
+
+    // A live renderer means the surface pipeline is authoritative again.
+    let content = LiveRendererContent(id: ContentID(rawValue: surface))
+    _ = runtime.provision(content, at: .fallback)
+    host.reconcileDormantWatchers()
+    #expect(host.watchedDormantSurfaceIDsForTesting.isEmpty)
+  }
+
+  @Test func tearDownStopsAllWatchers() {
+    let surface = UUID()
+    let host = makeHost(layout: makeLayout(contentIDs: [surface]))
+
+    host.reconcileDormantWatchers()
+    #expect(!host.watchedDormantSurfaceIDsForTesting.isEmpty)
+
+    host.tearDown()
+    #expect(host.watchedDormantSurfaceIDsForTesting.isEmpty)
+  }
+
+  /// Minimal content whose renderer exists from the start.
+  @MainActor
+  private final class LiveRendererContent: TabContent {
+    let id: ContentID
+    let kind: ContentKind = .terminal
+    private let view = NSView()
+
+    init(id: ContentID) {
+      self.id = id
     }
-    #expect(result == .success)
-    #expect(received.value.map(\.0) == [surfaceID])
-    #expect(received.value.map(\.1) == [ZmxOSCSequence(code: 9, payload: ZmxWireFixture.bytes("hi"))])
+
+    var renderer: NSView? { view }
+    func startSession(at geometry: ContentGeometry) {}
+    func hibernate() {}
+    func snapshot() -> ContentSnapshot {
+      ContentSnapshot(id: id, state: .terminal(TerminalContentState(workingDirectory: nil)))
+    }
   }
 }

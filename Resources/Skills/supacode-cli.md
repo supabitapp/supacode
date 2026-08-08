@@ -20,6 +20,11 @@ If you omit `-t`/`-s`, the command targets your own shell — not the new resour
 
 For new tabs, the initial surface ID equals the tab ID.
 
+Surface commands resolve the surface ID first within the worktree; the tab ID
+is only a disambiguation hint. A surface created by `surface split` opens as a
+tab in a new pane, so it may live under a different tab ID than the one you
+passed; targeting it by its own UUID always works.
+
 ### Correct pattern — ALWAYS follow this:
 
 **Run all related commands in a SINGLE Bash call** so captured variables

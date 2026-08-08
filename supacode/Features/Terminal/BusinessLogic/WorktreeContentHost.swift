@@ -157,8 +157,10 @@ final class WorktreeContentHost {
   }
 
   /// A content is hibernated when its tab exists but no live renderer does.
+  /// Renderer existence, not the terminal cast: a non-terminal renderer is
+  /// still live.
   func isDormantSurface(_ surfaceID: UUID) -> Bool {
-    isKnownSurface(surfaceID) && liveSurface(surfaceID) == nil
+    isKnownSurface(surfaceID) && runtime.renderer(for: ContentID(rawValue: surfaceID)) == nil
   }
 
   var allTabsDormant: Bool {
@@ -273,8 +275,8 @@ final class WorktreeContentHost {
   /// otherwise held briefly so a richer custom notify can supersede it.
   func handleAgentOSCNotification(title: String, body: String, surfaceID: UUID) {
     if let lastCustom = lastCustomNotificationAt[surfaceID],
-      WorktreeTerminalState.elapsed(from: lastCustom, to: clock.now)
-        <= .seconds(WorktreeTerminalState.oscSuppressionAfterCustom)
+      AgentSignal.elapsed(from: lastCustom, to: clock.now)
+        <= .seconds(AgentSignal.oscSuppressionAfterCustom)
     {
       Self.logger.debug("Dropped OSC 9 within the custom-notification window for surface \(surfaceID)")
       return
@@ -282,7 +284,7 @@ final class WorktreeContentHost {
     pendingAgentOSCNotifications[surfaceID]?.cancel()
     pendingAgentOSCNotifications[surfaceID] = Task { [weak self, clock] in
       do {
-        try await clock.sleep(for: .seconds(WorktreeTerminalState.oscHoldWindow))
+        try await clock.sleep(for: .seconds(AgentSignal.oscHoldWindow))
       } catch is CancellationError {
         return
       } catch {
@@ -415,7 +417,7 @@ final class WorktreeContentHost {
   }
 
   private func handlePresenceSignal(surfaceID: UUID, id: String, metadata: String) {
-    switch WorktreeTerminalState.presenceEvent(
+    switch AgentSignal.presenceEvent(
       id: id,
       metadata: metadata,
       surfaceID: surfaceID,
@@ -431,7 +433,7 @@ final class WorktreeContentHost {
   }
 
   private func handleNotifySignal(surfaceID: UUID, id: String, metadata: String) {
-    switch WorktreeTerminalState.notification(
+    switch AgentSignal.notification(
       id: id,
       metadata: metadata,
       surfaceExists: isKnownSurface(surfaceID)
@@ -1001,6 +1003,11 @@ final class WorktreeContentHost {
   /// Keeps the dormant OSC watchers in lock-step with hibernated contents.
   /// Stopping a watcher closes its socket, so call this BEFORE killing a
   /// session on explicit close.
+  /// Test seam for the `watched == dormant zmx contents` invariant.
+  var watchedDormantSurfaceIDsForTesting: Set<UUID> {
+    dormantSessionWatchers.watchedSurfaceIDs
+  }
+
   func reconcileDormantWatchers() {
     let dormant = Set(
       (layout()?.allContentIDs ?? [])
@@ -1025,14 +1032,14 @@ final class WorktreeContentHost {
         Self.logger.debug("Dropped non-UTF8 dormant OSC 9 for surface \(surfaceID)")
         return
       }
-      guard !WorktreeTerminalState.isConEmuOSC9Payload(payload) else {
+      guard !AgentSignal.isConEmuOSC9Payload(payload) else {
         Self.logger.debug("Dropped ConEmu-shaped dormant OSC 9 for surface \(surfaceID)")
         return
       }
       handleAgentOSCNotification(title: "", body: payload, surfaceID: surfaceID)
     case 3008:
       guard let payload = sequence.payloadString,
-        let fields = WorktreeTerminalState.contextSignalFields(payload: payload)
+        let fields = AgentSignal.contextSignalFields(payload: payload)
       else { return }
       handleContextSignal(surfaceID: surfaceID, id: fields.id, metadata: fields.metadata)
     case 0, 2:

@@ -105,7 +105,8 @@ struct CLIReferenceView: View {
   private static let surfaceRows: [CLIEntry] = [
     .init(
       command: "supacode surface list [-w <id>] [-t <id>] [-f]",
-      description: "List surface UUIDs. -f for focused only."
+      description:
+        "List surface UUIDs; the surface ID resolves worktree-wide, the tab ID is a hint. -f for focused only."
     ),
     .init(
       command: "supacode surface focus [-w <id>] [-t <id>] [-s <id>] [-i <cmd>]",
@@ -113,7 +114,7 @@ struct CLIReferenceView: View {
     ),
     .init(
       command: "supacode surface split [-w <id>] [-t <id>] [-s <id>] [-d h|v] [-i <cmd>] [-n <uuid>]",
-      description: "Split a surface. Prints UUID to stdout."
+      description: "Split a surface into a new pane. Prints UUID to stdout."
     ),
     .init(
       command: "supacode surface close [-w <id>] [-t <id>] [-s <id>]",

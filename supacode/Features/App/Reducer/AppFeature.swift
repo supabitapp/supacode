@@ -409,7 +409,7 @@ struct AppFeature {
       case .agentPresence(.delegate(.surfacesChanged(let surfaces))):
         // Persist on every presence delta, debounced, so a crash mid-session
         // doesn't lose the most recent agent state. The save only touches
-        // worktrees with a live `WorktreeTerminalState`, so it can't write
+        // worktrees with a live content host, so it can't write
         // rows the user hasn't selected yet.
         let agentsBySurface = state.agentPresence.agentsBySurface()
         return .merge(
@@ -1661,38 +1661,18 @@ struct AppFeature {
           .send(.agentPresence(.delegate(.surfacesChanged(restoredAddedSurfaces))))
         )
 
-      case .terminalEvent(.tabProjectionChanged(let worktreeID, let projection)):
-        // Resolve tab-new / surface-split acks once the supplied id appears.
-        let ackEffect = resolveCommandAcks(ok: true, state: &state) { match in
+      case .terminalEvent(.surfaceCreated(let worktreeID, let id)):
+        // Resolve tab-new / surface-split acks once the supplied id lands.
+        return resolveCommandAcks(ok: true, state: &state) { match in
           switch match {
           case .tabInWorktree(let ackWorktree, let tabID):
-            return ackWorktree == worktreeID && projection.tabID.rawValue == tabID
+            return ackWorktree == worktreeID && tabID == id
           case .surfaceSplit(let ackWorktree, let surfaceID):
-            return ackWorktree == worktreeID && projection.surfaceIDs.contains(surfaceID)
+            return ackWorktree == worktreeID && surfaceID == id
           default:
             return false
           }
         }
-        // Only a brand-new tab consumes this snapshot; existing tabs already
-        // track agent state, so skip the rollup on their projection churn.
-        let initialAgentSnapshot =
-          state.terminals.terminalTabs[id: projection.tabID] == nil
-          ? state.agentPresence.rowSnapshot(
-            across: projection.surfaceIDs,
-            badgesEnabled: state.lastKnownAgentPresenceBadgesEnabled
-          )
-          : AgentPresenceFeature.RowSnapshot()
-        return .merge(
-          .send(
-            .terminals(
-              .tabProjectionChanged(
-                worktreeID: worktreeID,
-                projection: projection,
-                initialAgentSnapshot: initialAgentSnapshot
-              )
-            )
-          ),
-          ackEffect)
 
       case .terminalEvent(.tabCreated(let worktreeID)):
         // Resolve worktree-new acks once the new worktree's first tab exists,
@@ -1723,8 +1703,7 @@ struct AppFeature {
           }
           return false
         }
-        return .merge(
-          .send(.terminals(.tabRemoved(worktreeID: worktreeID, tabID: tabID))), ackEffect)
+        return ackEffect
 
       case .terminalEvent(.tabRenamed(let worktreeID, let tabID, let applied)):
         return resolveCommandAcks(
@@ -1736,13 +1715,13 @@ struct AppFeature {
           return ackWorktree == worktreeID && renamed == tabID
         }
 
-      case .terminalEvent(.worktreeStateTornDown(let worktreeID)):
-        return .send(.terminals(.worktreeStateTornDown(worktreeID: worktreeID)))
+      case .terminalEvent(.worktreeStateTornDown):
+        // The manager already detached the layout; nothing app-level remains.
+        return .none
 
-      case .terminalEvent(.tabProgressDisplayChanged(_, let tabID, let display)):
-        return .send(
-          .terminals(.terminalTabs(.element(id: tabID, action: .progressDisplayChanged(display))))
-        )
+      case .terminalEvent(.tabProgressDisplayChanged):
+        // Strip progress chrome re-lands with the pane-strip polish.
+        return .none
 
       case .terminals:
         return .none
@@ -1920,16 +1899,6 @@ struct AppFeature {
             .sidebarItems(.element(id: rowID, action: .agentSnapshotChanged(snapshot)))
           )
         )
-      )
-    }
-    // Per-tab fanout: any tab containing an affected surface re-projects its
-    // agent snapshot. Each tab reads its own `agentSnapshot`, so per-tab
-    // mutations don't invalidate sibling tab leaves.
-    for tab in state.terminals.terminalTabs
-    where tab.surfaceIDs.contains(where: tabSurfaceIDs.contains) {
-      let snapshot = presence.rowSnapshot(across: tab.surfaceIDs, badgesEnabled: badgesEnabled)
-      effects.append(
-        .send(.terminals(.terminalTabs(.element(id: tab.id, action: .agentSnapshotChanged(snapshot)))))
       )
     }
     return .merge(effects)
@@ -2418,7 +2387,7 @@ struct AppFeature {
       }
     case .tabNew(let input, let id, let title):
       // A new tab has no override to clear, so a blank title would be dropped silently.
-      if let title, TerminalTabManager.normalizedCustomTitle(title) == nil {
+      if let title, TabItem.normalizedCustomTitle(title) == nil {
         deeplinkLogger.warning("Rejecting blank tab title in worktree \(worktreeID)")
         state.alert = blankTabTitleAlert(
           message: "The tab title is blank. Omit the title to keep the terminal title.")
@@ -2470,7 +2439,7 @@ struct AppFeature {
       // A blank title clears the override, but one that survives only as control
       // characters would wipe it while reporting the rename as applied.
       let clearsTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      if !clearsTitle, TerminalTabManager.normalizedCustomTitle(title) == nil {
+      if !clearsTitle, TabItem.normalizedCustomTitle(title) == nil {
         deeplinkLogger.warning("Rejecting unrenderable tab title in worktree \(worktreeID)")
         state.alert = blankTabTitleAlert(
           message: "The tab title has no visible characters. Pass an empty title to clear it.")

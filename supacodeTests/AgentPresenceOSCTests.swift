@@ -93,7 +93,7 @@ struct AgentPresenceOSCTests {
 
   @Test func presenceEventThreadsLocalPid() {
     let metadata = AgentPresenceOSC.metadata(event: .busy, pidSuffix: ";pid=4242")
-    let result = WorktreeTerminalState.presenceEvent(
+    let result = AgentSignal.presenceEvent(
       id: "claude", metadata: metadata, surfaceID: UUID(), surfaceExists: true)
     #expect((try? result.get())?.pid == 4242)
   }
@@ -110,7 +110,7 @@ struct AgentPresenceOSCTests {
   @Test func presenceEventAttributesToReceivingSurface() {
     let surfaceID = UUID()
     let metadata = AgentPresenceOSC.metadata(event: .busy)
-    let result = WorktreeTerminalState.presenceEvent(
+    let result = AgentSignal.presenceEvent(
       id: "claude", metadata: metadata, surfaceID: surfaceID, surfaceExists: true)
     let event = try? result.get()
     #expect(event?.surfaceID == surfaceID)
@@ -121,13 +121,13 @@ struct AgentPresenceOSCTests {
 
   @Test func presenceEventDropsUnknownSurface() {
     let metadata = AgentPresenceOSC.metadata(event: .busy)
-    let result = WorktreeTerminalState.presenceEvent(
+    let result = AgentSignal.presenceEvent(
       id: "claude", metadata: metadata, surfaceID: UUID(), surfaceExists: false)
     #expect(result == .failure(.unknownSurface))
   }
 
   @Test func presenceEventDropsMalformedMetadata() {
-    let result = WorktreeTerminalState.presenceEvent(
+    let result = AgentSignal.presenceEvent(
       id: "claude", metadata: "event=nope", surfaceID: UUID(), surfaceExists: true)
     #expect(result == .failure(.parseFailed))
   }
@@ -246,7 +246,7 @@ struct AgentPresenceOSCTests {
   // MARK: - notification (parse + sanitize).
 
   @Test func notificationExtractsBody() {
-    let resolved = WorktreeTerminalState.notification(
+    let resolved = AgentSignal.notification(
       id: "claude", metadata: Self.notifyMeta(body: "all done"), surfaceExists: true)
     guard case .success(let value) = resolved else {
       Issue.record("expected success, got \(resolved)")
@@ -256,7 +256,7 @@ struct AgentPresenceOSCTests {
   }
 
   @Test func notificationDropsUnknownSurface() {
-    let result = WorktreeTerminalState.notification(
+    let result = AgentSignal.notification(
       id: "claude", metadata: Self.notifyMeta(body: "x"), surfaceExists: false)
     if case .failure(.unknownSurface) = result {} else { Issue.record("expected unknownSurface, got \(result)") }
   }
@@ -266,7 +266,7 @@ struct AgentPresenceOSCTests {
     // routes `.unknownSurface` to `.debug`, never `.warning`. Asserting the exact
     // failure case locks that mapping in since `parseFailed` is the only
     // warn-level branch.
-    let result = WorktreeTerminalState.notification(
+    let result = AgentSignal.notification(
       id: "claude", metadata: Self.notifyMeta(body: "x"), surfaceExists: false)
     guard case .failure(let drop) = result else {
       Issue.record("expected failure, got \(result)")
@@ -280,7 +280,7 @@ struct AgentPresenceOSCTests {
   }
 
   @Test func notificationFallsBackToAgentTitleWhenAbsent() {
-    let resolved = WorktreeTerminalState.notification(
+    let resolved = AgentSignal.notification(
       id: "codex", metadata: Self.notifyMeta(body: "body only"), surfaceExists: true)
     guard case .success(let value) = resolved else {
       Issue.record("expected success, got \(resolved)")
@@ -291,7 +291,7 @@ struct AgentPresenceOSCTests {
 
   @Test func notificationShowsTitleOnlyToastWhenBodyAbsent() {
     // A turn-complete notify with no body still fires, showing just the title.
-    let resolved = WorktreeTerminalState.notification(
+    let resolved = AgentSignal.notification(
       id: "claude", metadata: Self.notifyMeta(), surfaceExists: true)
     guard case .success(let value) = resolved else {
       Issue.record("expected success, got \(resolved)")
@@ -304,19 +304,19 @@ struct AgentPresenceOSCTests {
   @Test func notificationDropsPayloadThatSanitizesEmpty() {
     // Body of only control / whitespace and no usable title sanitizes to empty,
     // so the toast is suppressed rather than shown blank.
-    let result = WorktreeTerminalState.notification(
+    let result = AgentSignal.notification(
       id: " ", metadata: Self.notifyMeta(body: "\n"), surfaceExists: true)
     if case .failure(.empty) = result {} else { Issue.record("expected empty, got \(result)") }
   }
 
   @Test func sanitizeStripsControlCharsAndCollapsesNewlines() {
     let dirty = "a\u{1B}[31mred\u{07}\nline"
-    #expect(WorktreeTerminalState.sanitizeNotificationText(dirty, max: 1000) == "a[31mred line")
+    #expect(AgentSignal.sanitizeNotificationText(dirty, max: 1000) == "a[31mred line")
   }
 
   @Test func sanitizeCapsToMaxScalars() {
     let long = String(repeating: "x", count: 500)
-    #expect(WorktreeTerminalState.sanitizeNotificationText(long, max: 100).count == 100)
+    #expect(AgentSignal.sanitizeNotificationText(long, max: 100).count == 100)
   }
 
   @Test func notificationStripsEmbeddedOSCSequenceFromBody() {
@@ -328,7 +328,7 @@ struct AgentPresenceOSCTests {
     // must drop both the opening ESC and the trailing ST ESC before the
     // toast sees them.
     let body = "before\u{1B}]3008;start=evil;event=busy\u{1B}\\after"
-    let resolved = WorktreeTerminalState.notification(
+    let resolved = AgentSignal.notification(
       id: "claude", metadata: Self.notifyMeta(body: body), surfaceExists: true)
     guard case .success(let value) = resolved else {
       Issue.record("expected success, got \(resolved)")
@@ -343,7 +343,7 @@ struct AgentPresenceOSCTests {
     // The standalone sanitize entry point pins the same contract directly.
     let dirty = "before\u{1B}]3008;start=evil;event=busy\u{1B}\\after"
     #expect(
-      WorktreeTerminalState.sanitizeNotificationText(dirty, max: 1000)
+      AgentSignal.sanitizeNotificationText(dirty, max: 1000)
         == #"before]3008;start=evil;event=busy\after"#)
   }
 
@@ -359,14 +359,14 @@ struct AgentPresenceOSCTests {
     let signal = AgentPresenceOSC.parseNotify(id: "codex", metadata: metadata)
     #expect(signal?.body == bodyText)
 
-    let resolved = WorktreeTerminalState.notification(
+    let resolved = AgentSignal.notification(
       id: "codex", metadata: metadata, surfaceExists: true)
     guard case .success(let value) = resolved else {
       Issue.record("expected success, got \(resolved)")
       return
     }
     #expect(value.title == "Big")
-    // Body is sanitized + capped at 1000 scalars (see WorktreeTerminalState.notification).
+    // Body is sanitized + capped at 1000 scalars (see AgentSignal.notification).
     #expect(value.body.count == 1000)
     #expect(value.body.allSatisfy { $0 == "y" })
   }
