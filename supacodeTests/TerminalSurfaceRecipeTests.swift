@@ -95,16 +95,18 @@ struct TerminalSurfaceRecipeTests {
       worktreeID: makeWorktree().id,
       tabID: TerminalTabID(),
       contentID: ContentID(),
-      initialState: state,
+      content: .terminal(state),
       origin: origin
     )
   }
 
   @Test func planMapsOriginsToSurfaceContexts() {
     let worktree = Self.makeWorktree()
+    let state = TerminalContentState(workingDirectory: nil)
     func context(of origin: ContentOrigin) -> ghostty_surface_context_e {
       TerminalSurfaceRecipe.plan(
-        for: Self.makeRequest(origin: origin),
+        for: Self.makeRequest(state: state, origin: origin),
+        terminalState: state,
         worktree: worktree,
         socketPath: nil,
         zmxExecutablePath: nil
@@ -118,15 +120,19 @@ struct TerminalSurfaceRecipeTests {
 
   @Test func planPrefersThePersistedWorkingDirectory() {
     let worktree = Self.makeWorktree()
+    let persistedState = TerminalContentState(workingDirectory: "/tmp/elsewhere")
     let persisted = TerminalSurfaceRecipe.plan(
-      for: Self.makeRequest(state: TerminalContentState(workingDirectory: "/tmp/elsewhere")),
+      for: Self.makeRequest(state: persistedState),
+      terminalState: persistedState,
       worktree: worktree,
       socketPath: nil,
       zmxExecutablePath: nil
     )
     #expect(persisted.workingDirectory?.path(percentEncoded: false).hasPrefix("/tmp/elsewhere") == true)
+    let emptyState = TerminalContentState(workingDirectory: nil)
     let fallback = TerminalSurfaceRecipe.plan(
-      for: Self.makeRequest(),
+      for: Self.makeRequest(state: emptyState),
+      terminalState: emptyState,
       worktree: worktree,
       socketPath: nil,
       zmxExecutablePath: nil
@@ -139,12 +145,11 @@ struct TerminalSurfaceRecipeTests {
     let grid = try #require(
       FrozenGrid.from(backingSize: CGSize(width: 800, height: 600), columns: 80, rows: 24, scale: 2, fontSize: 13)
     )
-    let request = Self.makeRequest(
-      state: TerminalContentState(workingDirectory: nil, frozenGrid: grid),
-      origin: .restored
-    )
+    let state = TerminalContentState(workingDirectory: nil, frozenGrid: grid)
+    let request = Self.makeRequest(state: state, origin: .restored)
     let plan = TerminalSurfaceRecipe.plan(
       for: request,
+      terminalState: state,
       worktree: worktree,
       socketPath: "/tmp/socket",
       zmxExecutablePath: "/usr/local/bin/zmx"

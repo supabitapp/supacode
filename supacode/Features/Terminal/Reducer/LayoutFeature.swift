@@ -4,13 +4,13 @@ import Foundation
 import IdentifiedCollections
 import SupacodeSettingsShared
 
-/// Recipe for a new tab: identity (minted when nil), content seed, spawn
-/// geometry, and whether the tab takes selection and pane focus.
+/// Recipe for a new tab: identity (minted when nil), the kind-keyed content
+/// seed, spawn geometry, and whether the tab takes selection and pane focus.
 nonisolated struct NewTabSpec: Equatable, Sendable {
   let tabID: TerminalTabID?
   let contentID: ContentID?
   let title: String
-  let initialState: TerminalContentState
+  let content: ContentState
   let geometry: ContentGeometry
   let select: Bool
 
@@ -18,14 +18,14 @@ nonisolated struct NewTabSpec: Equatable, Sendable {
     tabID: TerminalTabID? = nil,
     contentID: ContentID? = nil,
     title: String,
-    initialState: TerminalContentState,
+    content: ContentState,
     geometry: ContentGeometry,
     select: Bool = true
   ) {
     self.tabID = tabID
     self.contentID = contentID
     self.title = title
-    self.initialState = initialState
+    self.content = content
     self.geometry = geometry
     self.select = select
   }
@@ -43,7 +43,7 @@ extension LayoutContentFactory: DependencyKey {
   static let liveValue = LayoutContentFactory(
     make: { request in
       reportIssue("LayoutContentFactory.make is unimplemented")
-      return InertTabContent(id: request.contentID, state: request.initialState)
+      return InertTabContent(id: request.contentID, state: request.content)
     }
   )
 
@@ -213,7 +213,7 @@ extension LayoutFeature {
       worktreeID: state.id,
       tabID: identity.tabID,
       contentID: identity.contentID,
-      initialState: spec.initialState,
+      content: spec.content,
       origin: bootstraps ? .first : .tab
     )
     guard provisionContent(request, at: spec.geometry, operation: "newTab") else { return .none }
@@ -228,7 +228,7 @@ extension LayoutFeature {
     let tab = TabItem(
       id: identity.tabID,
       title: spec.title,
-      content: ContentSnapshot(id: identity.contentID, state: .terminal(spec.initialState))
+      content: ContentSnapshot(id: identity.contentID, state: spec.content)
     )
     // Mirror TerminalTabManager.createTab: insert after the selection;
     // background tabs append so a run of them keeps its order.
@@ -349,17 +349,14 @@ extension LayoutFeature {
       landWokenSnapshot(&state, tabID: tabID, content: content)
       return .none
     }
-    // Post-relaunch the runtime is empty; rebuild the content from stored state.
-    guard let terminalState = snapshot.state.terminalState else {
-      Self.logger.warning("wakeTab has no terminal payload for \(snapshot.id.rawValue)")
-      return .none
-    }
+    // Post-relaunch the runtime is empty; rebuild the content from stored
+    // state, whatever its kind.
     let content = layoutContentFactory.make(
       ContentRequest(
         worktreeID: state.id,
         tabID: tabID,
         contentID: snapshot.id,
-        initialState: terminalState,
+        content: snapshot.state,
         origin: .restored
       )
     )
@@ -407,7 +404,7 @@ extension LayoutFeature {
       worktreeID: state.id,
       tabID: identity.tabID,
       contentID: identity.contentID,
-      initialState: spec.initialState,
+      content: spec.content,
       origin: .split
     )
     guard provisionContent(request, at: spec.geometry, operation: "splitPane") else { return .none }
@@ -424,7 +421,7 @@ extension LayoutFeature {
     let tab = TabItem(
       id: identity.tabID,
       title: spec.title,
-      content: ContentSnapshot(id: identity.contentID, state: .terminal(spec.initialState))
+      content: ContentSnapshot(id: identity.contentID, state: spec.content)
     )
     state.layout.panes.append(Pane(id: paneID, tabs: [tab], selectedTabID: tab.id))
     if spec.select {

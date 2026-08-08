@@ -54,10 +54,15 @@ struct LayoutFeatureTests {
     private(set) var contents: [ContentID: MockTabContent] = [:]
     private(set) var requests: [ContentRequest] = []
 
-    var madeStates: [TerminalContentState] { requests.map(\.initialState) }
+    var madeStates: [TerminalContentState] { requests.map { Self.terminalState(of: $0.content) } }
+
+    static func terminalState(of content: ContentState) -> TerminalContentState {
+      guard case .terminal(let state) = content else { return TerminalContentState(workingDirectory: nil) }
+      return state
+    }
 
     func make(_ request: ContentRequest) -> any TabContent {
-      let content = MockTabContent(id: request.contentID, initialState: request.initialState)
+      let content = MockTabContent(id: request.contentID, initialState: Self.terminalState(of: request.content))
       contents[request.contentID] = content
       requests.append(request)
       return content
@@ -90,7 +95,7 @@ struct LayoutFeatureTests {
       tabID: tabID,
       contentID: contentID,
       title: title,
-      initialState: seedState,
+      content: .terminal(seedState),
       geometry: geometry,
       select: select
     )

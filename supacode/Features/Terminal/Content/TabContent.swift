@@ -8,6 +8,9 @@ protocol TabContent: AnyObject {
   var kind: ContentKind { get }
   /// The hosted view; nil until the session starts and while hibernated.
   var renderer: NSView? { get }
+  /// Whether closing now would interrupt real work (a terminal's foreground
+  /// process); drives the busy-gated close confirmation.
+  var isBusy: Bool { get }
   /// Spawns the session eagerly at an explicit geometry; a second call while
   /// the renderer is alive is a no-op.
   func startSession(at geometry: ContentGeometry)
@@ -16,6 +19,11 @@ protocol TabContent: AnyObject {
   func hibernate()
   /// The current persistable state, including restoration data.
   func snapshot() -> ContentSnapshot
+}
+
+extension TabContent {
+  // Most content is never busy; terminals override with their process state.
+  var isBusy: Bool { false }
 }
 
 /// Where in the layout a content is being created; a runtime hint for the
@@ -31,27 +39,28 @@ nonisolated enum ContentOrigin: Equatable, Sendable {
   case restored
 }
 
-/// Everything the factory needs to build one tab's content.
+/// Everything the factory needs to build one tab's content, kind and all.
 nonisolated struct ContentRequest: Equatable, Sendable {
   var worktreeID: Worktree.ID
   var tabID: TerminalTabID
   var contentID: ContentID
-  var initialState: TerminalContentState
+  var content: ContentState
   var origin: ContentOrigin
 }
 
 /// Renderless content that never starts a session; the fallback when a
-/// factory cannot build the real thing.
+/// factory cannot build the real thing, for any content kind.
 @MainActor
 final class InertTabContent: TabContent {
   let id: ContentID
-  let kind: ContentKind = .terminal
-  private let state: TerminalContentState
+  private let state: ContentState
 
-  init(id: ContentID, state: TerminalContentState) {
+  init(id: ContentID, state: ContentState) {
     self.id = id
     self.state = state
   }
+
+  var kind: ContentKind { state.kind }
 
   var renderer: NSView? { nil }
 
@@ -60,7 +69,7 @@ final class InertTabContent: TabContent {
   func hibernate() {}
 
   func snapshot() -> ContentSnapshot {
-    ContentSnapshot(id: id, state: .terminal(state))
+    ContentSnapshot(id: id, state: state)
   }
 }
 
@@ -88,6 +97,9 @@ final class TerminalContent: TabContent {
   }
 
   var renderer: NSView? { surfaceView }
+
+  // Hibernated terminals have no live surface, so nothing is interruptible.
+  var isBusy: Bool { surfaceView?.needsCloseConfirmation ?? false }
 
   func startSession(at geometry: ContentGeometry) {
     guard surfaceView == nil else { return }

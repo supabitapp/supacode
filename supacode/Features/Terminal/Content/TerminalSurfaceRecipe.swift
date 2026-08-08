@@ -149,10 +149,12 @@ nonisolated enum TerminalSurfaceRecipe {
     var context: ghostty_surface_context_e
   }
 
-  /// Resolves the full construction plan for a layout-managed surface.
+  /// Resolves the full construction plan for a layout-managed surface from the
+  /// request's identity and its terminal payload.
   @MainActor
   static func plan(
     for request: ContentRequest,
+    terminalState: TerminalContentState,
     worktree: Worktree,
     socketPath: String?,
     zmxExecutablePath: String?
@@ -167,7 +169,7 @@ nonisolated enum TerminalSurfaceRecipe {
     // an `ssh` line and the cwd lives on the remote.
     let workingDirectory: URL? =
       worktree.host == nil
-      ? request.initialState.workingDirectory.map { URL(filePath: $0, directoryHint: .isDirectory) }
+      ? terminalState.workingDirectory.map { URL(filePath: $0, directoryHint: .isDirectory) }
         ?? worktree.workingDirectory
       : nil
     return SurfacePlan(
@@ -183,7 +185,7 @@ nonisolated enum TerminalSurfaceRecipe {
       workingDirectory: workingDirectory,
       // A woken surface keeps its frozen font: the frozen backing size only
       // reproduces the grid when the font, and so the cell size, matches.
-      fontSize: request.initialState.frozenGrid?.fontSize,
+      fontSize: terminalState.frozenGrid?.fontSize,
       context: context(for: request.origin)
     )
   }
@@ -211,39 +213,50 @@ struct TerminalContentBuilder {
 
   func factory() -> LayoutContentFactory {
     LayoutContentFactory { request in
-      guard let worktree = worktree(request.worktreeID) else {
-        // A vanished worktree cannot host a session; inert content keeps the
-        // layout itself usable.
-        TerminalSurfaceRecipe.builderLogger.error(
-          "No worktree \(request.worktreeID.rawValue) for content \(request.contentID.rawValue)")
-        return InertTabContent(id: request.contentID, state: request.initialState)
+      switch request.content {
+      case .terminal(let terminalState):
+        terminalContent(request, terminalState: terminalState)
       }
-      return TerminalContent(
-        id: request.contentID,
-        makeSurface: { geometry in
-          let plan = TerminalSurfaceRecipe.plan(
-            for: request,
-            worktree: worktree,
-            socketPath: socketPath(),
-            zmxExecutablePath: zmxExecutablePath()
-          )
-          return GhosttySurfaceView(
-            id: request.contentID.rawValue,
-            runtime: runtime,
-            workingDirectory: plan.workingDirectory,
-            command: plan.command,
-            initialInput: plan.initialInput,
-            environmentVariables: plan.environment,
-            commandWrapper: plan.commandWrapper,
-            disableShellIntegration: false,
-            fontSize: plan.fontSize,
-            initialGeometry: geometry,
-            context: plan.context
-          )
-        },
-        initialState: request.initialState
-      )
     }
+  }
+
+  private func terminalContent(
+    _ request: ContentRequest,
+    terminalState: TerminalContentState
+  ) -> any TabContent {
+    guard let worktree = worktree(request.worktreeID) else {
+      // A vanished worktree cannot host a session; inert content keeps the
+      // layout itself usable.
+      TerminalSurfaceRecipe.builderLogger.error(
+        "No worktree \(request.worktreeID.rawValue) for content \(request.contentID.rawValue)")
+      return InertTabContent(id: request.contentID, state: request.content)
+    }
+    return TerminalContent(
+      id: request.contentID,
+      makeSurface: { geometry in
+        let plan = TerminalSurfaceRecipe.plan(
+          for: request,
+          terminalState: terminalState,
+          worktree: worktree,
+          socketPath: socketPath(),
+          zmxExecutablePath: zmxExecutablePath()
+        )
+        return GhosttySurfaceView(
+          id: request.contentID.rawValue,
+          runtime: runtime,
+          workingDirectory: plan.workingDirectory,
+          command: plan.command,
+          initialInput: plan.initialInput,
+          environmentVariables: plan.environment,
+          commandWrapper: plan.commandWrapper,
+          disableShellIntegration: false,
+          fontSize: plan.fontSize,
+          initialGeometry: geometry,
+          context: plan.context
+        )
+      },
+      initialState: terminalState
+    )
   }
 }
 
