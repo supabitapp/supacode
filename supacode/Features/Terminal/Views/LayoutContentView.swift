@@ -87,7 +87,7 @@ private struct PaneStripView: View {
         PaneTabStrip(pane: pane, isFocused: isFocused, store: store)
         Divider()
         if let contentID = pane.selectedTab?.content.id {
-          ContentHostView(contentID: contentID, runtime: runtime)
+          ContentHostView(contentID: contentID, runtime: runtime, epoch: store.renderEpoch)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
           Color.clear
@@ -162,6 +162,9 @@ private struct PaneTabButton: View {
 private struct ContentHostView: NSViewRepresentable {
   let contentID: ContentID
   let runtime: ContentRuntime
+  /// The runtime is not observable; the reducer bumps this on hibernate and
+  /// wake so `updateNSView` re-runs even when the layout value is unchanged.
+  let epoch: UInt64
 
   func makeNSView(context: Context) -> NSView {
     let container = NSView()

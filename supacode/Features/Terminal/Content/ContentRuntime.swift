@@ -37,6 +37,16 @@ final class ContentRuntime {
     contents[id]?.renderer
   }
 
+  /// Spawn geometry for content created next to `id`: the source's mounted
+  /// renderer, else the caller's deterministic fallback content, else the
+  /// shared window/screen fallback chain.
+  func spawnGeometry(near id: ContentID?, fallback fallbackID: ContentID? = nil) -> ContentGeometry {
+    ContentGeometry.resolve(anchors: [
+      id.flatMap { contents[$0]?.renderer },
+      fallbackID.flatMap { contents[$0]?.renderer },
+    ])
+  }
+
   func content(for id: ContentID) -> (any TabContent)? {
     contents[id]
   }

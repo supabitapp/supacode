@@ -800,6 +800,7 @@ struct LayoutFeatureTests {
     await harness.store.send(.hibernateTab(id: harness.tabID)) {
       $0.layout.panes[id: paneID]?.tabs[id: harness.tabID]?.content =
         ContentSnapshot(id: harness.contentID, state: .terminal(marker))
+      $0.renderEpoch = 1
     }
     #expect(mock.hibernateCalls == 1)
     #expect(harness.runtime.content(for: harness.contentID) === mock)
@@ -817,8 +818,11 @@ struct LayoutFeatureTests {
     await harness.store.send(.hibernateTab(id: harness.tabID)) {
       $0.layout.panes[id: harness.paneID]?.tabs[id: harness.tabID]?.content =
         ContentSnapshot(id: harness.contentID, state: .terminal(marker))
+      $0.renderEpoch = 1
     }
-    await harness.store.send(.wakeTab(id: harness.tabID))
+    await harness.store.send(.wakeTab(id: harness.tabID)) {
+      $0.renderEpoch = 2
+    }
     let restored = try #require(ContentGeometry.restored(grid))
     #expect(mock.startGeometries == [.fallback, restored])
     #expect(harness.store.state.layout.isConsistent)
@@ -835,10 +839,13 @@ struct LayoutFeatureTests {
     await harness.store.send(.hibernateTab(id: harness.tabID)) {
       $0.layout.panes[id: harness.paneID]?.tabs[id: harness.tabID]?.content =
         ContentSnapshot(id: harness.contentID, state: .terminal(marker))
+      $0.renderEpoch = 1
     }
     // Simulate a relaunch: the runtime lost the entry, no tombstone.
     harness.runtime.remove(harness.contentID, tombstone: false)
-    await harness.store.send(.wakeTab(id: harness.tabID))
+    await harness.store.send(.wakeTab(id: harness.tabID)) {
+      $0.renderEpoch = 2
+    }
     let revived = try #require(harness.recorder.contents[harness.contentID])
     #expect(revived !== original)
     #expect(harness.recorder.madeStates.last == marker)
@@ -869,8 +876,11 @@ struct LayoutFeatureTests {
     await harness.store.send(.hibernateTab(id: tabID)) {
       $0.layout.panes[id: paneID]?.tabs[id: tabID]?.content =
         ContentSnapshot(id: contentID, state: .terminal(marker))
+      $0.renderEpoch = 1
     }
-    await harness.store.send(.wakeTab(id: tabID))
+    await harness.store.send(.wakeTab(id: tabID)) {
+      $0.renderEpoch = 2
+    }
     #expect(mock.startGeometries == [custom, .fallback])
     #expect(harness.store.state.layout.isConsistent)
   }
@@ -957,18 +967,28 @@ struct LayoutFeatureTests {
 
   // MARK: - Close confirmation.
 
-  private func closeConfirmAlert(tab tabID: TabID) -> AlertState<LayoutFeature.Action.Alert> {
-    AlertState {
-      TextState("Close Tab?")
+  private func closeConfirmAlert(
+    tabs tabIDs: [TabID],
+    interrupts: Bool = true
+  ) -> AlertState<LayoutFeature.Action.Alert> {
+    let message: String =
+      switch (interrupts, tabIDs.count == 1) {
+      case (true, true): "This tab has work that closing would interrupt."
+      case (true, false): "These tabs have work that closing would interrupt."
+      case (false, true): "Closing will end this tab's session."
+      case (false, false): "Closing will end these tabs' sessions."
+      }
+    return AlertState {
+      TextState(tabIDs.count == 1 ? "Close Tab?" : "Close \(tabIDs.count) Tabs?")
     } actions: {
-      ButtonState(role: .destructive, action: .confirmClose(tab: tabID)) {
+      ButtonState(role: .destructive, action: .confirmClose(tabs: tabIDs)) {
         TextState("Close")
       }
       ButtonState(role: .cancel) {
         TextState("Cancel")
       }
     } message: {
-      TextState("This tab has work that closing would interrupt.")
+      TextState(message)
     }
   }
 
@@ -977,11 +997,11 @@ struct LayoutFeatureTests {
     $settingsFile.withLock { $0.global.confirmCloseTab = .always }
     let harness = await makeHarness()
     // Not busy, but `.always` still raises the confirmation.
-    await harness.store.send(.contentRequestedClose(content: harness.contentID)) {
-      $0.alert = self.closeConfirmAlert(tab: harness.tabID)
+    await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .tab)) {
+      $0.alert = self.closeConfirmAlert(tabs: [harness.tabID], interrupts: false)
     }
     // Confirming closes the tab and reaps the session.
-    await harness.store.send(.alert(.presented(.confirmClose(tab: harness.tabID)))) {
+    await harness.store.send(.alert(.presented(.confirmClose(tabs: [harness.tabID])))) {
       $0.alert = nil
       $0.layout.tree = SplitTree()
       $0.layout.panes = []
@@ -995,8 +1015,8 @@ struct LayoutFeatureTests {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global.confirmCloseTab = .always }
     let harness = await makeHarness()
-    await harness.store.send(.contentRequestedClose(content: harness.contentID)) {
-      $0.alert = self.closeConfirmAlert(tab: harness.tabID)
+    await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .tab)) {
+      $0.alert = self.closeConfirmAlert(tabs: [harness.tabID], interrupts: false)
     }
     await harness.store.send(.alert(.dismiss)) {
       $0.alert = nil
@@ -1011,7 +1031,7 @@ struct LayoutFeatureTests {
     let harness = await makeHarness()
     harness.mock?.isBusy = true
     // `.never` closes immediately even while busy.
-    await harness.store.send(.contentRequestedClose(content: harness.contentID)) {
+    await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .tab)) {
       $0.layout.tree = SplitTree()
       $0.layout.panes = []
       $0.layout.focusedPaneID = nil
@@ -1025,8 +1045,8 @@ struct LayoutFeatureTests {
     $settingsFile.withLock { $0.global.confirmCloseTab = .busy }
     let harness = await makeHarness()
     harness.mock?.isBusy = true
-    await harness.store.send(.contentRequestedClose(content: harness.contentID)) {
-      $0.alert = self.closeConfirmAlert(tab: harness.tabID)
+    await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .tab)) {
+      $0.alert = self.closeConfirmAlert(tabs: [harness.tabID])
     }
   }
 
@@ -1035,7 +1055,7 @@ struct LayoutFeatureTests {
     $settingsFile.withLock { $0.global.confirmCloseTab = .busy }
     let harness = await makeHarness()
     harness.mock?.isBusy = false
-    await harness.store.send(.contentRequestedClose(content: harness.contentID)) {
+    await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .tab)) {
       $0.layout.tree = SplitTree()
       $0.layout.panes = []
       $0.layout.focusedPaneID = nil
@@ -1044,11 +1064,248 @@ struct LayoutFeatureTests {
     #expect(harness.store.state.layout.isConsistent)
   }
 
+  @Test(.dependencies) func contentRequestedCloseBusyConfirmsForHibernatedTerminals() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .busy }
+    let harness = await makeHarness()
+    // A hibernated terminal cannot report busyness; its zmx session may still
+    // host work, so busy mode confirms.
+    await harness.store.send(.hibernateTab(id: harness.tabID)) {
+      $0.renderEpoch = 1
+    }
+    await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .tab)) {
+      $0.alert = self.closeConfirmAlert(tabs: [harness.tabID])
+    }
+  }
+
+  @Test(.dependencies) func contentRequestedCloseOtherTabsScopesToThePane() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .never }
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let third = await addTab(harness, title: "Three")
+    let paneID = harness.paneID
+    // Closing others from the first tab drops the second and third only.
+    await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .otherTabs)) {
+      $0.layout.panes[id: paneID]?.tabs.remove(id: second.tabID)
+      $0.layout.panes[id: paneID]?.tabs.remove(id: third.tabID)
+      $0.layout.panes[id: paneID]?.selectedTabID = harness.tabID
+    }
+    // The merged reaps confirm in no guaranteed order.
+    harness.store.exhaustivity = .off
+    await harness.store.finish()
+    #expect(harness.runtime.pendingKill.isEmpty)
+    #expect(harness.store.state.layout.panes[id: paneID]?.tabs.map(\.id) == [harness.tabID])
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test(.dependencies) func contentRequestedCloseTabsToTheRightKeepsTheLeft() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .never }
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let third = await addTab(harness, title: "Three")
+    let paneID = harness.paneID
+    await harness.store.send(.contentRequestedClose(content: second.contentID, scope: .tabsToTheRight)) {
+      $0.layout.panes[id: paneID]?.tabs.remove(id: third.tabID)
+      $0.layout.panes[id: paneID]?.selectedTabID = second.tabID
+    }
+    await harness.store.receive(.runtime(.killConfirmed(id: third.contentID)))
+    #expect(harness.store.state.layout.panes[id: paneID]?.tabs.map(\.id) == [harness.tabID, second.tabID])
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test(.dependencies) func contentRequestedCloseOtherTabsRaisesThePluralAlert() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .always }
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let third = await addTab(harness, title: "Three")
+    // Literal copy pinned on purpose: the helper elsewhere mirrors the
+    // production switch, which would hide a swapped branch.
+    await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .otherTabs)) {
+      $0.alert = AlertState {
+        TextState("Close 2 Tabs?")
+      } actions: {
+        ButtonState(role: .destructive, action: .confirmClose(tabs: [second.tabID, third.tabID])) {
+          TextState("Close")
+        }
+        ButtonState(role: .cancel) {
+          TextState("Cancel")
+        }
+      } message: {
+        TextState("Closing will end these tabs' sessions.")
+      }
+    }
+  }
+
   @Test(.dependencies) func contentRequestedCloseForUnknownContentIsANoOp() async {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global.confirmCloseTab = .always }
     let harness = await makeHarness()
-    await harness.store.send(.contentRequestedClose(content: ContentID()))
+    await harness.store.send(.contentRequestedClose(content: ContentID(), scope: .tab))
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  // MARK: - Content-originated requests.
+
+  @Test func contentRequestedNewTabInheritsFromTheSource() async throws {
+    let harness = await makeHarness()
+    let paneID = harness.paneID
+    await harness.store.send(.contentRequestedNewTab(content: harness.contentID)) {
+      $0.layout.panes[id: paneID]?.tabs.append(
+        TabItem(
+          id: TabID(rawValue: UUID(0)),
+          title: "Terminal 1",
+          content: ContentSnapshot(
+            id: ContentID(rawValue: UUID(1)),
+            state: .terminal(TerminalContentState(workingDirectory: nil))
+          )
+        )
+      )
+      $0.layout.panes[id: paneID]?.selectedTabID = TabID(rawValue: UUID(0))
+    }
+    let request = try #require(harness.recorder.requests.last)
+    #expect(request.inheritedFrom == harness.contentID)
+    #expect(request.origin == .tab)
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func contentRequestedSplitOpensAFreshTabInTheNewPane() async throws {
+    let harness = await makeHarness()
+    await harness.store.send(.contentRequestedSplit(content: harness.contentID, direction: .right)) {
+      let newPaneID = PaneID(rawValue: UUID(2))
+      $0.layout.tree = try $0.layout.tree.inserting(view: newPaneID, at: harness.paneID, direction: .right)
+      $0.layout.panes.append(
+        Pane(
+          id: newPaneID,
+          tabs: [
+            TabItem(
+              id: TabID(rawValue: UUID(0)),
+              title: "Terminal 1",
+              content: ContentSnapshot(
+                id: ContentID(rawValue: UUID(1)),
+                state: .terminal(TerminalContentState(workingDirectory: nil))
+              )
+            )
+          ],
+          selectedTabID: TabID(rawValue: UUID(0))
+        )
+      )
+      $0.layout.focusedPaneID = newPaneID
+    }
+    let request = try #require(harness.recorder.requests.last)
+    #expect(request.inheritedFrom == harness.contentID)
+    #expect(request.origin == .split)
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func contentRequestedFocusFollowsTheContentsPane() async throws {
+    let harness = await makeHarness()
+    _ = await splitPane(harness, anchor: harness.paneID)
+    // Focus followed the split; the source content's input focus pulls it back.
+    await harness.store.send(.contentRequestedFocus(content: harness.contentID)) {
+      $0.layout.focusedPaneID = harness.paneID
+    }
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func contentRequestedResizeGrowsThePaneByPixels() async throws {
+    let harness = await makeHarness()
+    let split = await splitPane(harness, anchor: harness.paneID)
+    // Give both visible renderers real extents so the tree has a size.
+    harness.mock?.renderer?.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+    harness.recorder.contents[split.contentID]?.renderer?.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+    // 100px rightward over a 1600px-wide horizontal split: 0.5 + 100/1600.
+    await harness.store.send(
+      .contentRequestedResize(content: harness.contentID, direction: .right, amount: 100)
+    ) {
+      let node = try #require($0.layout.tree.root)
+      $0.layout.tree = try $0.layout.tree.resizing(
+        node: try #require($0.layout.tree.find(id: harness.paneID.rawValue)),
+        by: 100,
+        in: .right,
+        with: CGRect(origin: .zero, size: node.viewBounds { _ in CGSize(width: 800, height: 600) })
+      )
+    }
+    let ratio: Double? =
+      switch harness.store.state.layout.tree.root {
+      case .split(let split): split.ratio
+      default: nil
+      }
+    #expect(ratio == 0.5625)
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func contentRequestedResizeWithoutAMatchingAxisIsANoOp() async {
+    let harness = await makeHarness()
+    harness.mock?.renderer?.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+    // A lone pane has no split to resize.
+    await harness.store.send(.contentRequestedResize(content: harness.contentID, direction: .right, amount: 50))
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func contentRequestedResizeWithDegenerateBoundsIsANoOp() async {
+    let harness = await makeHarness()
+    _ = await splitPane(harness, anchor: harness.paneID)
+    // Renderers report zero extents (mid-wake); the ratio must not move.
+    await harness.store.send(.contentRequestedResize(content: harness.contentID, direction: .right, amount: 50))
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func contentRequestedFocusSplitMovesToTheNeighbor() async throws {
+    let harness = await makeHarness()
+    let split = await splitPane(harness, anchor: harness.paneID)
+    await harness.store.send(.contentRequestedFocusSplit(content: split.contentID, direction: .previous)) {
+      $0.layout.focusedPaneID = harness.paneID
+    }
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func contentRequestedGotoTabWrapsAroundTheStrip() async {
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let paneID = harness.paneID
+    // Selection sits on the second tab; next wraps to the first.
+    await harness.store.send(.contentRequestedGotoTab(content: second.contentID, target: .next)) {
+      $0.layout.panes[id: paneID]?.selectedTabID = harness.tabID
+    }
+    await harness.store.send(.contentRequestedGotoTab(content: harness.contentID, target: .previous)) {
+      $0.layout.panes[id: paneID]?.selectedTabID = second.tabID
+    }
+    await harness.store.send(.contentRequestedGotoTab(content: second.contentID, target: .position(1))) {
+      $0.layout.panes[id: paneID]?.selectedTabID = harness.tabID
+    }
+    // A one-based position beyond the strip clamps to the last tab.
+    await harness.store.send(.contentRequestedGotoTab(content: harness.contentID, target: .position(9))) {
+      $0.layout.panes[id: paneID]?.selectedTabID = second.tabID
+    }
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func contentRequestedMoveTabReordersOnlyTheSelectedTab() async {
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let paneID = harness.paneID
+    // The first tab is not selected; its keybind must not shuffle the strip.
+    await harness.store.send(.contentRequestedMoveTab(content: harness.contentID, amount: 1))
+    // The selected second tab wraps from the tail to the front.
+    await harness.store.send(.contentRequestedMoveTab(content: second.contentID, amount: 1)) {
+      $0.layout.panes[id: paneID]?.tabs = [
+        Self.tab(id: second.tabID, contentID: second.contentID, title: "Two"),
+        Self.tab(id: harness.tabID, contentID: harness.contentID, title: "One"),
+      ]
+    }
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func contentRequestedToggleZoomZoomsTheContentsPane() async {
+    let harness = await makeHarness()
+    _ = await splitPane(harness, anchor: harness.paneID)
+    await harness.store.send(.contentRequestedToggleZoom(content: harness.contentID)) {
+      $0.layout.focusedPaneID = harness.paneID
+      $0.layout.tree = $0.layout.tree.settingZoomed($0.layout.tree.find(id: harness.paneID.rawValue))
+    }
     #expect(harness.store.state.layout.isConsistent)
   }
 }

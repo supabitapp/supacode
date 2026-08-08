@@ -106,10 +106,12 @@ struct TerminalSurfaceRecipeTests {
     func context(of origin: ContentOrigin) -> ghostty_surface_context_e {
       TerminalSurfaceRecipe.plan(
         for: Self.makeRequest(state: state, origin: origin),
-        terminalState: state,
-        worktree: worktree,
-        socketPath: nil,
-        zmxExecutablePath: nil
+        seed: TerminalSurfaceRecipe.PlanSeed(
+          terminalState: state,
+          worktree: worktree,
+          socketPath: nil,
+          zmxExecutablePath: nil
+        )
       ).context
     }
     #expect(context(of: .first) == GHOSTTY_SURFACE_CONTEXT_WINDOW)
@@ -123,19 +125,23 @@ struct TerminalSurfaceRecipeTests {
     let persistedState = TerminalContentState(workingDirectory: "/tmp/elsewhere")
     let persisted = TerminalSurfaceRecipe.plan(
       for: Self.makeRequest(state: persistedState),
-      terminalState: persistedState,
-      worktree: worktree,
-      socketPath: nil,
-      zmxExecutablePath: nil
+      seed: TerminalSurfaceRecipe.PlanSeed(
+        terminalState: persistedState,
+        worktree: worktree,
+        socketPath: nil,
+        zmxExecutablePath: nil
+      )
     )
     #expect(persisted.workingDirectory?.path(percentEncoded: false).hasPrefix("/tmp/elsewhere") == true)
     let emptyState = TerminalContentState(workingDirectory: nil)
     let fallback = TerminalSurfaceRecipe.plan(
       for: Self.makeRequest(state: emptyState),
-      terminalState: emptyState,
-      worktree: worktree,
-      socketPath: nil,
-      zmxExecutablePath: nil
+      seed: TerminalSurfaceRecipe.PlanSeed(
+        terminalState: emptyState,
+        worktree: worktree,
+        socketPath: nil,
+        zmxExecutablePath: nil
+      )
     )
     #expect(fallback.workingDirectory == worktree.workingDirectory)
   }
@@ -149,10 +155,15 @@ struct TerminalSurfaceRecipeTests {
     let request = Self.makeRequest(state: state, origin: .restored)
     let plan = TerminalSurfaceRecipe.plan(
       for: request,
-      terminalState: state,
-      worktree: worktree,
-      socketPath: "/tmp/socket",
-      zmxExecutablePath: "/usr/local/bin/zmx"
+      seed: TerminalSurfaceRecipe.PlanSeed(
+        terminalState: state,
+        worktree: worktree,
+        socketPath: "/tmp/socket",
+        zmxExecutablePath: "/usr/local/bin/zmx",
+        // A frozen grid outranks any fallback font: the frozen backing size
+        // only reproduces the grid at the frozen font.
+        fallbackFontSize: 99
+      )
     )
     #expect(plan.fontSize == 13)
     #expect(plan.environment["SUPACODE_TAB_ID"] == request.tabID.rawValue.uuidString)

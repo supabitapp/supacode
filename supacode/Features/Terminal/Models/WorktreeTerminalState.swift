@@ -2408,32 +2408,16 @@ final class WorktreeTerminalState {
     fromSurfaceId surfaceID: UUID?,
     context: ghostty_surface_context_e
   ) -> InheritedSurfaceConfig {
-    guard let surfaceID,
-      let view = surfaces[surfaceID],
-      let sourceSurface = view.surface
-    else {
-      return InheritedSurfaceConfig(workingDirectory: nil, fontSize: nil)
-    }
-
-    let inherited = ghostty_surface_inherited_config(sourceSurface, context)
-    let fontSize = inherited.font_size == 0 ? nil : inherited.font_size
-    let workingDirectory = inherited.working_directory.flatMap { ptr -> URL? in
-      let path = String(cString: ptr)
-      if path.isEmpty {
-        return nil
-      }
-      return URL(fileURLWithPath: path, isDirectory: true)
-    }
-    return InheritedSurfaceConfig(workingDirectory: workingDirectory, fontSize: fontSize)
+    let inherited = TerminalSurfaceRecipe.inheritedConfig(
+      from: surfaceID.flatMap { surfaces[$0] },
+      context: context
+    )
+    return InheritedSurfaceConfig(workingDirectory: inherited.workingDirectory, fontSize: inherited.fontSize)
   }
-
-  private static let rememberedZoomFontSizeKey = "terminalRememberedFontSize"
 
   /// Seed for a sourceless surface, gated on `window-inherit-font-size`.
   private var rememberedZoomFontSize: Float32? {
-    guard runtime.windowInheritsFontSize() else { return nil }
-    @Shared(.appStorage(Self.rememberedZoomFontSizeKey)) var stored: Double = 0
-    return stored > 0 ? Float32(stored) : nil
+    TerminalSurfaceRecipe.rememberedZoomFontSize(gatedBy: runtime.windowInheritsFontSize())
   }
 
   /// Sample and persist the focused surface's zoom (worktree switch, quit).
@@ -2445,7 +2429,7 @@ final class WorktreeTerminalState {
   /// 0 clears a prior zoom, matching Ghostty dropping the override on reset.
   private func persistZoomFontSize(_ size: Float32) {
     guard runtime.windowInheritsFontSize() else { return }
-    @Shared(.appStorage(Self.rememberedZoomFontSizeKey)) var stored: Double = 0
+    @Shared(.appStorage(TerminalSurfaceRecipe.rememberedZoomFontSizeKey)) var stored: Double = 0
     $stored.withLock { $0 = Double(max(size, 0)) }
   }
 

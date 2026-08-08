@@ -149,45 +149,105 @@ nonisolated enum TerminalSurfaceRecipe {
     var context: ghostty_surface_context_e
   }
 
+  /// Everything a surface plan resolves against beyond the request itself.
+  @MainActor
+  struct PlanSeed {
+    var terminalState: TerminalContentState
+    var worktree: Worktree
+    var socketPath: String?
+    var zmxExecutablePath: String?
+    /// Live source surface for Ghostty's window-inherit config; nil spawns
+    /// without inheritance.
+    var inheritedFrom: GhosttySurfaceView?
+    /// Font for a sourceless fresh spawn (the remembered zoom), pre-gated by
+    /// the caller.
+    var fallbackFontSize: Float32?
+
+    init(
+      terminalState: TerminalContentState,
+      worktree: Worktree,
+      socketPath: String?,
+      zmxExecutablePath: String?,
+      inheritedFrom: GhosttySurfaceView? = nil,
+      fallbackFontSize: Float32? = nil
+    ) {
+      self.terminalState = terminalState
+      self.worktree = worktree
+      self.socketPath = socketPath
+      self.zmxExecutablePath = zmxExecutablePath
+      self.inheritedFrom = inheritedFrom
+      self.fallbackFontSize = fallbackFontSize
+    }
+  }
+
   /// Resolves the full construction plan for a layout-managed surface from the
   /// request's identity and its terminal payload.
   @MainActor
-  static func plan(
-    for request: ContentRequest,
-    terminalState: TerminalContentState,
-    worktree: Worktree,
-    socketPath: String?,
-    zmxExecutablePath: String?
-  ) -> SurfacePlan {
+  static func plan(for request: ContentRequest, seed: PlanSeed) -> SurfacePlan {
     let launch = launch(
       LaunchIntent(),
-      for: worktree,
+      for: seed.worktree,
       surfaceID: request.contentID.rawValue,
-      zmxExecutablePath: zmxExecutablePath
+      zmxExecutablePath: seed.zmxExecutablePath
     )
+    let context = context(for: request.origin)
+    let inherited = inheritedConfig(from: seed.inheritedFrom, context: context)
     // Remote worktrees have no local working directory: the surface command is
     // an `ssh` line and the cwd lives on the remote.
     let workingDirectory: URL? =
-      worktree.host == nil
-      ? terminalState.workingDirectory.map { URL(filePath: $0, directoryHint: .isDirectory) }
-        ?? worktree.workingDirectory
+      seed.worktree.host == nil
+      ? seed.terminalState.workingDirectory.map { URL(filePath: $0, directoryHint: .isDirectory) }
+        ?? inherited.workingDirectory
+        ?? seed.worktree.workingDirectory
       : nil
+    // A woken surface keeps its frozen font: the frozen backing size only
+    // reproduces the grid when the font, and so the cell size, matches.
+    let fontSize: Float32? =
+      seed.terminalState.frozenGrid != nil
+      ? seed.terminalState.frozenGrid?.fontSize
+      : (inherited.fontSize ?? seed.fallbackFontSize)
     return SurfacePlan(
       command: launch.command,
       initialInput: launch.initialInput,
       commandWrapper: launch.commandWrapper,
       environment: environment(
-        for: worktree,
+        for: seed.worktree,
         tabID: request.tabID,
         surfaceID: request.contentID.rawValue,
-        socketPath: socketPath
+        socketPath: seed.socketPath
       ),
       workingDirectory: workingDirectory,
-      // A woken surface keeps its frozen font: the frozen backing size only
-      // reproduces the grid when the font, and so the cell size, matches.
-      fontSize: terminalState.frozenGrid?.fontSize,
-      context: context(for: request.origin)
+      fontSize: fontSize,
+      context: context
     )
+  }
+
+  /// Working directory and font a new surface inherits from its source's live
+  /// session, per Ghostty's window-inherit config.
+  @MainActor
+  static func inheritedConfig(
+    from source: GhosttySurfaceView?,
+    context: ghostty_surface_context_e
+  ) -> (workingDirectory: URL?, fontSize: Float32?) {
+    guard let surface = source?.surface else { return (nil, nil) }
+    let inherited = ghostty_surface_inherited_config(surface, context)
+    let fontSize = inherited.font_size == 0 ? nil : inherited.font_size
+    let workingDirectory = inherited.working_directory.flatMap { pointer -> URL? in
+      let path = String(cString: pointer)
+      return path.isEmpty ? nil : URL(filePath: path, directoryHint: .isDirectory)
+    }
+    return (workingDirectory, fontSize)
+  }
+
+  static let rememberedZoomFontSizeKey = "terminalRememberedFontSize"
+
+  /// Remembered zoom font for a sourceless spawn; the gate is the caller's
+  /// `window-inherit-font-size` read.
+  @MainActor
+  static func rememberedZoomFontSize(gatedBy windowInheritsFontSize: Bool) -> Float32? {
+    guard windowInheritsFontSize else { return nil }
+    @Shared(.appStorage(rememberedZoomFontSizeKey)) var stored: Double = 0
+    return stored > 0 ? Float32(stored) : nil
   }
 
   private static func context(for origin: ContentOrigin) -> ghostty_surface_context_e {
@@ -210,6 +270,10 @@ struct TerminalContentBuilder {
   var worktree: (Worktree.ID) -> Worktree?
   var socketPath: () -> String?
   var zmxExecutablePath: () -> String?
+  /// Live renderer lookup for window-inherit config; the integration layer
+  /// wires it to `ContentRuntime`. No silent default: forgetting it would
+  /// no-op the whole inheritance path.
+  var sourceSurface: (ContentID) -> GhosttySurfaceView?
 
   func factory() -> LayoutContentFactory {
     LayoutContentFactory { request in
@@ -224,22 +288,39 @@ struct TerminalContentBuilder {
     _ request: ContentRequest,
     terminalState: TerminalContentState
   ) -> any TabContent {
-    guard let worktree = worktree(request.worktreeID) else {
+    guard let capturedWorktree = worktree(request.worktreeID) else {
       // A vanished worktree cannot host a session; inert content keeps the
       // layout itself usable.
       TerminalSurfaceRecipe.builderLogger.error(
         "No worktree \(request.worktreeID.rawValue) for content \(request.contentID.rawValue)")
       return InertTabContent(id: request.contentID, state: request.content)
     }
+    let lookUpWorktree = worktree
     return TerminalContent(
       id: request.contentID,
-      makeSurface: { geometry in
+      makeSurface: { geometry, currentState, phase in
+        // Re-resolve so a wake long after creation sees the current worktree;
+        // the captured value only covers one that vanished mid-flight.
+        let worktree = lookUpWorktree(request.worktreeID) ?? capturedWorktree
+        // One-shot inheritance: a re-wake must not re-read the source's
+        // current cwd/font or its split context.
+        var effective = request
+        if phase == .rewake {
+          effective.origin = .restored
+          effective.inheritedFrom = nil
+        }
         let plan = TerminalSurfaceRecipe.plan(
-          for: request,
-          terminalState: terminalState,
-          worktree: worktree,
-          socketPath: socketPath(),
-          zmxExecutablePath: zmxExecutablePath()
+          for: effective,
+          seed: TerminalSurfaceRecipe.PlanSeed(
+            terminalState: currentState,
+            worktree: worktree,
+            socketPath: socketPath(),
+            zmxExecutablePath: zmxExecutablePath(),
+            inheritedFrom: effective.inheritedFrom.flatMap(sourceSurface),
+            fallbackFontSize: TerminalSurfaceRecipe.rememberedZoomFontSize(
+              gatedBy: runtime.windowInheritsFontSize()
+            )
+          )
         )
         return GhosttySurfaceView(
           id: request.contentID.rawValue,

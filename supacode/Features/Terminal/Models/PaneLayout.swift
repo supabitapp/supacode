@@ -96,6 +96,13 @@ nonisolated enum ContentState: Equatable, Codable, Sendable {
     case .terminal: .terminal
     }
   }
+
+  /// A brand-new seed of the same kind, carrying no restorable state.
+  var freshSeed: ContentState {
+    switch self {
+    case .terminal: .terminal(TerminalContentState(workingDirectory: nil))
+    }
+  }
 }
 
 /// Identity of a tab's content, stable across hibernation and relaunch; the

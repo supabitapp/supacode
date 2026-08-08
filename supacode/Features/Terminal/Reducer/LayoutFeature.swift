@@ -13,6 +13,8 @@ nonisolated struct NewTabSpec: Equatable, Sendable {
   let content: ContentState
   let geometry: ContentGeometry
   let select: Bool
+  /// Source content whose live session seeds inheritable config (cwd, font).
+  let inheritedFrom: ContentID?
 
   init(
     tabID: TabID? = nil,
@@ -20,7 +22,8 @@ nonisolated struct NewTabSpec: Equatable, Sendable {
     title: String,
     content: ContentState,
     geometry: ContentGeometry,
-    select: Bool = true
+    select: Bool = true,
+    inheritedFrom: ContentID? = nil
   ) {
     self.tabID = tabID
     self.contentID = contentID
@@ -28,6 +31,7 @@ nonisolated struct NewTabSpec: Equatable, Sendable {
     self.content = content
     self.geometry = geometry
     self.select = select
+    self.inheritedFrom = inheritedFrom
   }
 }
 
@@ -98,6 +102,12 @@ struct LayoutFeature {
   struct State: Equatable, Identifiable {
     let id: Worktree.ID
     var layout: PaneLayout
+    /// Base for minted tab titles ("<prefix> N"); the worktree's name once the
+    /// integration layer attaches it.
+    var titlePrefix = ""
+    /// Bumped whenever a content's renderer identity changes without a layout
+    /// change (hibernate, wake), so hosts remount. Never persisted.
+    var renderEpoch: UInt64 = 0
     @Presents var alert: AlertState<Action.Alert>?
   }
 
@@ -112,6 +122,23 @@ struct LayoutFeature {
   nonisolated enum FocusTarget: Equatable, Sendable {
     case pane(PaneID)
     case direction(SplitTree<PaneID>.FocusDirection)
+  }
+
+  /// Which strip position a content-originated goto-tab request aims at,
+  /// matching Ghostty's `goto_tab` semantics.
+  nonisolated enum TabTarget: Equatable, Sendable {
+    case previous
+    case next
+    case last
+    /// One-based position, clamped to the strip.
+    case position(Int)
+  }
+
+  /// Which of the pane's tabs a content-originated close request covers.
+  nonisolated enum CloseScope: Equatable, Sendable {
+    case tab
+    case otherTabs
+    case tabsToTheRight
   }
 
   enum Action: Equatable, Sendable {
@@ -129,12 +156,29 @@ struct LayoutFeature {
     case hibernateTab(id: TabID)
     case wakeTab(id: TabID)
     case runtime(RuntimeEvent)
-    /// A content asked to close itself; gated by the confirm-close-tab mode.
-    case contentRequestedClose(content: ContentID)
+    /// A content asked to close tabs in its pane; gated by the
+    /// confirm-close-tab mode.
+    case contentRequestedClose(content: ContentID, scope: CloseScope)
+    /// A content asked for a sibling tab in its pane, inheriting its config.
+    case contentRequestedNewTab(content: ContentID)
+    /// A content asked to split its pane; the new pane opens a fresh tab
+    /// inheriting the source's config.
+    case contentRequestedSplit(content: ContentID, direction: SplitTree<PaneID>.NewDirection)
+    /// A content took input focus; pane focus follows it.
+    case contentRequestedFocus(content: ContentID)
+    /// A content asked to move focus to a neighboring pane.
+    case contentRequestedFocusSplit(content: ContentID, direction: SplitTree<PaneID>.FocusDirection)
+    case contentRequestedToggleZoom(content: ContentID)
+    /// A content asked to grow its pane by `amount` pixels toward `direction`.
+    case contentRequestedResize(content: ContentID, direction: SplitTree<PaneID>.SpatialDirection, amount: UInt16)
+    case contentRequestedGotoTab(content: ContentID, target: TabTarget)
+    /// A content asked to reorder its tab by `amount` strip positions,
+    /// wrapping at the ends.
+    case contentRequestedMoveTab(content: ContentID, amount: Int)
     case alert(PresentationAction<Alert>)
 
     nonisolated enum Alert: Equatable, Sendable {
-      case confirmClose(tab: TabID)
+      case confirmClose(tabs: [TabID])
     }
   }
 
@@ -200,10 +244,31 @@ struct LayoutFeature {
         return reduceWakeTab(&state, tabID: tabID)
       case .runtime(let event):
         return reduceRuntimeEvent(&state, event: event)
-      case .contentRequestedClose(let contentID):
-        return reduceContentRequestedClose(&state, contentID: contentID)
-      case .alert(.presented(.confirmClose(let tabID))):
-        return reduceCloseTab(&state, tabID: tabID)
+      case .contentRequestedClose(let contentID, let scope):
+        return reduceContentRequestedClose(&state, contentID: contentID, scope: scope)
+      case .contentRequestedNewTab(let contentID):
+        return reduceContentRequestedNewTab(&state, contentID: contentID)
+      case .contentRequestedSplit(let contentID, let direction):
+        return reduceContentRequestedSplit(&state, contentID: contentID, direction: direction)
+      case .contentRequestedFocus(let contentID):
+        guard let located = state.layout.tab(containingContent: contentID) else { return .none }
+        focus(&state, paneID: located.pane.id)
+        return .none
+      case .contentRequestedFocusSplit(let contentID, let direction):
+        guard let located = state.layout.tab(containingContent: contentID) else { return .none }
+        focus(&state, paneID: located.pane.id)
+        return reduceFocusPane(&state, target: .direction(direction))
+      case .contentRequestedToggleZoom(let contentID):
+        guard let located = state.layout.tab(containingContent: contentID) else { return .none }
+        return reduceToggleZoom(&state, paneID: located.pane.id)
+      case .contentRequestedResize(let contentID, let direction, let amount):
+        return reduceContentRequestedResize(&state, contentID: contentID, direction: direction, amount: amount)
+      case .contentRequestedGotoTab(let contentID, let target):
+        return reduceContentRequestedGotoTab(&state, contentID: contentID, target: target)
+      case .contentRequestedMoveTab(let contentID, let amount):
+        return reduceContentRequestedMoveTab(&state, contentID: contentID, amount: amount)
+      case .alert(.presented(.confirmClose(let tabIDs))):
+        return closeTabs(&state, tabIDs: tabIDs)
       case .alert:
         return .none
       }
@@ -229,7 +294,8 @@ extension LayoutFeature {
       tabID: identity.tabID,
       contentID: identity.contentID,
       content: spec.content,
-      origin: bootstraps ? .first : .tab
+      origin: bootstraps ? .first : .tab,
+      inheritedFrom: spec.inheritedFrom
     )
     guard provisionContent(request, at: spec.geometry, operation: "newTab") else { return .none }
     if bootstraps {
@@ -266,33 +332,155 @@ extension LayoutFeature {
     return .none
   }
 
-  /// A content-originated close request: resolve the tab, then close directly
-  /// or raise the confirmation, per the confirm-close-tab mode and the
-  /// content's busy state.
-  private func reduceContentRequestedClose(_ state: inout State, contentID: ContentID) -> Effect<Action> {
+  /// A content-originated close request: resolve the scope's tabs, then close
+  /// directly or raise the confirmation, per the confirm-close-tab mode and
+  /// each target's busy state.
+  private func reduceContentRequestedClose(
+    _ state: inout State,
+    contentID: ContentID,
+    scope: CloseScope
+  ) -> Effect<Action> {
     guard let located = state.layout.tab(containingContent: contentID) else { return .none }
-    let tabID = located.tab.id
+    let pane = located.pane
+    let targets: [TabID] =
+      switch scope {
+      case .tab:
+        [located.tab.id]
+      case .otherTabs:
+        pane.tabs.ids.filter { $0 != located.tab.id }
+      case .tabsToTheRight:
+        pane.tabs.index(id: located.tab.id).map { pane.tabs.dropFirst($0 + 1).map(\.id) } ?? []
+      }
+    guard !targets.isEmpty else { return .none }
+    let interrupts = targets.contains { closeWouldInterrupt(pane.tabs[id: $0]?.content) }
     @Shared(.settingsFile) var settingsFile: SettingsFile
     let confirms: Bool =
       switch settingsFile.global.confirmCloseTab {
       case .always: true
       case .never: false
-      case .busy: contentRuntime.content(for: contentID)?.isBusy ?? false
+      case .busy: interrupts
       }
-    guard confirms else { return reduceCloseTab(&state, tabID: tabID) }
-    state.alert = AlertState {
-      TextState("Close Tab?")
+    guard confirms else { return closeTabs(&state, tabIDs: targets) }
+    state.alert = Self.closeConfirmationAlert(tabs: targets, interrupts: interrupts)
+    return .none
+  }
+
+  /// Whether closing this content now would interrupt real work: live and
+  /// busy, or a terminal with no live renderer, whose zmx session may still
+  /// host a process nothing can ask about.
+  private func closeWouldInterrupt(_ snapshot: ContentSnapshot?) -> Bool {
+    guard let snapshot else { return false }
+    guard let content = contentRuntime.content(for: snapshot.id) else {
+      return snapshot.kind == .terminal
+    }
+    if content.isBusy { return true }
+    return content.kind == .terminal && content.renderer == nil
+  }
+
+  private static func closeConfirmationAlert(tabs targets: [TabID], interrupts: Bool) -> AlertState<Action.Alert> {
+    AlertState {
+      TextState(targets.count == 1 ? "Close Tab?" : "Close \(targets.count) Tabs?")
     } actions: {
-      ButtonState(role: .destructive, action: .confirmClose(tab: tabID)) {
+      ButtonState(role: .destructive, action: .confirmClose(tabs: targets)) {
         TextState("Close")
       }
       ButtonState(role: .cancel) {
         TextState("Cancel")
       }
     } message: {
-      TextState("This tab has work that closing would interrupt.")
+      TextState(Self.closeConfirmationMessage(count: targets.count, interrupts: interrupts))
     }
-    return .none
+  }
+
+  private static func closeConfirmationMessage(count: Int, interrupts: Bool) -> String {
+    switch (interrupts, count == 1) {
+    case (true, true): "This tab has work that closing would interrupt."
+    case (true, false): "These tabs have work that closing would interrupt."
+    case (false, true): "Closing will end this tab's session."
+    case (false, false): "Closing will end these tabs' sessions."
+    }
+  }
+
+  /// Closes every listed tab that still exists; the per-tab close guards make
+  /// vanished ones no-ops.
+  private func closeTabs(_ state: inout State, tabIDs: [TabID]) -> Effect<Action> {
+    .merge(tabIDs.map { reduceCloseTab(&state, tabID: $0) })
+  }
+
+  private func reduceContentRequestedNewTab(_ state: inout State, contentID: ContentID) -> Effect<Action> {
+    guard let located = state.layout.tab(containingContent: contentID) else { return .none }
+    let spec = NewTabSpec(
+      title: nextMintedTitle(in: state),
+      content: located.tab.content.state.freshSeed,
+      geometry: contentRuntime.spawnGeometry(near: contentID, fallback: focusedContentID(in: state)),
+      inheritedFrom: contentID
+    )
+    return reduceNewTab(&state, paneID: located.pane.id, spec: spec)
+  }
+
+  /// The focused pane's visible content, the deterministic geometry fallback
+  /// when a request's source is unmounted.
+  private func focusedContentID(in state: State) -> ContentID? {
+    state.layout.focusedPaneID
+      .flatMap { state.layout.panes[id: $0]?.selectedTab?.content.id }
+  }
+
+  private func reduceContentRequestedGotoTab(
+    _ state: inout State,
+    contentID: ContentID,
+    target: TabTarget
+  ) -> Effect<Action> {
+    guard let located = state.layout.tab(containingContent: contentID) else { return .none }
+    let tabs = located.pane.tabs
+    guard !tabs.isEmpty else { return .none }
+    let selectedIndex = located.pane.selectedTabID.flatMap { tabs.index(id: $0) } ?? 0
+    let targetIndex: Int
+    switch target {
+    case .previous:
+      targetIndex = (selectedIndex - 1 + tabs.count) % tabs.count
+    case .next:
+      targetIndex = (selectedIndex + 1) % tabs.count
+    case .last:
+      targetIndex = tabs.count - 1
+    case .position(let position):
+      guard position >= 1 else { return .none }
+      targetIndex = min(position - 1, tabs.count - 1)
+    }
+    return reduceSelectTab(&state, tabID: tabs[targetIndex].id)
+  }
+
+  private func reduceContentRequestedMoveTab(
+    _ state: inout State,
+    contentID: ContentID,
+    amount: Int
+  ) -> Effect<Action> {
+    guard let located = state.layout.tab(containingContent: contentID) else { return .none }
+    let pane = located.pane
+    // Only the selected tab may reorder, so a keybind from a background tab
+    // cannot shuffle tabs off-screen.
+    guard pane.selectedTabID == located.tab.id, pane.tabs.count > 1 else { return .none }
+    guard let index = pane.tabs.index(id: located.tab.id) else { return .none }
+    let count = pane.tabs.count
+    // Reduce modulo first: the raw amount is config-controlled and unbounded.
+    let offset = ((amount % count) + count) % count
+    guard offset != 0 else { return .none }
+    return reduceMoveTab(&state, tabID: located.tab.id, targetPaneID: pane.id, index: (index + offset) % count)
+  }
+
+  /// Next "<prefix> N" title, scanning every pane's strip for the highest
+  /// minted index, mirroring the tab manager's numbering.
+  private func nextMintedTitle(in state: State) -> String {
+    let prefix = state.titlePrefix.isEmpty ? "Terminal" : state.titlePrefix
+    var maxIndex = 0
+    for pane in state.layout.panes {
+      for tab in pane.tabs {
+        guard tab.title.hasPrefix("\(prefix) "), let value = Int(tab.title.dropFirst(prefix.count + 1)) else {
+          continue
+        }
+        maxIndex = max(maxIndex, value)
+      }
+    }
+    return "\(prefix) \(maxIndex + 1)"
   }
 
   private func reduceCloseTab(_ state: inout State, tabID: TabID) -> Effect<Action> {
@@ -380,6 +568,7 @@ extension LayoutFeature {
     // Land the frozen grid recorded at hibernation in persisted state.
     pane.tabs[id: tabID]?.content = content.snapshot()
     state.layout.panes[id: pane.id] = pane
+    state.renderEpoch &+= 1
     return .none
   }
 
@@ -391,6 +580,7 @@ extension LayoutFeature {
     if let content = contentRuntime.content(for: snapshot.id) {
       content.startSession(at: geometry)
       landWokenSnapshot(&state, tabID: tabID, content: content)
+      state.renderEpoch &+= 1
       return .none
     }
     // Post-relaunch the runtime is empty; rebuild the content from stored
@@ -401,7 +591,8 @@ extension LayoutFeature {
         tabID: tabID,
         contentID: snapshot.id,
         content: snapshot.state,
-        origin: .restored
+        origin: .restored,
+        inheritedFrom: nil
       )
     )
     guard contentRuntime.provision(content, at: geometry) else {
@@ -409,6 +600,7 @@ extension LayoutFeature {
       return .none
     }
     landWokenSnapshot(&state, tabID: tabID, content: content)
+    state.renderEpoch &+= 1
     return .none
   }
 
@@ -449,7 +641,8 @@ extension LayoutFeature {
       tabID: identity.tabID,
       contentID: identity.contentID,
       content: spec.content,
-      origin: .split
+      origin: .split,
+      inheritedFrom: spec.inheritedFrom
     )
     guard provisionContent(request, at: spec.geometry, operation: "splitPane") else { return .none }
     let paneID = PaneID(rawValue: uuid())
@@ -470,6 +663,53 @@ extension LayoutFeature {
     state.layout.panes.append(Pane(id: paneID, tabs: [tab], selectedTabID: tab.id))
     if spec.select {
       focus(&state, paneID: paneID)
+    }
+    return .none
+  }
+
+  private func reduceContentRequestedSplit(
+    _ state: inout State,
+    contentID: ContentID,
+    direction: SplitTree<PaneID>.NewDirection
+  ) -> Effect<Action> {
+    guard let located = state.layout.tab(containingContent: contentID) else { return .none }
+    let spec = NewTabSpec(
+      title: nextMintedTitle(in: state),
+      content: located.tab.content.state.freshSeed,
+      geometry: contentRuntime.spawnGeometry(near: contentID, fallback: focusedContentID(in: state)),
+      inheritedFrom: contentID
+    )
+    return reduceSplitPane(&state, anchorID: located.pane.id, direction: direction, spec: spec)
+  }
+
+  /// Grows the content's pane by `amount` pixels. Mirrors the legacy resize
+  /// binding, including its side effect of clearing any zoom.
+  private func reduceContentRequestedResize(
+    _ state: inout State,
+    contentID: ContentID,
+    direction: SplitTree<PaneID>.SpatialDirection,
+    amount: UInt16
+  ) -> Effect<Action> {
+    guard let located = state.layout.tab(containingContent: contentID),
+      let node = state.layout.tree.find(id: located.pane.id.rawValue)
+    else { return .none }
+    // Pane extents come from each pane's visible renderer; a pane mid-wake
+    // reports zero, and a degenerate total would slam ratios to the clamp.
+    let panes = state.layout.panes
+    let size = state.layout.tree.viewBounds { paneID in
+      guard let selected = panes[id: paneID]?.selectedTab else { return .zero }
+      return contentRuntime.renderer(for: selected.content.id)?.bounds.size ?? .zero
+    }
+    guard size.width >= 1, size.height >= 1 else { return .none }
+    do {
+      state.layout.tree = try state.layout.tree.resizing(
+        node: node,
+        by: amount,
+        in: direction,
+        with: CGRect(origin: .zero, size: size)
+      )
+    } catch {
+      Self.logger.warning("contentRequestedResize found no resizable split for \(contentID.rawValue)")
     }
     return .none
   }

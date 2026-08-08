@@ -46,6 +46,24 @@ nonisolated struct ContentRequest: Equatable, Sendable {
   var contentID: ContentID
   var content: ContentState
   var origin: ContentOrigin
+  /// Source content whose live session seeds inheritable config (cwd, font).
+  var inheritedFrom: ContentID?
+
+  init(
+    worktreeID: Worktree.ID,
+    tabID: TabID,
+    contentID: ContentID,
+    content: ContentState,
+    origin: ContentOrigin,
+    inheritedFrom: ContentID? = nil
+  ) {
+    self.worktreeID = worktreeID
+    self.tabID = tabID
+    self.contentID = contentID
+    self.content = content
+    self.origin = origin
+    self.inheritedFrom = inheritedFrom
+  }
 }
 
 /// Renderless content that never starts a session; the fallback when a
@@ -80,15 +98,25 @@ final class TerminalContent: TabContent {
   let id: ContentID
   let kind: ContentKind = .terminal
 
-  // Surface construction needs heavy config owned elsewhere, so it is injected.
-  private let makeSurface: (ContentGeometry) -> GhosttySurfaceView
+  /// Which spawn a `makeSurface` call is; one-shot inheritance (source cwd,
+  /// font, split context) applies to the first only, never a re-wake.
+  nonisolated enum SpawnPhase: Equatable, Sendable {
+    case first
+    case rewake
+  }
+
+  // Surface construction needs heavy config owned elsewhere, so it is
+  // injected; it receives the current recorded state so a wake replans from
+  // the hibernation-recorded grid and cwd, not the creation-time seed.
+  private let makeSurface: (ContentGeometry, TerminalContentState, SpawnPhase) -> GhosttySurfaceView
   // Latest recorded terminal state, so hibernated snapshots stay truthful.
   private var state: TerminalContentState
   private var surfaceView: GhosttySurfaceView?
+  private var hasSpawned = false
 
   init(
     id: ContentID,
-    makeSurface: @escaping (ContentGeometry) -> GhosttySurfaceView,
+    makeSurface: @escaping (ContentGeometry, TerminalContentState, SpawnPhase) -> GhosttySurfaceView,
     initialState: TerminalContentState
   ) {
     self.id = id
@@ -103,7 +131,8 @@ final class TerminalContent: TabContent {
 
   func startSession(at geometry: ContentGeometry) {
     guard surfaceView == nil else { return }
-    surfaceView = makeSurface(geometry)
+    surfaceView = makeSurface(geometry, state, hasSpawned ? .rewake : .first)
+    hasSpawned = true
   }
 
   func hibernate() {
