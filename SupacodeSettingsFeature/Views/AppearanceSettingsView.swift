@@ -77,9 +77,13 @@ public struct AppearanceSettingsView: View {
         }
       }
       Section {
-        Toggle(isOn: $store.confirmCloseSurface) {
-          Text("Confirm before closing terminals")
-          Text("Asks before closing a terminal with a running process or a persisted background session.")
+        Picker(selection: $store.confirmCloseTab) {
+          ForEach(ConfirmCloseTabMode.allCases, id: \.self) { mode in
+            Text(mode.label).tag(mode)
+          }
+        } label: {
+          Text("Confirm before closing tabs")
+          Text(store.confirmCloseTab.subtitle)
         }
         Picker(selection: $store.confirmQuitMode) {
           ForEach(ConfirmQuitMode.allCases, id: \.self) { mode in

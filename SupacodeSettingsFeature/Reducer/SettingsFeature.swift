@@ -78,6 +78,7 @@ public struct SettingsFeature {
     public var agentPresenceBadgesEnabled: Bool
     public var confirmQuitMode: ConfirmQuitMode
     public var confirmCloseSurface: Bool
+    public var confirmCloseTab: ConfirmCloseTabMode
     public var terminateSessionsOnQuit: Bool
     public var remoteSessionPersistenceEnabled: Bool
     public var appVisibility: AppVisibility
@@ -158,6 +159,7 @@ public struct SettingsFeature {
       agentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
       confirmQuitMode = settings.confirmQuitMode
       confirmCloseSurface = settings.confirmCloseSurface
+      confirmCloseTab = settings.confirmCloseTab
       terminateSessionsOnQuit = settings.terminateSessionsOnQuit
       remoteSessionPersistenceEnabled = settings.remoteSessionPersistenceEnabled
       appVisibility = settings.appVisibility
@@ -201,6 +203,7 @@ public struct SettingsFeature {
         agentPresenceBadgesEnabled: agentPresenceBadgesEnabled,
         confirmQuitMode: confirmQuitMode,
         confirmCloseSurface: confirmCloseSurface,
+        confirmCloseTab: confirmCloseTab,
         terminateSessionsOnQuit: terminateSessionsOnQuit,
         remoteSessionPersistenceEnabled: remoteSessionPersistenceEnabled,
         appVisibility: appVisibility,
@@ -354,6 +357,7 @@ public struct SettingsFeature {
         state.agentPresenceBadgesEnabled = normalizedSettings.agentPresenceBadgesEnabled
         state.confirmQuitMode = normalizedSettings.confirmQuitMode
         state.confirmCloseSurface = normalizedSettings.confirmCloseSurface
+        state.confirmCloseTab = normalizedSettings.confirmCloseTab
         state.terminateSessionsOnQuit = normalizedSettings.terminateSessionsOnQuit
         state.remoteSessionPersistenceEnabled = normalizedSettings.remoteSessionPersistenceEnabled
         state.appVisibility = normalizedSettings.appVisibility
