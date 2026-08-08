@@ -1,7 +1,9 @@
 import AppKit
 import ComposableArchitecture
+import DependenciesTestSupport
 import Foundation
 import IdentifiedCollections
+import SupacodeSettingsShared
 import Testing
 
 @testable import supacode
@@ -16,6 +18,8 @@ struct LayoutFeatureTests {
     let kind: ContentKind = .terminal
     /// Marker returned by `snapshot()` in place of the creation state.
     var snapshotState: TerminalContentState?
+    /// Drives the busy-gated close confirmation in tests.
+    var isBusy = false
     private let initialState: TerminalContentState
     private(set) var startGeometries: [ContentGeometry] = []
     /// Every invocation, including no-op re-starts the guard swallows.
@@ -948,6 +952,103 @@ struct LayoutFeatureTests {
     let harness = await makeHarness()
     // The bootstrap tab is titled "One"; an identical report must not write.
     await harness.store.send(.runtime(.titleChanged(id: harness.contentID, title: "One")))
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  // MARK: - Close confirmation.
+
+  private func closeConfirmAlert(tab tabID: TerminalTabID) -> AlertState<LayoutFeature.Action.Alert> {
+    AlertState {
+      TextState("Close Tab?")
+    } actions: {
+      ButtonState(role: .destructive, action: .confirmClose(tab: tabID)) {
+        TextState("Close")
+      }
+      ButtonState(role: .cancel) {
+        TextState("Cancel")
+      }
+    } message: {
+      TextState("This tab has work that closing would interrupt.")
+    }
+  }
+
+  @Test(.dependencies) func contentRequestedCloseAlwaysConfirms() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .always }
+    let harness = await makeHarness()
+    // Not busy, but `.always` still raises the confirmation.
+    await harness.store.send(.contentRequestedClose(content: harness.contentID)) {
+      $0.alert = self.closeConfirmAlert(tab: harness.tabID)
+    }
+    // Confirming closes the tab and reaps the session.
+    await harness.store.send(.alert(.presented(.confirmClose(tab: harness.tabID)))) {
+      $0.alert = nil
+      $0.layout.tree = SplitTree()
+      $0.layout.panes = []
+      $0.layout.focusedPaneID = nil
+    }
+    await harness.store.receive(.runtime(.killConfirmed(id: harness.contentID)))
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test(.dependencies) func contentRequestedCloseCancelKeepsTheTab() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .always }
+    let harness = await makeHarness()
+    await harness.store.send(.contentRequestedClose(content: harness.contentID)) {
+      $0.alert = self.closeConfirmAlert(tab: harness.tabID)
+    }
+    await harness.store.send(.alert(.dismiss)) {
+      $0.alert = nil
+    }
+    #expect(harness.store.state.layout.panes[id: harness.paneID]?.tabs[id: harness.tabID] != nil)
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test(.dependencies) func contentRequestedCloseNeverSkipsConfirmation() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .never }
+    let harness = await makeHarness()
+    harness.mock?.isBusy = true
+    // `.never` closes immediately even while busy.
+    await harness.store.send(.contentRequestedClose(content: harness.contentID)) {
+      $0.layout.tree = SplitTree()
+      $0.layout.panes = []
+      $0.layout.focusedPaneID = nil
+    }
+    await harness.store.receive(.runtime(.killConfirmed(id: harness.contentID)))
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test(.dependencies) func contentRequestedCloseBusyConfirmsOnlyWhenBusy() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .busy }
+    let harness = await makeHarness()
+    harness.mock?.isBusy = true
+    await harness.store.send(.contentRequestedClose(content: harness.contentID)) {
+      $0.alert = self.closeConfirmAlert(tab: harness.tabID)
+    }
+  }
+
+  @Test(.dependencies) func contentRequestedCloseBusyClosesWhenIdle() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .busy }
+    let harness = await makeHarness()
+    harness.mock?.isBusy = false
+    await harness.store.send(.contentRequestedClose(content: harness.contentID)) {
+      $0.layout.tree = SplitTree()
+      $0.layout.panes = []
+      $0.layout.focusedPaneID = nil
+    }
+    await harness.store.receive(.runtime(.killConfirmed(id: harness.contentID)))
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test(.dependencies) func contentRequestedCloseForUnknownContentIsANoOp() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .always }
+    let harness = await makeHarness()
+    await harness.store.send(.contentRequestedClose(content: ContentID()))
     #expect(harness.store.state.layout.isConsistent)
   }
 }

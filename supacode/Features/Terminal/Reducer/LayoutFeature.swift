@@ -98,6 +98,7 @@ struct LayoutFeature {
   struct State: Equatable, Identifiable {
     let id: Worktree.ID
     var layout: PaneLayout
+    @Presents var alert: AlertState<Action.Alert>?
   }
 
   /// Events pushed by the content-runtime plumbing.
@@ -128,6 +129,13 @@ struct LayoutFeature {
     case hibernateTab(id: TerminalTabID)
     case wakeTab(id: TerminalTabID)
     case runtime(RuntimeEvent)
+    /// A content asked to close itself; gated by the confirm-close-tab mode.
+    case contentRequestedClose(content: ContentID)
+    case alert(PresentationAction<Alert>)
+
+    nonisolated enum Alert: Equatable, Sendable {
+      case confirmClose(tab: TerminalTabID)
+    }
   }
 
   private static let logger = SupaLogger("LayoutFeature")
@@ -192,8 +200,15 @@ struct LayoutFeature {
         return reduceWakeTab(&state, tabID: tabID)
       case .runtime(let event):
         return reduceRuntimeEvent(&state, event: event)
+      case .contentRequestedClose(let contentID):
+        return reduceContentRequestedClose(&state, contentID: contentID)
+      case .alert(.presented(.confirmClose(let tabID))):
+        return reduceCloseTab(&state, tabID: tabID)
+      case .alert:
+        return .none
       }
     }
+    .ifLet(\.$alert, action: \.alert)
   }
 }
 
@@ -247,6 +262,35 @@ extension LayoutFeature {
     } else if state.layout.focusedPaneID == nil {
       // A background tab must not leave a populated layout unfocused.
       state.layout.focusedPaneID = paneID
+    }
+    return .none
+  }
+
+  /// A content-originated close request: resolve the tab, then close directly
+  /// or raise the confirmation, per the confirm-close-tab mode and the
+  /// content's busy state.
+  private func reduceContentRequestedClose(_ state: inout State, contentID: ContentID) -> Effect<Action> {
+    guard let located = state.layout.tab(containingContent: contentID) else { return .none }
+    let tabID = located.tab.id
+    @Shared(.settingsFile) var settingsFile: SettingsFile
+    let confirms: Bool =
+      switch settingsFile.global.confirmCloseTab {
+      case .always: true
+      case .never: false
+      case .busy: contentRuntime.content(for: contentID)?.isBusy ?? false
+      }
+    guard confirms else { return reduceCloseTab(&state, tabID: tabID) }
+    state.alert = AlertState {
+      TextState("Close Tab?")
+    } actions: {
+      ButtonState(role: .destructive, action: .confirmClose(tab: tabID)) {
+        TextState("Close")
+      }
+      ButtonState(role: .cancel) {
+        TextState("Cancel")
+      }
+    } message: {
+      TextState("This tab has work that closing would interrupt.")
     }
     return .none
   }
