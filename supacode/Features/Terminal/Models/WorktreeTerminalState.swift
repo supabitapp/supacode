@@ -237,13 +237,13 @@ final class WorktreeTerminalState {
   /// How long after a custom notification the agent's own OSC 9 is suppressed.
   /// Split from `oscHoldWindow` so tuning the suppression side cannot silently
   /// change the hold side.
-  private static let oscSuppressionAfterCustom: TimeInterval = 0.5
+  static let oscSuppressionAfterCustom: TimeInterval = 0.5
   /// How long the agent's own OSC 9 is held before firing, waiting for a custom
   /// notification to supersede it. Covers the socket-vs-inline-stream arrival skew.
-  private static let oscHoldWindow: TimeInterval = 0.5
+  static let oscHoldWindow: TimeInterval = 0.5
   /// Monotonic gap between two instants from the same clock. Opens the existentials
   /// so the suppression window can compare instants of the type-erased clock.
-  private static func elapsed(
+  static func elapsed(
     from start: any InstantProtocol<Duration>,
     to end: any InstantProtocol<Duration>
   ) -> Duration {
