@@ -809,11 +809,13 @@ final class WorktreeTerminalManager {
     if let customTitle {
       sendLayout(worktree.id, .renameTab(id: TabID(rawValue: mintedID), title: customTitle))
     }
-    // Tab-addressed, not content-addressed: an explicit id colliding with an
-    // EXISTING content would otherwise match the old tab and ack a creation
-    // that was refused.
+    // A grown strip AND a tab-addressed match: an explicit id colliding with
+    // an EXISTING tab or content would otherwise match the old tab and ack a
+    // creation that was refused.
+    let after = layoutState(for: worktree.id)?.layout
     let created =
-      layoutState(for: worktree.id)?.layout.panes
+      Self.tabCount(in: after) == Self.tabCount(in: layout) + 1
+      && after?.panes
         .first { $0.tabs[id: TabID(rawValue: mintedID)] != nil }?
         .tabs[id: TabID(rawValue: mintedID)]?.content.id.rawValue == mintedID
     guard created else {
@@ -827,6 +829,10 @@ final class WorktreeTerminalManager {
     if tabID != nil {
       emit(.surfaceCreated(worktreeID: worktree.id, id: mintedID))
     }
+  }
+
+  private static func tabCount(in layout: PaneLayout?) -> Int {
+    layout?.panes.reduce(0) { $0 + $1.tabs.count } ?? 0
   }
 
   /// The next "<prefix> N" suffix, scanning every strip like the tab manager did.
