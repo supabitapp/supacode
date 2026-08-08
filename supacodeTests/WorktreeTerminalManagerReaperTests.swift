@@ -1,5 +1,6 @@
 import Dependencies
 import Foundation
+import IdentifiedCollections
 import Testing
 
 @testable import supacode
@@ -85,14 +86,31 @@ struct WorktreeTerminalManagerReaperTests {
     }
 
     let worktree = makeWorktree()
-    let state = manager.state(for: worktree)
-    guard let tabID = state.createTab(activation: .selected),
-      let surface = state.splitTree(for: tabID).root?.leftmostLeaf()
-    else {
-      Issue.record("Expected a tab and surface")
-      return
-    }
-    let trackedSurfaceID = surface.id
+    let host = manager.host(for: worktree)
+    let trackedSurfaceID = UUID()
+    let paneID = PaneID()
+    let tabID = TabID(rawValue: trackedSurfaceID)
+    let layout = PaneLayout(
+      tree: SplitTree(view: paneID),
+      panes: [
+        Pane(
+          id: paneID,
+          tabs: [
+            TabItem(
+              id: tabID,
+              title: "Tab",
+              content: ContentSnapshot(
+                id: ContentID(rawValue: trackedSurfaceID),
+                state: .terminal(TerminalContentState(workingDirectory: nil))
+              )
+            )
+          ],
+          selectedTabID: tabID
+        )
+      ],
+      focusedPaneID: paneID
+    )
+    host.layout = { layout }
     let trackedSession = session(for: trackedSurfaceID)
     let untrackedSession = session(for: UUID())
     // The tracked session reports clients>0 (must still die) and an untracked

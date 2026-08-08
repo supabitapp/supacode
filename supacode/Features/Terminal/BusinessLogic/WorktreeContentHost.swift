@@ -95,6 +95,22 @@ final class WorktreeContentHost {
     }
   }
 
+  // Standardized to match `loadFailuresByID` keys (built from
+  // `standardizedFileURL.path`) so prune protection lines up.
+  var repositoryID: Repository.ID {
+    switch worktree.location.repositoryLocation {
+    case .local(let url):
+      RepositoryID(url.standardizedFileURL.path(percentEncoded: false))
+    case .remote:
+      worktree.location.repositoryLocation.id
+    }
+  }
+
+  /// Tracked blocking tabs whose kind matches.
+  func blockingScriptTabs(matching predicate: (BlockingScriptKind) -> Bool) -> [TabID] {
+    blockingScripts.filter { predicate($0.value) }.map(\.key)
+  }
+
   // MARK: - Topology reads.
 
   /// The focused pane's selected tab, the worktree's "current" tab.
@@ -152,10 +168,14 @@ final class WorktreeContentHost {
     }
   }
 
-  /// Whether a content's tab is some pane's selected tab (it renders).
+  /// Whether a content's tab is a rendering pane's selected tab. Zoom-aware:
+  /// while a pane is zoomed, every other pane is hidden.
   private func isVisibleSurface(_ surfaceID: UUID) -> Bool {
     guard let layout = layout() else { return false }
-    return layout.panes.contains { $0.selectedTab?.content.id.rawValue == surfaceID }
+    let visiblePanes = Set(layout.tree.visibleLeaves())
+    return layout.panes.contains { pane in
+      visiblePanes.contains(pane.id) && pane.selectedTab?.content.id.rawValue == surfaceID
+    }
   }
 
   private func isFocusedSurface(_ surfaceID: UUID) -> Bool {
@@ -351,7 +371,8 @@ final class WorktreeContentHost {
       }
     }
     if excess > 0 {
-      kept.removeLast(min(excess, kept.count))
+      // Still over the limit means every survivor is unread; drop the oldest.
+      kept.removeFirst(min(excess, kept.count))
     }
     notifications = kept.reversed()
     return true
@@ -558,11 +579,14 @@ final class WorktreeContentHost {
   func applySurfaceActivity() {
     guard let layout = layout() else { return }
     let selected = isWorktreeSelected
+    let visiblePanes = Set(layout.tree.visibleLeaves())
     var focusTarget: GhosttySurfaceView?
     for pane in layout.panes {
       for tab in pane.tabs {
         guard let surface = liveSurface(tab.content.id.rawValue) else { continue }
-        let isVisible = selected && pane.selectedTabID == tab.id && lastWindowIsVisible != false
+        let isVisible =
+          selected && visiblePanes.contains(pane.id) && pane.selectedTabID == tab.id
+          && lastWindowIsVisible != false
         let isFocused =
           isVisible && lastWindowIsKey == true && focusedContentID == tab.content.id.rawValue
         surface.setOcclusion(isVisible)
@@ -602,11 +626,12 @@ final class WorktreeContentHost {
   /// A content took focus: clear its unread, refresh the tab title, and emit.
   func recordActiveSurface(_ surfaceID: UUID) {
     markNotificationsRead(forSurfaceID: surfaceID)
-    if let tabID = tabID(containing: surfaceID),
+    // The tab lookup gates on membership: a mid-close focus flap must not
+    // retitle a tab the content no longer belongs to.
+    if tabID(containing: surfaceID) != nil,
       let title = liveSurface(surfaceID)?.bridge.state.title, !title.isEmpty
     {
       sendLayoutAction(.runtime(.titleChanged(id: ContentID(rawValue: surfaceID), title: title)))
-      _ = tabID
     }
     emitFocusChangedIfNeeded(surfaceID)
   }
@@ -640,6 +665,21 @@ final class WorktreeContentHost {
   /// Whether a content may claim AppKit first responder.
   func shouldClaimFocus(_ surfaceID: UUID) -> Bool {
     focusedContentID == surfaceID
+  }
+
+  /// Cross-tab focus by content id (deeplinks, unread jumps): wake and select
+  /// the owning tab, then hand the surface AppKit focus.
+  @discardableResult
+  func focusSurface(id surfaceID: UUID) -> Bool {
+    guard let tabID = tabID(containing: surfaceID) else {
+      Self.logger.warning("focusSurface: surface \(surfaceID) has no owning tab.")
+      return false
+    }
+    sendLayoutAction(.wakeTab(id: tabID))
+    sendLayoutAction(.selectTab(id: tabID))
+    guard let surface = liveSurface(surfaceID) else { return false }
+    surface.requestFocus()
+    return true
   }
 
   // MARK: - Window tint.
@@ -916,6 +956,11 @@ final class WorktreeContentHost {
     let hadUnseen = hasUnseenNotification(forSurfaceID: surfaceID)
     discardSurfaceBookkeeping(for: surfaceID)
     surfaceStates.removeValue(forKey: surfaceID)
+    // The layout already dropped the tab; prune its cached progress display.
+    lastTabProgressDisplays = lastTabProgressDisplays.filter { tab(withID: $0.key) != nil }
+    // Watchers must stop BEFORE the session dies, or a watcher poll races the
+    // kill and logs a spurious dead-session error.
+    reconcileDormantWatchers()
     onSurfacesClosed?([surfaceID])
     guard hadUnseen else { return }
     for index in notifications.indices where notifications[index].surfaceID == surfaceID {

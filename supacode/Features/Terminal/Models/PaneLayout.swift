@@ -325,7 +325,7 @@ nonisolated struct PaneLayout: Equatable, Codable, Sendable {
   }
 }
 
-extension PaneLayout {
+nonisolated extension PaneLayout {
   /// The pane a tab lives in.
   func pane(containingTab tabID: TabID) -> Pane? {
     panes.first { $0.tabs[id: tabID] != nil }

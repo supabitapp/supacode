@@ -327,14 +327,22 @@ struct TerminalContentBuilder {
         // One-shot inheritance: a re-wake must not re-read the source's
         // current cwd/font or its split context.
         var effective = request
+        var seedState = currentState
         if phase == .rewake {
           effective.origin = .restored
           effective.inheritedFrom = nil
+          // The first spawn already delivered the launch override; a reattach
+          // must not replay the command or its initial input.
+          seedState = TerminalContentState(
+            workingDirectory: currentState.workingDirectory,
+            agents: currentState.agents,
+            frozenGrid: currentState.frozenGrid
+          )
         }
         let plan = TerminalSurfaceRecipe.plan(
           for: effective,
           seed: TerminalSurfaceRecipe.PlanSeed(
-            terminalState: currentState,
+            terminalState: seedState,
             worktree: worktree,
             socketPath: socketPath(),
             zmxExecutablePath: zmxExecutablePath(),

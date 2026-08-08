@@ -10,6 +10,10 @@ nonisolated struct NewTabSpec: Equatable, Sendable {
   let tabID: TabID?
   let contentID: ContentID?
   let title: String
+  /// Tab chrome for producer-styled tabs (blocking scripts).
+  let icon: String?
+  let tintColor: RepositoryColor?
+  let isTitleLocked: Bool
   let content: ContentState
   let geometry: ContentGeometry
   let select: Bool
@@ -20,6 +24,9 @@ nonisolated struct NewTabSpec: Equatable, Sendable {
     tabID: TabID? = nil,
     contentID: ContentID? = nil,
     title: String,
+    icon: String? = nil,
+    tintColor: RepositoryColor? = nil,
+    isTitleLocked: Bool = false,
     content: ContentState,
     geometry: ContentGeometry,
     select: Bool = true,
@@ -28,6 +35,9 @@ nonisolated struct NewTabSpec: Equatable, Sendable {
     self.tabID = tabID
     self.contentID = contentID
     self.title = title
+    self.icon = icon
+    self.tintColor = tintColor
+    self.isTitleLocked = isTitleLocked
     self.content = content
     self.geometry = geometry
     self.select = select
@@ -190,7 +200,11 @@ struct LayoutFeature {
     switch action {
     case .resizePane, .runtime(.titleChanged):
       return true
-    default:
+    case .newTab, .splitPane, .closeTab, .closePane, .selectTab, .renameTab, .focusPane,
+      .moveTab, .equalizePanes, .toggleZoom, .hibernateTab, .wakeTab, .runtime(.killConfirmed),
+      .contentRequestedClose, .contentRequestedNewTab, .contentRequestedSplit,
+      .contentRequestedFocus, .contentRequestedFocusSplit, .contentRequestedToggleZoom,
+      .contentRequestedResize, .contentRequestedGotoTab, .contentRequestedMoveTab, .alert:
       return false
     }
   }
@@ -309,7 +323,10 @@ extension LayoutFeature {
     let tab = TabItem(
       id: identity.tabID,
       title: spec.title,
-      content: ContentSnapshot(id: identity.contentID, state: spec.content)
+      icon: spec.icon,
+      tintColor: spec.tintColor,
+      content: ContentSnapshot(id: identity.contentID, state: spec.content),
+      isTitleLocked: spec.isTitleLocked
     )
     // Mirror TerminalTabManager.createTab: insert after the selection;
     // background tabs append so a run of them keeps its order.
@@ -660,7 +677,10 @@ extension LayoutFeature {
     let tab = TabItem(
       id: identity.tabID,
       title: spec.title,
-      content: ContentSnapshot(id: identity.contentID, state: spec.content)
+      icon: spec.icon,
+      tintColor: spec.tintColor,
+      content: ContentSnapshot(id: identity.contentID, state: spec.content),
+      isTitleLocked: spec.isTitleLocked
     )
     state.layout.panes.append(Pane(id: paneID, tabs: [tab], selectedTabID: tab.id))
     if spec.select {

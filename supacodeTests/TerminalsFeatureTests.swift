@@ -255,6 +255,94 @@ struct TerminalsFeatureTests {
     await harness.store.finish()
   }
 
+  @Test(.dependencies) func zoomedPaneHidesTheOtherPanesSelectedTab() async throws {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = true }
+    let worktreeID = Worktree.ID("/tmp/zoom")
+    let paneA = PaneID()
+    let paneB = PaneID()
+    let tabA = TabID()
+    let tabB = TabID()
+    let contentA = HibernatableContent(id: ContentID())
+    let contentB = HibernatableContent(id: ContentID())
+    let runtime = ContentRuntime()
+    _ = runtime.provision(contentA, at: .fallback)
+    _ = runtime.provision(contentB, at: .fallback)
+    var tree = try SplitTree(view: paneA).inserting(view: paneB, at: paneA, direction: .right)
+    tree = tree.settingZoomed(try #require(tree.find(id: paneA.rawValue)))
+    let layout = PaneLayout(
+      tree: tree,
+      panes: [
+        Pane(
+          id: paneA,
+          tabs: [
+            TabItem(
+              id: tabA,
+              title: "A",
+              content: ContentSnapshot(
+                id: contentA.id,
+                state: .terminal(TerminalContentState(workingDirectory: nil))
+              )
+            )
+          ],
+          selectedTabID: tabA
+        ),
+        Pane(
+          id: paneB,
+          tabs: [
+            TabItem(
+              id: tabB,
+              title: "B",
+              content: ContentSnapshot(
+                id: contentB.id,
+                state: .terminal(TerminalContentState(workingDirectory: nil))
+              )
+            )
+          ],
+          selectedTabID: tabB
+        ),
+      ],
+      focusedPaneID: paneA
+    )
+    let clock = TestClock()
+    let store = TestStore(
+      initialState: TerminalsFeature.State(layouts: [LayoutFeature.State(id: worktreeID, layout: layout)])
+    ) {
+      TerminalsFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.contentRuntime = runtime
+      $0[ContentSessionKiller.self] = ContentSessionKiller(kill: { _, _ in })
+    }
+    await store.send(.selectedWorktreeChanged(worktreeID)) {
+      $0.selectedWorktreeID = worktreeID
+      // Pane B sits behind the zoom, so its selection is hidden and arms.
+      $0.hibernationArmedTabs = [tabB]
+    }
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = false }
+    await store.send(.hibernationPolicyChanged) {
+      $0.hibernationArmedTabs = []
+    }
+  }
+
+  @Test(.dependencies) func detachLayoutCancelsArmedGraceTimers() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = true }
+    let harness = makeHibernationHarness()
+    // Selecting another worktree hides both tabs; both arm.
+    await harness.store.send(.selectedWorktreeChanged(Worktree.ID("/tmp/other"))) {
+      $0.selectedWorktreeID = Worktree.ID("/tmp/other")
+      $0.hibernationArmedTabs = [harness.selectedTab, harness.hiddenTab]
+    }
+    await harness.store.send(.detachLayout(worktreeID: harness.worktreeID)) {
+      $0.layouts = []
+      $0.hibernationArmedTabs = []
+    }
+    // Cancelled timers must never fire.
+    await harness.clock.advance(by: TerminalsFeature.hibernationGraceWindow)
+    await harness.store.finish()
+  }
+
   @Test func layoutsHydrationServesConsistentRecordsOnly() async {
     let paneID = PaneID()
     let good = Self.layout(paneID: paneID, tabID: TabID(), contentID: ContentID())

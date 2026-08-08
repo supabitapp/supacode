@@ -63,6 +63,37 @@ nonisolated struct LayoutsFile: Equatable, Codable, Sendable {
   }
 }
 
+nonisolated extension LayoutsFile {
+  /// Every session identity persisted anywhere in the file, including the
+  /// write-once v1 origin, so the orphan reaper can never kill a session a
+  /// dropped or not-yet-migrated record still owns.
+  var allKnownSurfaceIDs: Set<UUID> {
+    var ids: Set<UUID> = []
+    for record in worktrees.values {
+      ids.formUnion(record.layout.allContentIDs.map(\.rawValue))
+      if let origin = record.origin {
+        ids.formUnion(origin.allSurfaceIDs)
+      }
+    }
+    return ids
+  }
+}
+
+nonisolated extension PaneLayout {
+  /// `(surfaceID, agents)` for every terminal content carrying agent records;
+  /// drives the launch-time agent-presence restore.
+  func allAgentRecords() -> [(surfaceID: UUID, records: [TerminalLayoutSnapshot.SurfaceAgentRecord])] {
+    panes.flatMap { pane in
+      pane.tabs.compactMap { tab in
+        guard case .terminal(let state) = tab.content.state,
+          let agents = state.agents, !agents.isEmpty
+        else { return nil }
+        return (tab.content.id.rawValue, agents)
+      }
+    }
+  }
+}
+
 /// Transforms v1 layouts (splits-per-tab) into the v2 pane topology.
 ///
 /// Mapping rule: the selected tab's split tree becomes the pane arrangement,

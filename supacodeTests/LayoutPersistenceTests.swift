@@ -210,6 +210,79 @@ struct LayoutPersistenceTests {
     #expect(state.workingDirectory == "/stored")
   }
 
+  @Test func clearsAgentsForLiveContentAbsentFromPresenceMap() {
+    let paneID = PaneID()
+    let tabID = TabID()
+    let contentID = ContentID()
+    let runtime = ContentRuntime()
+    let record = TerminalLayoutSnapshot.SurfaceAgentRecord(agent: "claude", pids: [123], activity: "busy")
+    let live = StubContent(
+      id: contentID,
+      snapshotState: TerminalContentState(workingDirectory: "/live", agents: [record])
+    )
+    _ = runtime.provision(live, at: .fallback)
+
+    // The presence map is authoritative for live content: absence clears.
+    let result = LayoutPersistence.record(
+      for: layout(paneID: paneID, tabID: tabID, contentID: contentID),
+      runtime: runtime,
+      agentsBySurface: [:]
+    )
+    guard case .terminal(let state) = result.layout.panes[id: paneID]?.tabs[id: tabID]?.content.state else {
+      Issue.record("Expected a terminal payload.")
+      return
+    }
+    #expect(state.agents == nil)
+  }
+
+  @Test func keepsStoredAgentsForDormantContentAbsentFromPresenceMap() {
+    let paneID = PaneID()
+    let tabID = TabID()
+    let contentID = ContentID()
+    let record = TerminalLayoutSnapshot.SurfaceAgentRecord(agent: "claude", pids: [123], activity: "busy")
+    var stored = layout(paneID: paneID, tabID: tabID, contentID: contentID)
+    stored.panes[id: paneID]?.tabs[id: tabID]?.content = ContentSnapshot(
+      id: contentID,
+      state: .terminal(TerminalContentState(workingDirectory: "/stored", agents: [record]))
+    )
+
+    let result = LayoutPersistence.record(for: stored, runtime: ContentRuntime())
+    guard case .terminal(let state) = result.layout.panes[id: paneID]?.tabs[id: tabID]?.content.state else {
+      Issue.record("Expected a terminal payload.")
+      return
+    }
+    #expect(state.agents == [record])
+  }
+
+  @Test func stripsLiveOnlyFieldsSoRecordsEqualTheirDecodedRoundTrip() {
+    let paneID = PaneID()
+    let tabID = TabID()
+    let contentID = ContentID()
+    var stored = layout(paneID: paneID, tabID: tabID, contentID: contentID)
+    stored.panes[id: paneID]?.tabs[id: tabID]?.isTitleLocked = true
+    stored.panes[id: paneID]?.tabs[id: tabID]?.content = ContentSnapshot(
+      id: contentID,
+      state: .terminal(
+        TerminalContentState(
+          workingDirectory: "/stored",
+          launch: LaunchOverride(initialInput: "echo hi\r")
+        )
+      )
+    )
+
+    let result = LayoutPersistence.record(for: stored, runtime: ContentRuntime())
+    let tab = result.layout.panes[id: paneID]?.tabs[id: tabID]
+    #expect(tab?.isTitleLocked == false)
+    guard case .terminal(let state) = tab?.content.state else {
+      Issue.record("Expected a terminal payload.")
+      return
+    }
+    // Wire round-trips drop the launch; the in-memory record must match, or
+    // the writer's no-op gate would see a phantom change on every flush.
+    #expect(state.launch == nil)
+    #expect(state.workingDirectory == "/stored")
+  }
+
   @Test func keepsStoredSnapshotWhenContentIsHibernated() {
     let paneID = PaneID()
     let tabID = TabID()

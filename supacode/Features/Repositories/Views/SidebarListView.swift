@@ -93,9 +93,9 @@ struct SidebarListView: View {
         guard let worktreeID = store.selectedWorktreeID,
           state.sidebarSelectedWorktreeIDs.count == 1,
           state.sidebarSelectedWorktreeIDs.contains(worktreeID),
-          let terminalState = terminalManager.stateIfExists(for: worktreeID)
+          let host = terminalManager.hostIfExists(for: worktreeID)
         else { return .ignored }
-        terminalState.focusAndInsertText(keyPress.characters)
+        host.focusAndInsertText(keyPress.characters)
         return .handled
       }
       .background(
@@ -104,9 +104,9 @@ struct SidebarListView: View {
           guard let worktreeID = store.selectedWorktreeID,
             state.sidebarSelectedWorktreeIDs.count == 1,
             state.sidebarSelectedWorktreeIDs.contains(worktreeID),
-            let terminalState = terminalManager.stateIfExists(for: worktreeID)
+            let host = terminalManager.hostIfExists(for: worktreeID)
           else { return false }
-          terminalState.focusSelectedTab()
+          host.focusSelectedTab()
           return true
         }
       )

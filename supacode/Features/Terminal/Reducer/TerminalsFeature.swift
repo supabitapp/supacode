@@ -2,6 +2,17 @@ import ComposableArchitecture
 import Foundation
 import SupacodeSettingsShared
 
+/// App-shell side effects of a layout change (persistence debounce, sidebar
+/// projection, dormant watchers); the integration layer injects the live hook.
+nonisolated struct LayoutChangeObserver: Sendable {
+  var layoutChanged: @MainActor @Sendable (Worktree.ID) -> Void
+}
+
+extension LayoutChangeObserver: DependencyKey {
+  static let liveValue = LayoutChangeObserver(layoutChanged: { _ in })
+  static let testValue = liveValue
+}
+
 /// Owns the collection of per-tab `TerminalTabFeature` states. Mirrors the
 /// sidebar's `RepositoriesFeature` ownership of `sidebarItems`. Views scope
 /// through `store.scope(state: \.terminals, action: \.terminals)` so tab-bar
@@ -64,6 +75,11 @@ struct TerminalsFeature {
     /// on first use.
     case layoutsHydrated(LayoutsFile)
     case terminalTabs(IdentifiedActionOf<TerminalTabFeature>)
+    /// Ensures a layout exists for a worktree and carries its display name for
+    /// minted tab titles. Never replaces a live layout.
+    case attachLayout(worktreeID: Worktree.ID, titlePrefix: String)
+    /// Drops a pruned worktree's layout and bookkeeping.
+    case detachLayout(worktreeID: Worktree.ID)
     /// Worktree selection moved; visibility-driven hibernation re-diffs and
     /// the newly visible selection wakes.
     case selectedWorktreeChanged(Worktree.ID?)
@@ -90,15 +106,52 @@ struct TerminalsFeature {
 
   private static let logger = SupaLogger("TerminalsFeature")
 
+  // Ratio drags and title reports arrive at high frequency and cannot flip
+  // tab visibility; skip the layout-wide re-diff for them.
+  private static func canAffectVisibility(_ action: LayoutFeature.Action) -> Bool {
+    switch action {
+    case .resizePane, .runtime(.titleChanged):
+      return false
+    case .newTab, .splitPane, .closeTab, .closePane, .selectTab, .renameTab, .focusPane,
+      .moveTab, .equalizePanes, .toggleZoom, .hibernateTab, .wakeTab, .runtime(.killConfirmed),
+      .contentRequestedClose, .contentRequestedNewTab, .contentRequestedSplit,
+      .contentRequestedFocus, .contentRequestedFocusSplit, .contentRequestedToggleZoom,
+      .contentRequestedResize, .contentRequestedGotoTab, .contentRequestedMoveTab, .alert:
+      return true
+    }
+  }
+
   @Dependency(ContentRuntime.self) private var contentRuntime
+  @Dependency(LayoutChangeObserver.self) private var layoutChangeObserver
   @Dependency(\.continuousClock) private var clock
 
   var body: some Reducer<State, Action> {
     Reduce { state, action in
       switch action {
-      case .layouts:
+      case .layouts(.element(let worktreeID, let action)):
         // The element reducer already ran; any topology change may flip tab
-        // visibility, so re-diff the grace timers.
+        // visibility, so re-diff the grace timers and fire the app-shell
+        // hooks (persistence debounce, sidebar projection).
+        let hibernation = Self.canAffectVisibility(action) ? reconcileHibernation(&state) : .none
+        return .merge(
+          hibernation,
+          .run { _ in await layoutChangeObserver.layoutChanged(worktreeID) }
+        )
+
+      case .layouts:
+        return reconcileHibernation(&state)
+
+      case .attachLayout(let worktreeID, let titlePrefix):
+        if state.layouts[id: worktreeID] == nil {
+          state.layouts.append(LayoutFeature.State(id: worktreeID, layout: PaneLayout()))
+        }
+        state.layouts[id: worktreeID]?.titlePrefix = titlePrefix
+        return .none
+
+      case .detachLayout(let worktreeID):
+        // Bookkeeping is NOT pre-cleared: the reconcile below must still see
+        // the armed entries to emit their timer cancellations.
+        state.layouts.remove(id: worktreeID)
         return reconcileHibernation(&state)
 
       case .selectedWorktreeChanged(let worktreeID):
@@ -122,7 +175,9 @@ struct TerminalsFeature {
           guard state.layouts[id: worktreeID] == nil else { continue }
           state.layouts.append(LayoutFeature.State(id: worktreeID, layout: record.layout))
         }
-        return .none
+        // Hydration can land after the first selection; re-diff so the
+        // restored hidden tabs arm and the visible selection wakes.
+        return reconcileHibernation(&state)
 
       case .terminalTabs:
         return .none
@@ -179,15 +234,16 @@ struct TerminalsFeature {
 // MARK: - Hibernation.
 
 extension TerminalsFeature {
-  /// Whether a tab is hidden: everything except the selected worktree's
-  /// panes' selected tabs.
+  /// Whether a tab is hidden: everything except the selected tabs of the
+  /// selected worktree's rendering panes (zoom hides every other pane).
   private static func isTabHidden(
     _ tab: TabItem,
     pane: Pane,
+    paneRenders: Bool,
     worktreeID: Worktree.ID,
     selectedWorktreeID: Worktree.ID?
   ) -> Bool {
-    !(worktreeID == selectedWorktreeID && pane.selectedTabID == tab.id)
+    !(worktreeID == selectedWorktreeID && paneRenders && pane.selectedTabID == tab.id)
   }
 
   /// Diffs the hidden set against armed timers and wakes newly visible
@@ -199,12 +255,14 @@ extension TerminalsFeature {
     var allTabs: Set<TabID> = []
     var effects: [Effect<Action>] = []
     for layout in state.layouts {
+      let visiblePanes = Set(layout.layout.tree.visibleLeaves())
       for pane in layout.layout.panes {
         for tab in pane.tabs {
           allTabs.insert(tab.id)
           let isHidden = Self.isTabHidden(
             tab,
             pane: pane,
+            paneRenders: visiblePanes.contains(pane.id),
             worktreeID: layout.id,
             selectedWorktreeID: state.selectedWorktreeID
           )
@@ -236,6 +294,7 @@ extension TerminalsFeature {
       effects.append(.cancel(id: HibernationTimerID.tab(armed)))
     }
     state.wakeRequestedTabs.formIntersection(allTabs)
+    state.hibernationDeferralLogged.formIntersection(allTabs)
     return effects.isEmpty ? .none : .merge(effects)
   }
 
@@ -268,8 +327,19 @@ extension TerminalsFeature {
     guard let layout = state.layouts[id: worktreeID],
       let pane = layout.layout.pane(containingTab: tabID),
       let tab = pane.tabs[id: tabID],
-      Self.isTabHidden(tab, pane: pane, worktreeID: worktreeID, selectedWorktreeID: state.selectedWorktreeID)
+      Self.isTabHidden(
+        tab,
+        pane: pane,
+        paneRenders: Set(layout.layout.tree.visibleLeaves()).contains(pane.id),
+        worktreeID: worktreeID,
+        selectedWorktreeID: state.selectedWorktreeID
+      )
     else { return .none }
+    guard layout.alert == nil else {
+      // A pending close confirmation must keep its target live; re-arm.
+      state.hibernationArmedTabs.insert(tabID)
+      return armGraceTimer(worktreeID: worktreeID, tabID: tabID)
+    }
     guard contentRuntime.content(for: tab.content.id)?.isHibernatable == true else {
       // Still hidden but momentarily ineligible; re-arm so a later
       // eligibility flip still hibernates instead of wedging forever.

@@ -277,16 +277,12 @@ struct WorktreeDetailView: View {
           store.send(.repositories(.requestDeleteSidebarItems([target])))
         }
       } else if let selectedWorktree {
-        let shouldRunSetupScript = selectedSlice?.lifecycle == .pending
         let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
-        WorktreeTerminalTabsView(
+        WorktreeLayoutView(
           worktree: selectedWorktree,
           manager: terminalManager,
           terminalsStore: store.scope(state: \.terminals, action: \.terminals),
-          shouldRunSetupScript: shouldRunSetupScript,
-          isLifecycleBusy: selectedSlice?.lifecycle.isBusy ?? false,
-          forceAutoFocus: shouldFocusTerminal,
-          createTab: { store.send(.newTerminal) }
+          runtime: ContentRuntime.liveValue
         )
         .id(selectedWorktree.id)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -374,8 +370,8 @@ struct WorktreeDetailView: View {
   /// no notification object survives to carry the surface ID.
   private func selectToolbarSurface(_ worktreeID: Worktree.ID, _ surfaceID: UUID) {
     store.send(.repositories(.selectWorktree(worktreeID)))
-    if let terminalState = terminalManager.stateIfExists(for: worktreeID) {
-      _ = terminalState.focusSurface(id: surfaceID)
+    if let host = terminalManager.hostIfExists(for: worktreeID) {
+      _ = host.focusSurface(id: surfaceID)
     }
   }
 

@@ -163,6 +163,9 @@ struct SupacodeApp: App {
       SidebarPersistenceMigrator.migrateRemoteIdentityIfNeeded(capturedLegacy: capturedLegacyRemotes)
       SidebarPersistenceMigrator.migrateRemoteSlashIDsIfNeeded()
     }
+    // Rewrite v1 layouts.json into the v2 pane topology before anything
+    // (hydration, incremental writer) touches the file.
+    LayoutsMigrator.migrateFileIfNeeded()
     @Shared(.settingsFile) var settingsFile
     let initialSettings = settingsFile.global
     let infoDictionary = Bundle.main.infoDictionary ?? [:]
@@ -190,12 +193,15 @@ struct SupacodeApp: App {
     _commandKeyObserver = State(initialValue: keyObserver)
     let appStore = Self.makeStore(
       initialSettings: initialSettings,
+      runtime: runtime,
       terminalManager: terminalManager,
       worktreeInfoWatcher: worktreeInfoWatcher
     )
     _store = State(initialValue: appStore)
     appDelegate.appStore = appStore
     appDelegate.terminalManager = terminalManager
+    terminalManager.appStore = appStore
+    Self.hydrateLayouts(into: appStore)
     // Source live agent badge records for incremental layout captures; the [:]
     // default would clobber badges that share a surface key on every save.
     terminalManager.currentAgentsBySurface = { [weak appStore] in
@@ -210,26 +216,44 @@ struct SupacodeApp: App {
     runtime.focusedSurfaceBackgroundColorProvider = { [weak terminalManager] in
       terminalManager?.focusedSurfaceBackground
     }
-    terminalManager.saveLayoutSnapshot = { worktreeID, snapshot in
-      @Shared(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
-      $layouts.withLock { dict in
-        if let snapshot {
-          dict[worktreeID.rawValue] = snapshot
-        } else {
-          dict.removeValue(forKey: worktreeID.rawValue)
-        }
-      }
-    }
-    terminalManager.loadLayoutSnapshot = { worktreeID in
-      @SharedReader(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
-      return layouts[worktreeID.rawValue]
-    }
     return terminalManager
+  }
+
+  /// Serves the persisted layouts to `TerminalsFeature`. A still-v1 file (a
+  /// deferred migration) is migrated in memory as a safety net; the writer
+  /// then drops flushes until the on-disk migration succeeds, so the v1 bytes
+  /// survive for the next launch.
+  @MainActor
+  private static func hydrateLayouts(into store: StoreOf<AppFeature>) {
+    @Dependency(\.settingsFileStorage) var storage
+    let data: Data
+    do {
+      data = try storage.load(SupacodePaths.layoutsURL)
+    } catch {
+      if !LayoutsIncrementalWriter.isFileAbsent(error) {
+        SupaLogger("App").error("layouts.json unreadable at hydration: \(error)")
+      }
+      return
+    }
+    if let file = try? JSONDecoder().decode(LayoutsFile.self, from: data) {
+      store.send(.terminals(.layoutsHydrated(file)))
+      return
+    }
+    guard
+      let raw = try? JSONDecoder().decode(
+        [String: FailableDecodable<TerminalLayoutSnapshot>].self, from: data
+      )
+    else {
+      SupaLogger("App").error("layouts.json is neither v2 nor v1 at hydration; starting empty.")
+      return
+    }
+    store.send(.terminals(.layoutsHydrated(LayoutsMigrator.migrate(raw.compactMapValues(\.value)))))
   }
 
   @MainActor
   private static func makeStore(
     initialSettings: GlobalSettings,
+    runtime: GhosttyRuntime,
     terminalManager: WorktreeTerminalManager,
     worktreeInfoWatcher: WorktreeInfoWatcherManager
   ) -> StoreOf<AppFeature> {
@@ -237,6 +261,23 @@ struct SupacodeApp: App {
       AppFeature()
         .logActions()
     } withDependencies: { values in
+      values[LayoutContentFactory.self] = Self.makeContentFactory(
+        runtime: runtime,
+        terminalManager: terminalManager
+      )
+      values[ContentSessionKiller.self] = ContentSessionKiller(
+        kill: { contentID, worktreeID in
+          await terminalManager.killSession(for: contentID, worktreeID: worktreeID)
+        }
+      )
+      values[SplitZoomPolicy.self] = SplitZoomPolicy(
+        preservesZoomOnNavigation: { runtime.splitPreserveZoomOnNavigation() }
+      )
+      values[LayoutChangeObserver.self] = LayoutChangeObserver(
+        layoutChanged: { worktreeID in
+          terminalManager.handleLayoutChanged(for: worktreeID)
+        }
+      )
       values.terminalClient = TerminalClient(
         send: { command in
           terminalManager.handleCommand(command)
@@ -260,13 +301,10 @@ struct SupacodeApp: App {
           terminalManager.tabID(forWorktreeID: worktreeID, surfaceID: surfaceID)
         },
         selectedTabID: { worktreeID in
-          terminalManager.stateIfExists(for: worktreeID)?.tabManager.selectedTabId
+          terminalManager.hostIfExists(for: worktreeID)?.focusedTab?.id
         },
         selectedSurfaceID: { worktreeID in
-          guard let state = terminalManager.stateIfExists(for: worktreeID),
-            let tabID = state.tabManager.selectedTabId
-          else { return nil }
-          return state.activeSurfaceID(for: tabID)
+          terminalManager.hostIfExists(for: worktreeID)?.focusedContentID
         },
         latestUnreadNotification: {
           terminalManager.latestUnreadNotificationLocation()
@@ -317,6 +355,50 @@ struct SupacodeApp: App {
       // own clock and still override this.
       values.continuousClock = ContinuousClock()
     }
+  }
+
+  /// The live content factory: terminal surfaces built from a freshly
+  /// resolved plan, wired into the worktree's host and layout conduit.
+  @MainActor
+  private static func makeContentFactory(
+    runtime: GhosttyRuntime,
+    terminalManager: WorktreeTerminalManager
+  ) -> LayoutContentFactory {
+    TerminalContentBuilder(
+      runtime: runtime,
+      worktree: { [weak terminalManager] id in
+        terminalManager?.appStore?.withState { $0.repositories.worktree(for: id) }
+      },
+      socketPath: { [weak terminalManager] in
+        terminalManager?.socketServer?.socketPath
+      },
+      zmxExecutablePath: {
+        @Dependency(\.zmxClient) var zmxClient
+        return zmxClient.executableURL()?.path(percentEncoded: false)
+      },
+      sourceSurface: { id in
+        ContentRuntime.liveValue.content(for: id)?.renderer as? GhosttySurfaceView
+      },
+      wireSurface: { [weak terminalManager] view, request in
+        guard let terminalManager,
+          let worktree = terminalManager.appStore?.withState({
+            $0.repositories.worktree(for: request.worktreeID)
+          })
+        else { return }
+        let host = terminalManager.host(for: worktree)
+        LayoutSurfaceConduit(
+          host: host,
+          runtime: ContentRuntime.liveValue,
+          handleUnexpectedZmxClose: { [weak terminalManager] view in
+            terminalManager?.handleUnexpectedZmxClose(view, worktreeID: worktree.id)
+          }
+        ).wire(view, contentID: request.contentID)
+      },
+      environmentExtras: { [weak terminalManager] request in
+        terminalManager?.hostIfExists(for: request.worktreeID)?
+          .blockingScriptEnvironment(for: request.tabID) ?? [:]
+      }
+    ).factory()
   }
 
   @MainActor

@@ -280,7 +280,7 @@ struct RepositoriesFeature {
     var sidebarGrouping: SidebarGrouping = .empty
     /// Long-lived reader hoisted onto State so `reconcileSidebarItems` stays a
     /// pure static mutator and doesn't re-decode the layouts file on every call.
-    @SharedReader(.layouts) var persistedLayouts: [String: TerminalLayoutSnapshot]
+    @SharedReader(.layouts) var persistedLayouts: LayoutsFile
     /// Surfaces seeded onto rows from the persisted layout but not yet broadcast
     /// to agent presence. Accumulates across reconciles; the single drain owner
     /// is `AppFeature.repositoriesChanged`, which intersects against live

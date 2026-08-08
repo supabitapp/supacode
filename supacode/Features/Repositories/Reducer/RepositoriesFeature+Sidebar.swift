@@ -51,8 +51,9 @@ extension RepositoriesFeature {
         // at the row's first reconcile still seed when it shows up; the same
         // gate prevents stale UUIDs from being re-injected after the user
         // closes every tab (which emits an empty projection).
-        if !item.hasTerminalProjection, item.surfaceIDs.isEmpty, let snapshot = layouts[id.rawValue] {
-          let ids = snapshot.allSurfaceIDs
+        if !item.hasTerminalProjection, item.surfaceIDs.isEmpty,
+          let record = layouts.worktrees[id.rawValue] {
+          let ids = record.layout.allContentIDs.map(\.rawValue)
           if !ids.isEmpty {
             item.surfaceIDs = ids
             seededSurfaces.formUnion(ids)

@@ -467,7 +467,7 @@ struct WorktreeNotificationsInspectorView: View {
       onDismissAll: {
         for repositoryGroup in groups {
           for worktreeGroup in repositoryGroup.worktrees {
-            terminalManager.stateIfExists(for: worktreeGroup.id)?
+            terminalManager.hostIfExists(for: worktreeGroup.id)?
               .dismissAllNotifications()
           }
         }

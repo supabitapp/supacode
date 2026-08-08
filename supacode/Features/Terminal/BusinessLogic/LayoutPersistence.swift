@@ -20,18 +20,24 @@ enum LayoutPersistence {
     for paneIndex in overlaid.panes.indices {
       for tabIndex in overlaid.panes[paneIndex].tabs.indices {
         let contentID = overlaid.panes[paneIndex].tabs[tabIndex].content.id
-        if let live = runtime.content(for: contentID) {
+        let live = runtime.content(for: contentID)
+        if let live {
           overlaid.panes[paneIndex].tabs[tabIndex].content = live.snapshot()
         }
-        guard let agents = agentsBySurface[contentID.rawValue],
-          case .terminal(let state) = overlaid.panes[paneIndex].tabs[tabIndex].content.state
+        guard case .terminal(let state) = overlaid.panes[paneIndex].tabs[tabIndex].content.state
         else { continue }
+        // The presence map is authoritative for live content: absence must
+        // CLEAR a stale stored record, not preserve it. Dormant content keeps
+        // its stored records unless the map still carries fresher ones.
+        let mapped = agentsBySurface[contentID.rawValue].flatMap { $0.isEmpty ? nil : $0 }
+        let agents = live != nil ? mapped : mapped ?? state.agents
+        guard agents != state.agents else { continue }
         overlaid.panes[paneIndex].tabs[tabIndex].content = ContentSnapshot(
           id: contentID,
           state: .terminal(
             TerminalContentState(
               workingDirectory: state.workingDirectory,
-              agents: agents.isEmpty ? nil : agents,
+              agents: agents,
               frozenGrid: state.frozenGrid,
               launch: state.launch
             )
@@ -39,6 +45,27 @@ enum LayoutPersistence {
         )
       }
     }
-    return LayoutRecord(layout: overlaid.strippingEphemeralContent(), origin: origin)
+    var stripped = overlaid.strippingEphemeralContent()
+    // Live-only fields never encode; clear them so the record equals its
+    // decoded round-trip and the writer's no-op gate can hold.
+    for paneIndex in stripped.panes.indices {
+      for tabIndex in stripped.panes[paneIndex].tabs.indices {
+        stripped.panes[paneIndex].tabs[tabIndex].isTitleLocked = false
+        guard case .terminal(let state) = stripped.panes[paneIndex].tabs[tabIndex].content.state,
+          state.launch != nil
+        else { continue }
+        stripped.panes[paneIndex].tabs[tabIndex].content = ContentSnapshot(
+          id: stripped.panes[paneIndex].tabs[tabIndex].content.id,
+          state: .terminal(
+            TerminalContentState(
+              workingDirectory: state.workingDirectory,
+              agents: state.agents,
+              frozenGrid: state.frozenGrid
+            )
+          )
+        )
+      }
+    }
+    return LayoutRecord(layout: stripped, origin: origin)
   }
 }

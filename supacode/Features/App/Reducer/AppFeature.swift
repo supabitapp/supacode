@@ -399,10 +399,9 @@ struct AppFeature {
             // Reap crash / force-quit orphans, then resurrect agent badges
             // from embedded records. Races with `.task` under `.merge`; the
             // `repositoriesChanged` handler drains layout-seeded surfaces if restore wins.
-            @SharedReader(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
-            let known = Set(layouts.values.flatMap { $0.allSurfaceIDs })
-            let staged = AgentPresenceFeature.stageRestore(fromLayouts: layouts.values)
-            await terminalClient.reapOrphanSessions(known)
+            @SharedReader(.layouts) var layouts: LayoutsFile
+            let staged = AgentPresenceFeature.stageRestore(from: layouts)
+            await terminalClient.reapOrphanSessions(layouts.allKnownSurfaceIDs)
             await send(.agentPresence(.restoreFromSnapshot(staged: staged)))
           }
         )

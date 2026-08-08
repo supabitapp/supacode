@@ -15,6 +15,9 @@ struct LayoutSurfaceConduit {
 
   func wire(_ view: GhosttySurfaceView, contentID: ContentID) {
     let surfaceID = contentID.rawValue
+    // Counters must exist from provision, not first wake, or unseen
+    // notifications on a fresh surface never increment.
+    host.registerSurfaceState(for: surfaceID)
     wireTopologyCallbacks(view, contentID: contentID, surfaceID: surfaceID)
     wireLifecycleCallbacks(view, contentID: contentID, surfaceID: surfaceID)
   }
@@ -105,8 +108,10 @@ struct LayoutSurfaceConduit {
     }
     view.onFocusChange = { [weak view] focused in
       guard let view, focused, isLive(view) else { return }
-      host.recordActiveSurface(surfaceID)
+      // Pane focus first: the tint and mark-read reads in
+      // `recordActiveSurface` must see the updated focused pane.
       host.sendLayoutAction(.contentRequestedFocus(content: contentID))
+      host.recordActiveSurface(surfaceID)
       host.emitTaskStatusIfChanged()
     }
     view.onOcclusionHeal = { [weak view] windowIsKey, windowIsVisible in
@@ -129,9 +134,12 @@ struct LayoutSurfaceConduit {
     needsConfirmation: Bool
   ) {
     let surfaceID = contentID.rawValue
-    // Programmatic destroys (deeplink / CLI) skip the alert outright.
+    // Programmatic destroys (deeplink / CLI) skip the alert outright, so the
+    // close goes straight to the layout, never through the confirm mode.
     if host.consumeBypassCloseConfirmation(for: surfaceID) {
-      host.sendLayoutAction(.contentRequestedClose(content: contentID, scope: .tab))
+      _ = host.consumeExplicitClose(for: surfaceID)
+      guard let tabID = host.tabID(containing: surfaceID) else { return }
+      host.sendLayoutAction(.closeTab(id: tabID))
       return
     }
     let isExplicit = host.consumeExplicitClose(for: surfaceID)

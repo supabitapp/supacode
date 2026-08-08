@@ -1231,7 +1231,7 @@ struct LayoutFeatureTests {
     let ratio: Double? =
       switch harness.store.state.layout.tree.root {
       case .split(let split): split.ratio
-      default: nil
+      case .leaf, nil: nil
       }
     #expect(ratio == 0.5625)
     #expect(harness.store.state.layout.isConsistent)
