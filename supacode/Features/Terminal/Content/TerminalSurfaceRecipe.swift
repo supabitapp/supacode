@@ -167,6 +167,8 @@ nonisolated enum TerminalSurfaceRecipe {
     /// Font for a sourceless fresh spawn (the remembered zoom), pre-gated by
     /// the caller.
     var fallbackFontSize: Float32?
+    /// Caller extras merged into the surface environment (script markers).
+    var extraEnvironment: [String: String]
 
     init(
       terminalState: TerminalContentState,
@@ -174,7 +176,8 @@ nonisolated enum TerminalSurfaceRecipe {
       socketPath: String?,
       zmxExecutablePath: String?,
       inheritedFrom: GhosttySurfaceView? = nil,
-      fallbackFontSize: Float32? = nil
+      fallbackFontSize: Float32? = nil,
+      extraEnvironment: [String: String] = [:]
     ) {
       self.terminalState = terminalState
       self.worktree = worktree
@@ -182,6 +185,7 @@ nonisolated enum TerminalSurfaceRecipe {
       self.zmxExecutablePath = zmxExecutablePath
       self.inheritedFrom = inheritedFrom
       self.fallbackFontSize = fallbackFontSize
+      self.extraEnvironment = extraEnvironment
     }
   }
 
@@ -224,7 +228,8 @@ nonisolated enum TerminalSurfaceRecipe {
         for: seed.worktree,
         tabID: request.tabID,
         surfaceID: request.contentID.rawValue,
-        socketPath: seed.socketPath
+        socketPath: seed.socketPath,
+        extraVariables: seed.extraEnvironment
       ),
       workingDirectory: workingDirectory,
       fontSize: fontSize,
@@ -286,6 +291,11 @@ struct TerminalContentBuilder {
   /// wires it to `ContentRuntime`. No silent default: forgetting it would
   /// no-op the whole inheritance path.
   var sourceSurface: (ContentID) -> GhosttySurfaceView?
+  /// Wires a freshly built surface's callbacks (the conduit). No silent
+  /// default: an unwired surface would be deaf to every request.
+  var wireSurface: (GhosttySurfaceView, ContentRequest) -> Void
+  /// Extra environment for a spawning surface (blocking-script markers).
+  var environmentExtras: (ContentRequest) -> [String: String]
 
   func factory() -> LayoutContentFactory {
     LayoutContentFactory { request in
@@ -331,7 +341,8 @@ struct TerminalContentBuilder {
             inheritedFrom: effective.inheritedFrom.flatMap(sourceSurface),
             fallbackFontSize: TerminalSurfaceRecipe.rememberedZoomFontSize(
               gatedBy: runtime.windowInheritsFontSize()
-            )
+            ),
+            extraEnvironment: environmentExtras(effective)
           )
         )
         let view = GhosttySurfaceView(
@@ -347,6 +358,7 @@ struct TerminalContentBuilder {
           initialGeometry: geometry,
           context: plan.context
         )
+        wireSurface(view, effective)
         return TerminalContent.SpawnedSurface(view: view, usesZmx: plan.usesZmx)
       },
       initialState: terminalState
