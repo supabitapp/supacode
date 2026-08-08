@@ -11,6 +11,9 @@ protocol TabContent: AnyObject {
   /// Whether closing now would interrupt real work (a terminal's foreground
   /// process); drives the busy-gated close confirmation.
   var isBusy: Bool { get }
+  /// Whether the renderer can be torn down with the session surviving (a
+  /// terminal whose process lives in zmx).
+  var isHibernatable: Bool { get }
   /// Spawns the session eagerly at an explicit geometry; a second call while
   /// the renderer is alive is a no-op.
   func startSession(at geometry: ContentGeometry)
@@ -24,6 +27,9 @@ protocol TabContent: AnyObject {
 extension TabContent {
   // Most content is never busy; terminals override with their process state.
   var isBusy: Bool { false }
+  // Hibernation is opt-in: only content whose session outlives the renderer
+  // may claim it.
+  var isHibernatable: Bool { false }
 }
 
 /// Where in the layout a content is being created; a runtime hint for the
@@ -105,18 +111,26 @@ final class TerminalContent: TabContent {
     case rewake
   }
 
+  /// A constructed surface plus whether its process lives in zmx, which is
+  /// what makes renderer teardown recoverable.
+  nonisolated struct SpawnedSurface {
+    let view: GhosttySurfaceView
+    let usesZmx: Bool
+  }
+
   // Surface construction needs heavy config owned elsewhere, so it is
   // injected; it receives the current recorded state so a wake replans from
   // the hibernation-recorded grid and cwd, not the creation-time seed.
-  private let makeSurface: (ContentGeometry, TerminalContentState, SpawnPhase) -> GhosttySurfaceView
+  private let makeSurface: (ContentGeometry, TerminalContentState, SpawnPhase) -> SpawnedSurface
   // Latest recorded terminal state, so hibernated snapshots stay truthful.
   private var state: TerminalContentState
   private var surfaceView: GhosttySurfaceView?
+  private var usesZmx = false
   private var hasSpawned = false
 
   init(
     id: ContentID,
-    makeSurface: @escaping (ContentGeometry, TerminalContentState, SpawnPhase) -> GhosttySurfaceView,
+    makeSurface: @escaping (ContentGeometry, TerminalContentState, SpawnPhase) -> SpawnedSurface,
     initialState: TerminalContentState
   ) {
     self.id = id
@@ -129,9 +143,14 @@ final class TerminalContent: TabContent {
   // Hibernated terminals have no live surface, so nothing is interruptible.
   var isBusy: Bool { surfaceView?.needsCloseConfirmation ?? false }
 
+  // Only a zmx-backed live surface can drop its renderer and reattach.
+  var isHibernatable: Bool { surfaceView != nil && usesZmx }
+
   func startSession(at geometry: ContentGeometry) {
     guard surfaceView == nil else { return }
-    surfaceView = makeSurface(geometry, state, hasSpawned ? .rewake : .first)
+    let spawned = makeSurface(geometry, state, hasSpawned ? .rewake : .first)
+    surfaceView = spawned.view
+    usesZmx = spawned.usesZmx
     hasSpawned = true
   }
 

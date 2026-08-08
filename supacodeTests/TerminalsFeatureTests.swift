@@ -1,4 +1,6 @@
+import AppKit
 import ComposableArchitecture
+import DependenciesTestSupport
 import Foundation
 import SupacodeSettingsShared
 import Testing
@@ -7,6 +9,39 @@ import Testing
 
 @MainActor
 struct TerminalsFeatureTests {
+  /// Minimal live content whose renderer and eligibility the tests control.
+  @MainActor
+  private final class HibernatableContent: TabContent {
+    let id: ContentID
+    let kind: ContentKind = .terminal
+    /// Eligibility knob for the fire-time re-arm path.
+    var claimsHibernation = true
+    private(set) var startCalls = 0
+    private var view: NSView?
+    private let state: TerminalContentState
+
+    init(id: ContentID, state: TerminalContentState = TerminalContentState(workingDirectory: nil)) {
+      self.id = id
+      self.state = state
+    }
+
+    var renderer: NSView? { view }
+    var isHibernatable: Bool { view != nil && claimsHibernation }
+
+    func startSession(at geometry: ContentGeometry) {
+      startCalls += 1
+      guard view == nil else { return }
+      view = NSView()
+    }
+
+    func hibernate() {
+      view = nil
+    }
+
+    func snapshot() -> ContentSnapshot {
+      ContentSnapshot(id: id, state: .terminal(state))
+    }
+  }
   private static func layout(paneID: PaneID, tabID: TabID, contentID: ContentID) -> PaneLayout {
     PaneLayout(
       tree: SplitTree(view: paneID),
@@ -28,6 +63,196 @@ struct TerminalsFeatureTests {
       ],
       focusedPaneID: paneID
     )
+  }
+
+  // MARK: - Hibernation.
+
+  private struct HibernationHarness {
+    let store: TestStoreOf<TerminalsFeature>
+    let clock: TestClock<Duration>
+    let runtime: ContentRuntime
+    let worktreeID: Worktree.ID
+    let paneID: PaneID
+    let selectedTab: TabID
+    let hiddenTab: TabID
+    let selectedContent: HibernatableContent
+    let hiddenContent: HibernatableContent
+  }
+
+  /// One worktree, one pane, two tabs; both contents live in the runtime.
+  private func makeHibernationHarness(startSessions: Bool = true) -> HibernationHarness {
+    let worktreeID = Worktree.ID("/tmp/hib")
+    let paneID = PaneID()
+    let selectedTab = TabID()
+    let hiddenTab = TabID()
+    let selectedContent = HibernatableContent(id: ContentID())
+    let hiddenContent = HibernatableContent(id: ContentID())
+    let runtime = ContentRuntime()
+    if startSessions {
+      _ = runtime.provision(selectedContent, at: .fallback)
+      _ = runtime.provision(hiddenContent, at: .fallback)
+    }
+    let layout = PaneLayout(
+      tree: SplitTree(view: paneID),
+      panes: [
+        Pane(
+          id: paneID,
+          tabs: [
+            TabItem(
+              id: selectedTab,
+              title: "One",
+              content: ContentSnapshot(
+                id: selectedContent.id,
+                state: .terminal(TerminalContentState(workingDirectory: nil))
+              )
+            ),
+            TabItem(
+              id: hiddenTab,
+              title: "Two",
+              content: ContentSnapshot(
+                id: hiddenContent.id,
+                state: .terminal(TerminalContentState(workingDirectory: nil))
+              )
+            ),
+          ],
+          selectedTabID: selectedTab
+        )
+      ],
+      focusedPaneID: paneID
+    )
+    let clock = TestClock()
+    let store = TestStore(
+      initialState: TerminalsFeature.State(layouts: [LayoutFeature.State(id: worktreeID, layout: layout)])
+    ) {
+      TerminalsFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.contentRuntime = runtime
+      $0[ContentSessionKiller.self] = ContentSessionKiller(kill: { _, _ in })
+    }
+    return HibernationHarness(
+      store: store,
+      clock: clock,
+      runtime: runtime,
+      worktreeID: worktreeID,
+      paneID: paneID,
+      selectedTab: selectedTab,
+      hiddenTab: hiddenTab,
+      selectedContent: selectedContent,
+      hiddenContent: hiddenContent
+    )
+  }
+
+  @Test(.dependencies) func hiddenTabHibernatesAfterTheGraceWindow() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = true }
+    let harness = makeHibernationHarness()
+    await harness.store.send(.selectedWorktreeChanged(harness.worktreeID)) {
+      $0.selectedWorktreeID = harness.worktreeID
+      $0.hibernationArmedTabs = [harness.hiddenTab]
+    }
+    await harness.clock.advance(by: TerminalsFeature.hibernationGraceWindow)
+    await harness.store.receive(\.hibernationGraceElapsed) {
+      $0.hibernationArmedTabs = []
+    }
+    await harness.store.receive(\.layouts) {
+      $0.layouts[id: harness.worktreeID]?.renderEpoch = 1
+    }
+    #expect(harness.hiddenContent.renderer == nil)
+    #expect(harness.selectedContent.renderer != nil)
+  }
+
+  @Test(.dependencies) func selectingTheTabCancelsItsGraceTimer() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = true }
+    let harness = makeHibernationHarness()
+    await harness.store.send(.selectedWorktreeChanged(harness.worktreeID)) {
+      $0.selectedWorktreeID = harness.worktreeID
+      $0.hibernationArmedTabs = [harness.hiddenTab]
+    }
+    // Selecting the hidden tab makes it visible and hides the other one.
+    await harness.store.send(
+      .layouts(.element(id: harness.worktreeID, action: .selectTab(id: harness.hiddenTab)))
+    ) {
+      $0.layouts[id: harness.worktreeID]?.layout.panes[id: harness.paneID]?.selectedTabID = harness.hiddenTab
+      $0.hibernationArmedTabs = [harness.selectedTab]
+    }
+    await harness.clock.advance(by: TerminalsFeature.hibernationGraceWindow)
+    // Only the newly hidden tab fires; the cancelled timer stays silent.
+    await harness.store.receive(\.hibernationGraceElapsed) {
+      $0.hibernationArmedTabs = []
+    }
+    await harness.store.receive(\.layouts) {
+      $0.layouts[id: harness.worktreeID]?.renderEpoch = 1
+    }
+    #expect(harness.hiddenContent.renderer != nil)
+    #expect(harness.selectedContent.renderer == nil)
+  }
+
+  @Test(.dependencies) func disablingTheFlagCancelsPendingTimers() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = true }
+    let harness = makeHibernationHarness()
+    await harness.store.send(.selectedWorktreeChanged(harness.worktreeID)) {
+      $0.selectedWorktreeID = harness.worktreeID
+      $0.hibernationArmedTabs = [harness.hiddenTab]
+    }
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = false }
+    await harness.store.send(.hibernationPolicyChanged) {
+      $0.hibernationArmedTabs = []
+    }
+    await harness.clock.advance(by: TerminalsFeature.hibernationGraceWindow)
+    #expect(harness.hiddenContent.renderer != nil)
+  }
+
+  @Test(.dependencies) func ineligibleHiddenTabReArmsAtFireTime() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = true }
+    let harness = makeHibernationHarness()
+    harness.hiddenContent.claimsHibernation = false
+    await harness.store.send(.selectedWorktreeChanged(harness.worktreeID)) {
+      $0.selectedWorktreeID = harness.worktreeID
+      $0.hibernationArmedTabs = [harness.hiddenTab]
+    }
+    await harness.clock.advance(by: TerminalsFeature.hibernationGraceWindow)
+    await harness.store.receive(\.hibernationGraceElapsed) {
+      $0.hibernationDeferralLogged = [harness.hiddenTab]
+    }
+    #expect(harness.hiddenContent.renderer != nil)
+    // Eligibility returns; the re-armed timer hibernates on the next window.
+    harness.hiddenContent.claimsHibernation = true
+    await harness.clock.advance(by: TerminalsFeature.hibernationGraceWindow)
+    await harness.store.receive(\.hibernationGraceElapsed) {
+      $0.hibernationArmedTabs = []
+      $0.hibernationDeferralLogged = []
+    }
+    await harness.store.receive(\.layouts) {
+      $0.layouts[id: harness.worktreeID]?.renderEpoch = 1
+    }
+    #expect(harness.hiddenContent.renderer == nil)
+  }
+
+  @Test(.dependencies) func selectingAWorktreeWakesItsHibernatedSelection() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = true }
+    let harness = makeHibernationHarness()
+    harness.selectedContent.hibernate()
+    await harness.store.send(.selectedWorktreeChanged(harness.worktreeID)) {
+      $0.selectedWorktreeID = harness.worktreeID
+      $0.hibernationArmedTabs = [harness.hiddenTab]
+      $0.wakeRequestedTabs = [harness.selectedTab]
+    }
+    await harness.store.receive(\.layouts) {
+      $0.layouts[id: harness.worktreeID]?.renderEpoch = 1
+      $0.wakeRequestedTabs = []
+    }
+    #expect(harness.selectedContent.renderer != nil)
+    // Drain the armed timer so the store finishes clean.
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = false }
+    await harness.store.send(.hibernationPolicyChanged) {
+      $0.hibernationArmedTabs = []
+    }
+    await harness.store.finish()
   }
 
   @Test func layoutsHydrationServesConsistentRecordsOnly() async {

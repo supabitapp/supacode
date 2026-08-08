@@ -150,6 +150,8 @@ nonisolated enum TerminalSurfaceRecipe {
     /// Blocking-script runners emit their own OSC 133/7 and must not get
     /// Ghostty's shell integration injected into the host shell.
     var disableShellIntegration = false
+    /// True when the session lives in zmx and survives renderer teardown.
+    var usesZmx = false
   }
 
   /// Everything a surface plan resolves against beyond the request itself.
@@ -227,7 +229,8 @@ nonisolated enum TerminalSurfaceRecipe {
       workingDirectory: workingDirectory,
       fontSize: fontSize,
       context: context,
-      disableShellIntegration: override?.bypassZmx ?? false
+      disableShellIntegration: override?.bypassZmx ?? false,
+      usesZmx: launch.usesZmx
     )
   }
 
@@ -331,7 +334,7 @@ struct TerminalContentBuilder {
             )
           )
         )
-        return GhosttySurfaceView(
+        let view = GhosttySurfaceView(
           id: request.contentID.rawValue,
           runtime: runtime,
           workingDirectory: plan.workingDirectory,
@@ -344,6 +347,7 @@ struct TerminalContentBuilder {
           initialGeometry: geometry,
           context: plan.context
         )
+        return TerminalContent.SpawnedSurface(view: view, usesZmx: plan.usesZmx)
       },
       initialState: terminalState
     )
