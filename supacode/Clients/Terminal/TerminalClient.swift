@@ -78,6 +78,9 @@ struct TerminalClient {
     case beginTabRename(Worktree, tabID: TabID? = nil)
     case renameTab(Worktree, tabID: TabID, title: String)
     case prune(keeping: Set<Worktree.ID>, protectingRepositoryIDs: Set<Repository.ID>)
+    /// Explicitly deleted worktree: its layout, sessions, and persisted record
+    /// go with it, host or no host.
+    case removeWorktreeLayout(worktreeID: Worktree.ID, remoteHost: RemoteHost?)
     case setNotificationsEnabled(Bool)
     case enforceNotificationRetentionLimit
     case setSelectedWorktreeID(Worktree.ID?)

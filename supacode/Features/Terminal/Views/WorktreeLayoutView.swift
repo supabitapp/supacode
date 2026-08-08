@@ -26,6 +26,7 @@ struct WorktreeLayoutView: View {
           store: layoutStore,
           runtime: runtime,
           dividerColor: manager.splitDividerColor(),
+          unfocusedOverlay: manager.unfocusedSplitOverlay(),
           surfaceState: { [weak manager] surfaceID in
             manager?.hostIfExists(for: worktree.id)?.surfaceStates[surfaceID]
           }
@@ -88,6 +89,7 @@ private struct LayoutAlertHost: View {
   @Bindable var store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let dividerColor: Color
+  let unfocusedOverlay: (fill: Color?, opacity: Double)
   let surfaceState: (UUID) -> WorktreeSurfaceState?
 
   var body: some View {
@@ -95,6 +97,7 @@ private struct LayoutAlertHost: View {
       store: store,
       runtime: runtime,
       dividerColor: dividerColor,
+      unfocusedOverlay: unfocusedOverlay,
       surfaceState: surfaceState
     )
     .alert($store.scope(state: \.alert, action: \.alert))

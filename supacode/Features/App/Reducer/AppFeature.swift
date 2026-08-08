@@ -1324,11 +1324,21 @@ struct AppFeature {
           return false
         }
 
-      case .repositories(.worktreeDeleted(let worktreeID, _, _, _)):
-        return resolveCommandAcks(ok: true, state: &state) { match in
-          if case .worktreeRemoved(let ackWorktree) = match { return ackWorktree == worktreeID }
-          return false
-        }
+      case .repositories(.worktreeDeleted(let worktreeID, let repositoryID, _, _)):
+        // Deleting a worktree deletes its layout, sessions, and persisted
+        // record, host or no host; roster prune cannot reach a hostless
+        // layout without risking a merely-unloaded repository's records.
+        let remoteHost = state.repositories.repositories[id: repositoryID]?.host
+        return .merge(
+          resolveCommandAcks(ok: true, state: &state) { match in
+            if case .worktreeRemoved(let ackWorktree) = match { return ackWorktree == worktreeID }
+            return false
+          },
+          .run { _ in
+            await terminalClient.send(
+              .removeWorktreeLayout(worktreeID: worktreeID, remoteHost: remoteHost))
+          }
+        )
 
       case .repositories(.archiveWorktreeApplied(let worktreeID)):
         return resolveCommandAcks(ok: true, state: &state) { match in

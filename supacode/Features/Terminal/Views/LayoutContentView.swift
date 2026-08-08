@@ -11,6 +11,8 @@ struct LayoutContentView: View {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   var dividerColor: Color = Color(nsColor: .separatorColor)
+  /// The `unfocused-split-fill` dim painted over visible unfocused panes.
+  var unfocusedOverlay: (fill: Color?, opacity: Double) = (nil, 0)
   /// Resolves a content id to its observable unseen-notification counter.
   var surfaceState: (UUID) -> WorktreeSurfaceState? = { _ in nil }
 
@@ -23,6 +25,7 @@ struct LayoutContentView: View {
       store: store,
       runtime: runtime,
       dividerColor: dividerColor,
+      unfocusedOverlay: unfocusedOverlay,
       surfaceState: surfaceState,
       panes: visiblePaneIDs.compactMap { paneID in
         store.layout.panes[id: paneID]?.selectedTab.flatMap { runtime.renderer(for: $0.content.id) }
@@ -37,12 +40,14 @@ struct LayoutPaneTreeView: View {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let dividerColor: Color
+  var unfocusedOverlay: (fill: Color?, opacity: Double) = (nil, 0)
   var surfaceState: (UUID) -> WorktreeSurfaceState? = { _ in nil }
 
   var body: some View {
     if let node = store.layout.tree.visibleNode {
       PaneNodeView(
-        node: node, store: store, runtime: runtime, dividerColor: dividerColor, surfaceState: surfaceState)
+        node: node, store: store, runtime: runtime, dividerColor: dividerColor,
+        unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState)
         .id(store.layout.tree.structuralIdentity)
     } else {
       EmptyLayoutView()
@@ -56,6 +61,7 @@ private struct LayoutAXContainer: NSViewRepresentable {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let dividerColor: Color
+  let unfocusedOverlay: (fill: Color?, opacity: Double)
   let surfaceState: (UUID) -> WorktreeSurfaceState?
   let panes: [NSView]
 
@@ -66,7 +72,8 @@ private struct LayoutAXContainer: NSViewRepresentable {
   func updateNSView(_ nsView: LayoutAXContainerView, context: Context) {
     nsView.update(
       rootView: LayoutPaneTreeView(
-        store: store, runtime: runtime, dividerColor: dividerColor, surfaceState: surfaceState),
+        store: store, runtime: runtime, dividerColor: dividerColor,
+        unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState),
       panes: panes
     )
   }
@@ -161,16 +168,19 @@ private struct PaneNodeView: View {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let dividerColor: Color
+  let unfocusedOverlay: (fill: Color?, opacity: Double)
   let surfaceState: (UUID) -> WorktreeSurfaceState?
 
   var body: some View {
     switch node {
     case .leaf(let paneID):
-      PaneStripView(paneID: paneID, store: store, runtime: runtime, surfaceState: surfaceState)
+      PaneStripView(
+        paneID: paneID, store: store, runtime: runtime, unfocusedOverlay: unfocusedOverlay,
+        surfaceState: surfaceState)
     case .split(let split):
       PaneSplitView(
         node: node, split: split, store: store, runtime: runtime, dividerColor: dividerColor,
-        surfaceState: surfaceState)
+        unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState)
     }
   }
 }
@@ -183,6 +193,7 @@ private struct PaneSplitView: View {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let dividerColor: Color
+  let unfocusedOverlay: (fill: Color?, opacity: Double)
   let surfaceState: (UUID) -> WorktreeSurfaceState?
 
   var body: some View {
@@ -193,12 +204,12 @@ private struct PaneSplitView: View {
       left: {
         PaneNodeView(
           node: split.left, store: store, runtime: runtime, dividerColor: dividerColor,
-          surfaceState: surfaceState)
+          unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState)
       },
       right: {
         PaneNodeView(
           node: split.right, store: store, runtime: runtime, dividerColor: dividerColor,
-          surfaceState: surfaceState)
+          unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState)
       },
       onResize: { store.send(.resizePane(node: node, ratio: $0)) },
       onEqualize: { store.send(.equalizePanes) }
@@ -212,10 +223,16 @@ private struct PaneStripView: View {
   let paneID: PaneID
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
+  let unfocusedOverlay: (fill: Color?, opacity: Double)
   let surfaceState: (UUID) -> WorktreeSurfaceState?
 
   private var pane: Pane? { store.layout.panes[id: paneID] }
   private var isFocused: Bool { store.layout.focusedPaneID == paneID }
+  /// Only a multi-pane view dims; the sole visible pane (single pane or
+  /// zoomed) is always the working one.
+  private var isDimmed: Bool {
+    !isFocused && store.layout.tree.visibleLeaves().count > 1
+  }
 
   var body: some View {
     if let pane {
@@ -231,6 +248,13 @@ private struct PaneStripView: View {
           if runtime.renderer(for: contentID) != nil {
             ContentHostView(contentID: contentID, runtime: runtime, epoch: epoch)
               .frame(maxWidth: .infinity, maxHeight: .infinity)
+              .overlay {
+                if isDimmed, let fill = unfocusedOverlay.fill, unfocusedOverlay.opacity > 0 {
+                  fill
+                    .opacity(unfocusedOverlay.opacity)
+                    .allowsHitTesting(false)
+                }
+              }
           } else {
             EmptyTerminalPaneView(message: "This terminal is unavailable.")
           }

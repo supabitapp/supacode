@@ -161,6 +161,47 @@ struct WorktreeTerminalManagerAckTests {
     #expect(events.first == .tabCreated(worktreeID: harness.worktree.id))
   }
 
+  @Test(.dependencies) func removingADeletedWorktreesLayoutWorksWithoutAHost() {
+    let harness = makeHarness()
+    let contentID = UUID()
+    let paneID = PaneID()
+    let tabID = TabID(rawValue: contentID)
+    let layout = PaneLayout(
+      tree: SplitTree(view: paneID),
+      panes: [
+        Pane(
+          id: paneID,
+          tabs: [
+            TabItem(
+              id: tabID,
+              title: "Restored",
+              content: ContentSnapshot(
+                id: ContentID(rawValue: contentID),
+                state: .terminal(TerminalContentState(workingDirectory: nil))
+              )
+            )
+          ],
+          selectedTabID: tabID
+        )
+      ],
+      focusedPaneID: paneID
+    )
+    // Hydrated but never selected: no host exists for this worktree.
+    harness.store.send(
+      .terminals(
+        .layoutsHydrated(
+          LayoutsFile(worktrees: [harness.worktree.id.rawValue: LayoutRecord(layout: layout)])
+        )
+      )
+    )
+    #expect(harness.store.withState { $0.terminals.layouts[id: harness.worktree.id] } != nil)
+
+    harness.manager.handleCommand(
+      .removeWorktreeLayout(worktreeID: harness.worktree.id, remoteHost: nil))
+
+    #expect(harness.store.withState { $0.terminals.layouts[id: harness.worktree.id] } == nil)
+  }
+
   @Test(.dependencies) func anchoredCreateLandsInTheAnchorsPane() async {
     let harness = makeHarness()
     let pump = CreationEvents(harness.manager)

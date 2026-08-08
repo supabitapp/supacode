@@ -455,8 +455,8 @@ final class WorktreeTerminalManager {
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .focusSurface, .splitSurface,
-      .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .setNotificationsEnabled,
-      .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
+      .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .removeWorktreeLayout,
+      .setNotificationsEnabled, .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
       .setTerminalHibernationEnabled:
       return false
     }
@@ -474,8 +474,8 @@ final class WorktreeTerminalManager {
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex,
-      .focusSurface, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .setNotificationsEnabled,
-      .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
+      .focusSurface, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .removeWorktreeLayout,
+      .setNotificationsEnabled, .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
       .setTerminalHibernationEnabled:
       return false
     }
@@ -492,6 +492,8 @@ final class WorktreeTerminalManager {
     switch command {
     case .prune(let ids, let protectedRepositoryIDs):
       prune(keeping: ids, protectingRepositoryIDs: protectedRepositoryIDs)
+    case .removeWorktreeLayout(let worktreeID, let remoteHost):
+      removeWorktreeLayout(for: worktreeID, remoteHost: remoteHost)
     case .setNotificationsEnabled(let enabled):
       setNotificationsEnabled(enabled)
     case .enforceNotificationRetentionLimit:
@@ -1052,6 +1054,35 @@ final class WorktreeTerminalManager {
       return
     }
     emit(.surfaceCreated(worktreeID: worktree.id, id: id))
+  }
+
+  /// Explicit worktree deletion: drop its layout and sessions whether or not
+  /// a host exists (a hydrated worktree the user never selected has none).
+  /// Roster prune cannot do this, since a hostless layout could also belong
+  /// to a repository that merely failed to load.
+  func removeWorktreeLayout(for worktreeID: Worktree.ID, remoteHost: RemoteHost?) {
+    let surfaceIDs =
+      hosts[worktreeID]?.allSurfaceIDs
+      ?? layoutState(for: worktreeID)?.layout.allContentIDs.map(\.rawValue) ?? []
+    deleteLayoutSnapshot(worktreeID: worktreeID)
+    if let host = hosts.removeValue(forKey: worktreeID) {
+      // Watchers stop before the kill.
+      host.tearDown()
+    }
+    for surfaceID in surfaceIDs {
+      ContentRuntime.liveValue.remove(ContentID(rawValue: surfaceID), tombstone: false)
+    }
+    sendTerminals(.detachLayout(worktreeID: worktreeID))
+    emit(.worktreeStateTornDown(worktreeID: worktreeID))
+    cancelPendingIdleHooks(forSurfaceIDs: Set(surfaceIDs))
+    invalidateCaches(forPrunedWorktree: worktreeID)
+    emitNotificationIndicatorCountIfNeeded()
+    emitHasAnyTerminalSurfaceIfNeeded()
+    refreshFocusedSurfaceBackground()
+    let remoteSessions = remoteHost.map { host in
+      surfaceIDs.map { (host: host, sessionID: ZmxSessionID.make(surfaceID: $0)) }
+    }
+    killZmxSessions(surfaceIDs.map(ZmxSessionID.make(surfaceID:)), remoteSessions: remoteSessions ?? [])
   }
 
   func prune(
