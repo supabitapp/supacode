@@ -516,6 +516,277 @@ struct WorktreeInfoWatcherManagerTests {
     #expect(count == WorktreeInfoWatcherManager.eventBufferCap)
     try FileManager.default.removeItem(at: tempWorktree.tempRoot)
   }
+
+  @Test func reconcileBackstopRefreshesRemoteLineChangesAndPullRequests() async throws {
+    let clock = TestClock()
+    let stub = RemoteBranchPollStub(responses: ["main"])
+    let manager = WorktreeInfoWatcherManager(
+      focusedInterval: .seconds(3_600),
+      unfocusedInterval: .seconds(3_600),
+      filesChangedDebounceInterval: .seconds(3_600),
+      reconcileInterval: .seconds(1),
+      reconcileStep: .milliseconds(10),
+      clock: clock,
+      pollRemoteBranch: { _ in await stub.next() }
+    )
+    let (collector, task) = startCollecting(manager.eventStream())
+    let remote = makeRemoteWorktree(name: "remote-eagle")
+
+    manager.handleCommand(.setWorktrees([remote]))
+    #expect(await waitForFilesChangedCount(collector, worktreeID: remote.id, atLeast: 1) == 1)
+    #expect(
+      await waitForPullRequestRefreshCount(
+        collector, repositoryRootURL: remote.repositoryRootURL, atLeast: 1
+      ) == 1
+    )
+
+    // One reconcile sweep re-emits the remote worktree's line changes (no local
+    // FS events) and re-refreshes its pull requests.
+    await clock.advance(by: .seconds(1))
+    #expect(await waitForFilesChangedCount(collector, worktreeID: remote.id, atLeast: 2) == 2)
+    await clock.advance(by: .milliseconds(10))
+    #expect(
+      await waitForPullRequestRefreshCount(
+        collector, repositoryRootURL: remote.repositoryRootURL, atLeast: 2
+      ) == 2
+    )
+
+    manager.handleCommand(.stop)
+    await task.value
+  }
+
+  @Test func reconcileBackstopLeavesLocalLineChangesToFileEvents() async throws {
+    let clock = TestClock()
+    let tempWorktree = try makeTempWorktree()
+    let manager = WorktreeInfoWatcherManager(
+      filesChangedDebounceInterval: .seconds(3_600),
+      reconcileInterval: .seconds(1),
+      reconcileStep: .milliseconds(10),
+      clock: clock
+    )
+    let (collector, task) = startCollecting(manager.eventStream())
+
+    manager.handleCommand(.setWorktrees([tempWorktree.worktree]))
+    #expect(
+      await waitForFilesChangedCount(collector, worktreeID: tempWorktree.worktree.id, atLeast: 1) == 1
+    )
+    #expect(
+      await waitForPullRequestRefreshCount(
+        collector, repositoryRootURL: tempWorktree.tempRoot, atLeast: 1
+      ) == 1
+    )
+
+    // The sweep re-refreshes pull requests but must not diff a local worktree on
+    // a timer; local line counts stay event-driven.
+    await clock.advance(by: .seconds(1))
+    await clock.advance(by: .milliseconds(10))
+    #expect(
+      await waitForPullRequestRefreshCount(
+        collector, repositoryRootURL: tempWorktree.tempRoot, atLeast: 2
+      ) == 2
+    )
+    await drainAsyncEvents(200)
+    #expect(await collector.filesChangedCount(worktreeID: tempWorktree.worktree.id) == 1)
+
+    manager.handleCommand(.stop)
+    await task.value
+    try FileManager.default.removeItem(at: tempWorktree.tempRoot)
+  }
+
+  @Test func backgroundPollingPausesWhileInactiveAndResumesWhenActive() async throws {
+    let clock = TestClock()
+    let stub = RemoteBranchPollStub(responses: ["main"])
+    let manager = WorktreeInfoWatcherManager(
+      focusedInterval: .seconds(3_600),
+      unfocusedInterval: .seconds(3_600),
+      filesChangedDebounceInterval: .seconds(3_600),
+      reconcileInterval: .seconds(1),
+      reconcileStep: .milliseconds(10),
+      clock: clock,
+      pollRemoteBranch: { _ in await stub.next() }
+    )
+    let (collector, task) = startCollecting(manager.eventStream())
+    let remote = makeRemoteWorktree(name: "remote-eagle")
+
+    manager.handleCommand(.setWorktrees([remote]))
+    #expect(await waitForFilesChangedCount(collector, worktreeID: remote.id, atLeast: 1) == 1)
+
+    // Going inactive stops the reconcile sweep and the remote SSH head poll.
+    manager.handleCommand(.setActive(false))
+    await drainAsyncEvents(200)
+    let callsWhileInactive = await stub.callCount
+    await clock.advance(by: .seconds(5))
+    await drainAsyncEvents(200)
+    #expect(await collector.filesChangedCount(worktreeID: remote.id) == 1)
+    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: remote.repositoryRootURL) == 1)
+    #expect(await stub.callCount == callsWhileInactive)
+
+    // Reactivating resumes both.
+    manager.handleCommand(.setActive(true))
+    await drainAsyncEvents(200)
+    #expect(await stub.callCount > callsWhileInactive)
+    await clock.advance(by: .seconds(1))
+    #expect(await waitForFilesChangedCount(collector, worktreeID: remote.id, atLeast: 2) == 2)
+
+    manager.handleCommand(.stop)
+    await task.value
+  }
+
+  @Test func disablingPollingStopsBackgroundWorkAndReenablingResumesIt() async throws {
+    let clock = TestClock()
+    let stub = RemoteBranchPollStub(responses: ["main"])
+    let manager = WorktreeInfoWatcherManager(
+      focusedInterval: .seconds(3_600),
+      unfocusedInterval: .seconds(3_600),
+      filesChangedDebounceInterval: .seconds(3_600),
+      reconcileInterval: .seconds(1),
+      reconcileStep: .milliseconds(10),
+      clock: clock,
+      pollRemoteBranch: { _ in await stub.next() }
+    )
+    let (collector, task) = startCollecting(manager.eventStream())
+    let remote = makeRemoteWorktree(name: "remote-eagle")
+
+    manager.handleCommand(.setWorktrees([remote]))
+    #expect(await waitForFilesChangedCount(collector, worktreeID: remote.id, atLeast: 1) == 1)
+
+    manager.handleCommand(.setAutomaticRefreshEnabled(false))
+    await drainAsyncEvents(200)
+    let callsWhileDisabled = await stub.callCount
+    await clock.advance(by: .seconds(5))
+    await drainAsyncEvents(200)
+    #expect(await collector.filesChangedCount(worktreeID: remote.id) == 1)
+    #expect(await stub.callCount == callsWhileDisabled)
+
+    manager.handleCommand(.setAutomaticRefreshEnabled(true))
+    await drainAsyncEvents(200)
+    #expect(await stub.callCount > callsWhileDisabled)
+    await clock.advance(by: .seconds(1))
+    #expect(await waitForFilesChangedCount(collector, worktreeID: remote.id, atLeast: 2) == 2)
+
+    manager.handleCommand(.stop)
+    await task.value
+  }
+
+  @Test func pollingDisabledAtConstructionSkipsRemoteStatusWorkButKeepsLocalDiscovery() async throws {
+    let clock = TestClock()
+    let stub = RemoteBranchPollStub(responses: ["main"])
+    let tempWorktree = try makeTempWorktree()
+    let manager = WorktreeInfoWatcherManager(
+      focusedInterval: .seconds(3_600),
+      unfocusedInterval: .seconds(3_600),
+      filesChangedDebounceInterval: .seconds(3_600),
+      reconcileInterval: .seconds(1),
+      reconcileStep: .milliseconds(10),
+      automaticRefreshEnabled: false,
+      clock: clock,
+      pollRemoteBranch: { _ in await stub.next() }
+    )
+    let (collector, task) = startCollecting(manager.eventStream())
+    let remote = makeRemoteWorktree(name: "remote-eagle")
+
+    manager.handleCommand(.setWorktrees([remote, tempWorktree.worktree]))
+    await drainAsyncEvents(200)
+    await clock.advance(by: .seconds(5))
+    await drainAsyncEvents(200)
+
+    // No recurring SSH head poll and no reconcile sweep while disabled, and the
+    // remote worktree's SSH line count is not read on discovery either. A local
+    // worktree still shows its counts, since that diff is cheap and never SSH.
+    #expect(await stub.callCount == 0)
+    #expect(await collector.filesChangedCount(worktreeID: remote.id) == 0)
+    #expect(await collector.filesChangedCount(worktreeID: tempWorktree.worktree.id) == 1)
+
+    manager.handleCommand(.stop)
+    await task.value
+    try FileManager.default.removeItem(at: tempWorktree.tempRoot)
+  }
+
+  @Test func fileEventRootsIncludesLinkedWorktreeAdminDir() throws {
+    let linked = try makeLinkedWorktree()
+    let manager = WorktreeInfoWatcherManager()
+
+    let roots = manager.fileEventRoots(for: linked.worktree)
+
+    // The working tree plus the admin dir outside it, so a commit that only
+    // rewrites the admin dir still produces a file event.
+    #expect(roots.contains(linked.worktree.workingDirectory))
+    #expect(roots.contains(linked.adminDirectory))
+    #expect(roots.count == 2)
+
+    try FileManager.default.removeItem(at: linked.tempRoot)
+  }
+
+  @Test func fileEventRootsIsJustTheWorkingTreeForAnEmbeddedGitDir() throws {
+    let tempWorktree = try makeTempWorktree()
+    let manager = WorktreeInfoWatcherManager()
+
+    let roots = manager.fileEventRoots(for: tempWorktree.worktree)
+
+    #expect(roots == [tempWorktree.worktree.workingDirectory])
+
+    try FileManager.default.removeItem(at: tempWorktree.tempRoot)
+  }
+
+  @Test func reconcileCatchesUpALocalWorktreeWhoseWatcherIsDead() async throws {
+    let clock = TestClock()
+    // A worktree with no resolvable HEAD never arms a head watcher, so the
+    // reconcile backstop must emit a catch-up instead of leaving it stale.
+    let worktree = makeLocalWorktreeWithoutGitMetadata()
+    let manager = WorktreeInfoWatcherManager(
+      filesChangedDebounceInterval: .seconds(3_600),
+      reconcileInterval: .seconds(1),
+      reconcileStep: .milliseconds(10),
+      clock: clock
+    )
+    let (collector, task) = startCollecting(manager.eventStream())
+
+    manager.handleCommand(.setPullRequestTrackingEnabled(false))
+    manager.handleCommand(.setWorktrees([worktree]))
+    #expect(await waitForFilesChangedCount(collector, worktreeID: worktree.id, atLeast: 1) == 1)
+    #expect(await collector.branchChangedCount(worktreeID: worktree.id) == 0)
+
+    await clock.advance(by: .seconds(1))
+    #expect(await waitForFilesChangedCount(collector, worktreeID: worktree.id, atLeast: 2) == 2)
+    #expect(await collector.branchChangedCount(worktreeID: worktree.id) == 1)
+
+    manager.handleCommand(.stop)
+    await task.value
+  }
+
+  @Test func reconcileSweepStaggersWorktreesOneStepApartInOrder() async throws {
+    let clock = TestClock()
+    let manager = WorktreeInfoWatcherManager(
+      focusedInterval: .seconds(3_600),
+      unfocusedInterval: .seconds(3_600),
+      filesChangedDebounceInterval: .seconds(3_600),
+      reconcileInterval: .seconds(1),
+      reconcileStep: .seconds(1),
+      clock: clock,
+      pollRemoteBranch: { _ in "main" }
+    )
+    let (collector, task) = startCollecting(manager.eventStream())
+    let first = makeRemoteWorktree(name: "alpha")
+    let second = makeRemoteWorktree(name: "beta")
+    #expect(first.id.rawValue < second.id.rawValue)
+
+    manager.handleCommand(.setPullRequestTrackingEnabled(false))
+    manager.handleCommand(.setWorktrees([first, second]))
+    _ = await waitForFilesChangedCount(collector, worktreeID: first.id, atLeast: 1)
+    _ = await waitForFilesChangedCount(collector, worktreeID: second.id, atLeast: 1)
+
+    // The sweep reconciles one worktree per step, in id order: alpha, then beta.
+    await clock.advance(by: .seconds(1))
+    #expect(await waitForFilesChangedCount(collector, worktreeID: first.id, atLeast: 2) == 2)
+    await drainAsyncEvents(120)
+    #expect(await collector.filesChangedCount(worktreeID: second.id) == 1)
+
+    await clock.advance(by: .seconds(1))
+    #expect(await waitForFilesChangedCount(collector, worktreeID: second.id, atLeast: 2) == 2)
+
+    manager.handleCommand(.stop)
+    await task.value
+  }
 }
 
 actor EventCollector {
@@ -543,7 +814,7 @@ actor EventCollector {
 
   func pullRequestRefreshCount(repositoryRootURL: URL) -> Int {
     events.reduce(into: 0) { result, event in
-      if case .repositoryPullRequestRefresh(let rootURL, _) = event, rootURL == repositoryRootURL {
+      if case .repositoryPullRequestRefresh(let rootURL, _, _) = event, rootURL == repositoryRootURL {
         result += 1
       }
     }
@@ -578,6 +849,52 @@ private func makeRemoteWorktree(name: String) -> Worktree {
     workingDirectory: URL(fileURLWithPath: "/home/me/\(name)"),
     repositoryRootURL: URL(fileURLWithPath: "/home/me/repo"),
     host: RemoteHost(alias: "devbox")
+  )
+}
+
+private struct LinkedWorktree {
+  let worktree: Worktree
+  let adminDirectory: URL
+  let tempRoot: URL
+}
+
+/// A linked worktree whose `.git` is a file pointing at an admin dir outside
+/// the working tree, mirroring `git worktree add`.
+private func makeLinkedWorktree() throws -> LinkedWorktree {
+  let fileManager = FileManager.default
+  let tempRoot = fileManager.temporaryDirectory.appending(path: UUID().uuidString)
+  let repositoryRoot = tempRoot.appending(path: "repo")
+  let adminDirectory = repositoryRoot.appending(path: ".git/worktrees/feature")
+  try fileManager.createDirectory(at: adminDirectory, withIntermediateDirectories: true)
+  try "ref: refs/heads/feature\n".write(
+    to: adminDirectory.appending(path: "HEAD"), atomically: true, encoding: .utf8)
+  let worktreeDirectory = tempRoot.appending(path: "wt-feature")
+  try fileManager.createDirectory(at: worktreeDirectory, withIntermediateDirectories: true)
+  try "gitdir: \(adminDirectory.path(percentEncoded: false))\n".write(
+    to: worktreeDirectory.appending(path: ".git"), atomically: true, encoding: .utf8)
+  let worktree = Worktree(
+    id: WorktreeID(worktreeDirectory.path(percentEncoded: false)),
+    name: "feature",
+    detail: "detail",
+    workingDirectory: worktreeDirectory,
+    repositoryRootURL: repositoryRoot
+  )
+  return LinkedWorktree(
+    worktree: worktree,
+    adminDirectory: adminDirectory.standardizedFileURL,
+    tempRoot: tempRoot
+  )
+}
+
+/// A worktree pointing at a directory with no `.git`, so no head watcher can
+/// ever arm for it.
+private func makeLocalWorktreeWithoutGitMetadata() -> Worktree {
+  Worktree(
+    id: WorktreeID("/private/tmp/\(UUID().uuidString)/wt"),
+    name: "orphan",
+    detail: "detail",
+    workingDirectory: URL(fileURLWithPath: "/private/tmp/\(UUID().uuidString)/wt"),
+    repositoryRootURL: URL(fileURLWithPath: "/private/tmp/\(UUID().uuidString)")
   )
 }
 

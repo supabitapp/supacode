@@ -7,17 +7,20 @@ import SupacodeSettingsShared
 private let watcherLogger = SupaLogger("WorktreeInfoWatcher")
 
 private final class WorktreeFileEventMonitor {
-  let rootURL: URL
+  let rootURLs: [URL]
   private let onEvent: @MainActor @Sendable () -> Void
   private nonisolated(unsafe) var stream: FSEventStreamRef?
 
   init?(
-    rootURL: URL,
+    rootURLs: [URL],
     onEvent: @escaping @MainActor @Sendable () -> Void
   ) {
-    self.rootURL = rootURL
+    self.rootURLs = rootURLs
     self.onEvent = onEvent
-    let path = rootURL.path(percentEncoded: false)
+    guard !rootURLs.isEmpty else {
+      return nil
+    }
+    let paths = rootURLs.map { $0.path(percentEncoded: false) }
     var context = FSEventStreamContext(
       version: 0,
       info: nil,
@@ -39,7 +42,7 @@ private final class WorktreeFileEventMonitor {
       nil,
       callback,
       &context,
-      [path] as CFArray,
+      paths as CFArray,
       FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
       1.0,
       FSEventStreamCreateFlags(
@@ -110,6 +113,13 @@ final class WorktreeInfoWatcherManager {
   private let filesChangedDebounceInterval: Duration
   private let pullRequestSelectionRefreshCooldown: Duration
   private let refreshTiming: RefreshTiming
+  /// Gap between self-healing reconcile sweeps. Rare on purpose: the fast path
+  /// is event-driven, and this only backstops signals with no local event
+  /// (remote line counts, GitHub merges, a dead watcher).
+  private let reconcileInterval: Duration
+  /// Delay between reconciling successive worktrees / repos so a sweep rolls
+  /// through them one at a time instead of fanning a diff storm.
+  private let reconcileStep: Duration
   private let sleep: @Sendable (Duration) async throws -> Void
   /// Resolves a remote worktree's current branch over SSH. Injected so tests
   /// can drive the poll loop without a real connection (real-host SSH is
@@ -127,10 +137,22 @@ final class WorktreeInfoWatcherManager {
   private var filesDebounceTasks: [Worktree.ID: Task<Void, Never>] = [:]
   private var restartTasks: [Worktree.ID: Task<Void, Never>] = [:]
   private var lineChangeRefreshTasks: [Worktree.ID: Task<Void, Never>] = [:]
+  /// Worktrees whose file-event monitor / HEAD kqueue failed to start. Tracked
+  /// so the reconcile retry logs once per failure, not once per attempt. Cleared
+  /// on success or on worktree removal, never on the re-arm teardown.
+  private var fileEventMonitorFailedIDs: Set<Worktree.ID> = []
+  private var headWatcherFailedIDs: Set<Worktree.ID> = []
   private var deferredLineChangeIDs: Set<Worktree.ID> = []
   private var hasCompletedInitialWorktreeLoad = false
   private var selectedWorktreeID: Worktree.ID?
   private var pullRequestTrackingEnabled = true
+  /// User setting: when false, all background repository polling is off.
+  private var automaticRefreshEnabled: Bool
+  /// Whether the app is foreground-active. Background polling (remote SSH HEAD
+  /// poll + reconcile sweep) only runs while active, so an idle / backgrounded
+  /// app is quiet.
+  private var isActive = true
+  private var reconcileTask: Task<Void, Never>?
   private var pullRequestSelectionCooldownTasksByRepo: [URL: PullRequestSelectionCooldownTask] = [:]
   private var eventContinuation: AsyncStream<WorktreeInfoWatcherClient.Event>.Continuation?
 
@@ -139,6 +161,9 @@ final class WorktreeInfoWatcherManager {
     unfocusedInterval: Duration = .seconds(60),
     filesChangedDebounceInterval: Duration = .seconds(5),
     pullRequestSelectionRefreshCooldown: Duration = .seconds(5),
+    reconcileInterval: Duration = .seconds(300),
+    reconcileStep: Duration = .seconds(2),
+    automaticRefreshEnabled: Bool = true,
     clock: C = ContinuousClock(),
     pollRemoteBranch: @escaping @Sendable (Worktree) async -> String? = { worktree in
       guard let host = worktree.host else { return nil }
@@ -148,6 +173,9 @@ final class WorktreeInfoWatcherManager {
     refreshTiming = RefreshTiming(focused: focusedInterval, unfocused: unfocusedInterval)
     self.filesChangedDebounceInterval = filesChangedDebounceInterval
     self.pullRequestSelectionRefreshCooldown = pullRequestSelectionRefreshCooldown
+    self.reconcileInterval = reconcileInterval
+    self.reconcileStep = reconcileStep
+    self.automaticRefreshEnabled = automaticRefreshEnabled
     self.sleep = { duration in
       try await clock.sleep(for: duration)
     }
@@ -162,11 +190,21 @@ final class WorktreeInfoWatcherManager {
       setSelectedWorktreeID(worktreeID)
     case .setPullRequestTrackingEnabled(let isEnabled):
       setPullRequestTrackingEnabled(isEnabled)
+    case .setAutomaticRefreshEnabled(let isEnabled):
+      setAutomaticRefreshEnabled(isEnabled)
+    case .setActive(let active):
+      setActive(active)
     case .refresh:
       refreshAll()
     case .stop:
       stopAll()
     }
+  }
+
+  /// Gates only the timer-driven loops (reconcile sweep + remote SSH HEAD
+  /// poll), not the local file-event monitors, which stay live and cheap.
+  private var backgroundPollingAllowed: Bool {
+    isActive && automaticRefreshEnabled
   }
 
   func eventStream() -> AsyncStream<WorktreeInfoWatcherClient.Event> {
@@ -193,6 +231,8 @@ final class WorktreeInfoWatcherManager {
     }
     if !removedIDs.isEmpty {
       deferredLineChangeIDs.subtract(removedIDs)
+      fileEventMonitorFailedIDs.subtract(removedIDs)
+      headWatcherFailedIDs.subtract(removedIDs)
     }
     let newIDs = desiredIDs.subtracting(currentIDs)
     if !newIDs.isEmpty && !isInitialWorktreeLoad {
@@ -208,11 +248,16 @@ final class WorktreeInfoWatcherManager {
       let didWorktreeChange = previousWorktrees[worktree.id] != worktree
       if isInitialWorktreeLoad || newIDs.contains(worktree.id) || didWorktreeChange {
         repositoryRootsToRefresh.insert(worktree.repositoryRootURL)
-        let isDeferred = deferredLineChangeIDs.contains(worktree.id)
-        if isDeferred {
-          scheduleLineChangeRefresh(worktreeID: worktree.id, delay: refreshInterval(for: worktree.id))
-        } else {
-          emitLineChangesChanged(worktreeID: worktree.id)
+        // A remote worktree's line count is read over SSH, so this roster-driven
+        // refresh honors the background-polling gate; local diffs are cheap,
+        // never SSH, and stay so a discovered worktree shows its counts.
+        if worktree.host == nil || backgroundPollingAllowed {
+          let isDeferred = deferredLineChangeIDs.contains(worktree.id)
+          if isDeferred {
+            scheduleLineChangeRefresh(worktreeID: worktree.id, delay: refreshInterval(for: worktree.id))
+          } else {
+            emitLineChangesChanged(worktreeID: worktree.id)
+          }
         }
       }
       repositoryRoots.insert(worktree.repositoryRootURL)
@@ -229,6 +274,7 @@ final class WorktreeInfoWatcherManager {
     for repositoryRootURL in obsoleteCooldownRepositories {
       cancelPullRequestSelectionCooldown(for: repositoryRootURL)
     }
+    startReconcileLoop()
   }
 
   private func setSelectedWorktreeID(_ worktreeID: Worktree.ID?) {
@@ -239,10 +285,8 @@ final class WorktreeInfoWatcherManager {
     let previousRepository = previousWorktreeID.flatMap { worktrees[$0]?.repositoryRootURL }
     selectedWorktreeID = worktreeID
     let nextRepository = worktreeID.flatMap { worktrees[$0]?.repositoryRootURL }
-    if let previousWorktreeID {
-      if let worktree = worktrees[previousWorktreeID] {
-        configureRemoteHeadPoll(for: worktree)
-      }
+    if let previousWorktreeID, let worktree = worktrees[previousWorktreeID] {
+      configureRemoteHeadPoll(for: worktree)
     }
     if let worktreeID {
       emitLineChangesChanged(worktreeID: worktreeID)
@@ -293,6 +337,12 @@ final class WorktreeInfoWatcherManager {
     let path = headURL.path(percentEncoded: false)
     let fileDescriptor = open(path, O_EVTONLY)
     guard fileDescriptor >= 0 else {
+      // A dead HEAD kqueue misses branch changes; the reconcile backstop's
+      // catch-up re-emits once it re-arms. Log once so a persistent failure
+      // doesn't spam a line every sweep.
+      if headWatcherFailedIDs.insert(worktreeID).inserted {
+        watcherLogger.error("Failed to open \(path) for HEAD watching (errno \(errno)).")
+      }
       return
     }
     let queue = DispatchQueue(label: "worktree-info-watcher.\(worktreeID)")
@@ -313,18 +363,54 @@ final class WorktreeInfoWatcherManager {
     }
     source.resume()
     headWatchers[worktreeID] = HeadWatcher(headURL: headURL, source: source)
+    headWatcherFailedIDs.remove(worktreeID)
+  }
+
+  /// File-event roots for a local worktree: its working tree, plus the
+  /// linked-worktree admin dir when that lives outside the tree. A commit on a
+  /// branch rewrites the admin dir's index / reflog without touching a watched
+  /// working-tree file, so watching it heals the line count at event speed.
+  func fileEventRoots(for worktree: Worktree) -> [URL] {
+    var roots = [worktree.workingDirectory]
+    guard
+      let headURL = GitWorktreeHeadResolver.headURL(
+        for: worktree.workingDirectory,
+        fileManager: .default
+      )
+    else {
+      return roots
+    }
+    let adminDir = headURL.deletingLastPathComponent().standardizedFileURL
+    let embeddedGitDir = worktree.workingDirectory.appending(path: ".git").standardizedFileURL
+    if adminDir != embeddedGitDir {
+      roots.append(adminDir)
+    }
+    return roots
   }
 
   private func configureFileEventMonitor(for worktree: Worktree) {
-    if let existing = fileEventMonitors[worktree.id], existing.rootURL == worktree.workingDirectory {
+    let roots = fileEventRoots(for: worktree)
+    if let existing = fileEventMonitors[worktree.id], existing.rootURLs == roots {
       return
     }
-    stopFileEventMonitor(for: worktree.id)
-    fileEventMonitors[worktree.id] = WorktreeFileEventMonitor(
-      rootURL: worktree.workingDirectory
+    // Tear down only the monitor value; keep the failed-set so retries log once.
+    fileEventMonitors.removeValue(forKey: worktree.id)?.cancel()
+    let monitor = WorktreeFileEventMonitor(
+      rootURLs: roots
     ) { [weak self] in
       self?.scheduleFilesChanged(worktreeID: worktree.id)
     }
+    guard let monitor else {
+      if fileEventMonitorFailedIDs.insert(worktree.id).inserted {
+        let path = worktree.workingDirectory.path(percentEncoded: false)
+        watcherLogger.error(
+          "Failed to start filesystem monitor for \(path); relying on the reconcile backstop until it recovers."
+        )
+      }
+      return
+    }
+    fileEventMonitorFailedIDs.remove(worktree.id)
+    fileEventMonitors[worktree.id] = monitor
   }
 
   private func handleEvent(
@@ -407,6 +493,9 @@ final class WorktreeInfoWatcherManager {
     guard worktree.host != nil else {
       return
     }
+    guard backgroundPollingAllowed else {
+      return
+    }
     let worktreeID = worktree.id
     let interval = refreshInterval(for: worktreeID)
     if let existing = remoteHeadPollTasks[worktreeID], existing.interval == interval {
@@ -457,6 +546,7 @@ final class WorktreeInfoWatcherManager {
   }
 
   private func stopFileEventMonitor(for worktreeID: Worktree.ID) {
+    // Runs on the re-arm teardown too, so it must not clear the failed-set.
     fileEventMonitors.removeValue(forKey: worktreeID)?.cancel()
   }
 
@@ -477,10 +567,14 @@ final class WorktreeInfoWatcherManager {
     worktrees.removeAll()
     selectedWorktreeID = nil
     pullRequestTrackingEnabled = true
+    // `automaticRefreshEnabled` and `isActive` are user / session state, not
+    // task state, so a teardown must not silently re-enable polling the user
+    // turned off.
     eventContinuation?.finish()
   }
 
   private func stopBackgroundRefreshTasks() {
+    stopReconcileLoop()
     for watcher in headWatchers.values {
       watcher.source.cancel()
     }
@@ -504,6 +598,8 @@ final class WorktreeInfoWatcherManager {
     }
     headWatchers.removeAll()
     fileEventMonitors.removeAll()
+    fileEventMonitorFailedIDs.removeAll()
+    headWatcherFailedIDs.removeAll()
     branchDebounceTasks.removeAll()
     filesDebounceTasks.removeAll()
     restartTasks.removeAll()
@@ -528,7 +624,10 @@ final class WorktreeInfoWatcherManager {
     cancelAllPullRequestSelectionCooldownTasks()
   }
 
-  private func refreshPullRequests(repositoryRootURL: URL) {
+  private func refreshPullRequests(
+    repositoryRootURL: URL,
+    trigger: WorktreeInfoWatcherClient.RefreshTrigger = .automatic
+  ) {
     guard pullRequestTrackingEnabled else {
       return
     }
@@ -536,19 +635,133 @@ final class WorktreeInfoWatcherManager {
     guard !worktreeIDs.isEmpty else {
       return
     }
-    emit(.repositoryPullRequestRefresh(repositoryRootURL: repositoryRootURL, worktreeIDs: worktreeIDs))
+    emit(
+      .repositoryPullRequestRefresh(
+        repositoryRootURL: repositoryRootURL,
+        worktreeIDs: worktreeIDs,
+        trigger: trigger
+      )
+    )
   }
 
   private func refreshAll() {
-    let worktreesToRefresh = worktrees.values.sorted { $0.id.rawValue < $1.id.rawValue }
-    for worktree in worktreesToRefresh {
+    for worktree in sortedWorktrees() {
+      // Re-arm the watcher so a manual refresh repairs a dead kqueue / file
+      // event stream, not just re-emits from a still-broken one.
+      configureWatcher(for: worktree)
       emitLineChangesChanged(worktreeID: worktree.id)
     }
-    let repositoryRoots = Set(worktrees.values.map(\.repositoryRootURL)).sorted {
+    for repositoryRootURL in sortedRepositoryRoots() {
+      refreshPullRequests(repositoryRootURL: repositoryRootURL, trigger: .manual)
+    }
+  }
+
+  private func setAutomaticRefreshEnabled(_ enabled: Bool) {
+    guard automaticRefreshEnabled != enabled else {
+      return
+    }
+    automaticRefreshEnabled = enabled
+    reconfigureBackgroundPolling()
+  }
+
+  private func setActive(_ active: Bool) {
+    guard isActive != active else {
+      return
+    }
+    isActive = active
+    reconfigureBackgroundPolling()
+  }
+
+  private func reconfigureBackgroundPolling() {
+    guard backgroundPollingAllowed else {
+      stopReconcileLoop()
+      for worktreeID in Array(remoteHeadPollTasks.keys) {
+        stopRemoteHeadPoll(for: worktreeID)
+      }
+      return
+    }
+    for worktree in worktrees.values where worktree.host != nil {
+      configureRemoteHeadPoll(for: worktree)
+    }
+    startReconcileLoop()
+  }
+
+  /// Self-healing backstop for signals no local event catches (remote line
+  /// counts, external merges, a dead watcher). Rolls through worktrees one at a
+  /// time so a sweep never fans a diff storm.
+  private func startReconcileLoop() {
+    guard backgroundPollingAllowed, !worktrees.isEmpty, reconcileTask == nil else {
+      return
+    }
+    let sleep = self.sleep
+    let interval = reconcileInterval
+    let step = reconcileStep
+    reconcileTask = Task { [weak self] in
+      while !Task.isCancelled {
+        do {
+          try await sleep(interval)
+        } catch {
+          return
+        }
+        let worktrees = await MainActor.run { self?.sortedWorktrees() } ?? []
+        for worktree in worktrees {
+          guard !Task.isCancelled else {
+            return
+          }
+          await MainActor.run { self?.reconcileWorktree(worktree) }
+          do {
+            try await sleep(step)
+          } catch {
+            return
+          }
+        }
+        let repositoryRoots = await MainActor.run { self?.sortedRepositoryRoots() } ?? []
+        for repositoryRootURL in repositoryRoots {
+          guard !Task.isCancelled else {
+            return
+          }
+          await MainActor.run { self?.refreshPullRequests(repositoryRootURL: repositoryRootURL) }
+          do {
+            try await sleep(step)
+          } catch {
+            return
+          }
+        }
+      }
+    }
+  }
+
+  private func stopReconcileLoop() {
+    reconcileTask?.cancel()
+    reconcileTask = nil
+  }
+
+  private func sortedWorktrees() -> [Worktree] {
+    worktrees.values.sorted { $0.id.rawValue < $1.id.rawValue }
+  }
+
+  private func sortedRepositoryRoots() -> [URL] {
+    Set(worktrees.values.map(\.repositoryRootURL)).sorted {
       $0.path(percentEncoded: false) < $1.path(percentEncoded: false)
     }
-    for repositoryRootURL in repositoryRoots {
-      refreshPullRequests(repositoryRootURL: repositoryRootURL)
+  }
+
+  private func reconcileWorktree(_ worktree: Worktree) {
+    guard let current = worktrees[worktree.id] else {
+      return
+    }
+    // A dead local watcher misses events a since-now stream never replays, so
+    // catch up once when re-arming; a live local watcher stays event-driven and
+    // is never diffed on a timer.
+    let localWatcherWasDead =
+      current.host == nil
+      && (headWatchers[current.id] == nil || fileEventMonitorFailedIDs.contains(current.id))
+    configureWatcher(for: current)
+    if current.host != nil {
+      emitLineChangesChanged(worktreeID: current.id)
+    } else if localWatcherWasDead {
+      emitBranchChanged(worktreeID: current.id)
+      emitLineChangesChanged(worktreeID: current.id)
     }
   }
 
@@ -617,7 +830,7 @@ final class WorktreeInfoWatcherManager {
   /// the single-id signals carry small payloads and describe themselves.
   private static func label(for event: WorktreeInfoWatcherClient.Event) -> String {
     switch event {
-    case .repositoryPullRequestRefresh(let rootURL, let worktreeIDs):
+    case .repositoryPullRequestRefresh(let rootURL, let worktreeIDs, _):
       "repositoryPullRequestRefresh(\(rootURL.lastPathComponent), \(worktreeIDs.count) worktrees)"
     default: String(describing: event)
     }

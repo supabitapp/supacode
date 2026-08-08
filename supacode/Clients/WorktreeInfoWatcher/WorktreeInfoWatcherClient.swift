@@ -9,14 +9,28 @@ struct WorktreeInfoWatcherClient {
     case setWorktrees([Worktree])
     case setSelectedWorktreeID(Worktree.ID?)
     case setPullRequestTrackingEnabled(Bool)
+    case setAutomaticRefreshEnabled(Bool)
+    case setActive(Bool)
     case refresh
     case stop
+  }
+
+  /// Distinguishes a background/automatic refresh (suppressed when the user
+  /// disables automatic repository refresh) from a user-initiated one (always
+  /// honored).
+  enum RefreshTrigger: Equatable {
+    case automatic
+    case manual
   }
 
   enum Event: Equatable {
     case branchChanged(worktreeID: Worktree.ID)
     case filesChanged(worktreeID: Worktree.ID)
-    case repositoryPullRequestRefresh(repositoryRootURL: URL, worktreeIDs: [Worktree.ID])
+    case repositoryPullRequestRefresh(
+      repositoryRootURL: URL,
+      worktreeIDs: [Worktree.ID],
+      trigger: RefreshTrigger
+    )
   }
 }
 

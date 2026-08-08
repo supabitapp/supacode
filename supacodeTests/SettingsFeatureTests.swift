@@ -130,6 +130,21 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.terminalHibernationEnabled == false)
   }
 
+  @Test(.dependencies) func togglingAutomaticRepositoryRefreshPersistsChanges() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    await store.send(.binding(.set(\.automaticRepositoryRefreshEnabled, false))) {
+      $0.automaticRepositoryRefreshEnabled = false
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.automaticRepositoryRefreshEnabled == false)
+  }
+
   @Test(.dependencies) func confirmCloseSurfacePersistsChanges() async {
     var initialSettings = GlobalSettings.default
     initialSettings.confirmCloseSurface = true

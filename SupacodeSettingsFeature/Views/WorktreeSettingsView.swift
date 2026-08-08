@@ -46,6 +46,13 @@ public struct WorktreeSettingsView: View {
           Text("Copies untracked files from the main worktree.")
         }
       }
+      Section {
+        Toggle(isOn: $store.automaticRepositoryRefreshEnabled) {
+          Text("Refresh repository status in the background")
+          Text("Keeps changed-line counts, branches, and pull-request status up to date.")
+          Text("Turn off if it triggers SSH passphrase prompts or GitHub rate limiting.")
+        }
+      }
       Section("Clean-up") {
         Picker(
           "Auto-delete archived worktrees",

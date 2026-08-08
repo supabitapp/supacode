@@ -184,7 +184,11 @@ struct SupacodeApp: App {
     _ghosttyShortcuts = State(initialValue: shortcuts)
     let terminalManager = Self.makeTerminalManager(runtime: runtime)
     _terminalManager = State(initialValue: terminalManager)
-    let worktreeInfoWatcher = WorktreeInfoWatcherManager()
+    // Seed the flag at construction so a user who disabled background refresh
+    // never eats a launch-time SSH / gh burst before the setting is applied.
+    let worktreeInfoWatcher = WorktreeInfoWatcherManager(
+      automaticRefreshEnabled: initialSettings.automaticRepositoryRefreshEnabled
+    )
     _worktreeInfoWatcher = State(initialValue: worktreeInfoWatcher)
     let keyObserver = CommandKeyObserver()
     _commandKeyObserver = State(initialValue: keyObserver)

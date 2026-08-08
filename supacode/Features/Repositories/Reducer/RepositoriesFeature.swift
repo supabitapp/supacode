@@ -20,6 +20,9 @@ private enum CancelID {
   static func delayedPRRefresh(_ worktreeID: Worktree.ID) -> String {
     "repositories.delayedPRRefresh.\(worktreeID)"
   }
+  static func worktreeLineChanges(_ worktreeID: Worktree.ID) -> String {
+    "repositories.worktreeLineChanges.\(worktreeID)"
+  }
 }
 
 nonisolated let repositoriesLogger = SupaLogger("Repositories")
@@ -319,6 +322,9 @@ struct RepositoriesFeature {
   struct PendingPullRequestRefresh: Equatable {
     var repositoryRootURL: URL
     var worktreeIDs: [Worktree.ID]
+    // Preserved across the queue so a manual refresh deferred during startup or
+    // an in-flight request still bypasses the background-refresh gate on replay.
+    var trigger: WorktreeInfoWatcherClient.RefreshTrigger
   }
 
   enum WorktreeCreationNameSource: Equatable {
@@ -2348,6 +2354,7 @@ struct RepositoriesFeature {
               repositoryID: repositoryID,
               repositoryRootURL: queued.repositoryRootURL,
               worktreeIDs: queued.worktreeIDs,
+              trigger: queued.trigger,
             )
           }
           state.queuedPullRequestRefreshByRepositoryID.removeAll()
@@ -2375,7 +2382,8 @@ struct RepositoriesFeature {
                 .worktreeInfoEvent(
                   .repositoryPullRequestRefresh(
                     repositoryRootURL: pending.repositoryRootURL,
-                    worktreeIDs: pending.worktreeIDs
+                    worktreeIDs: pending.worktreeIDs,
+                    trigger: pending.trigger
                   )
                 )
               )
@@ -2397,7 +2405,8 @@ struct RepositoriesFeature {
           .worktreeInfoEvent(
             .repositoryPullRequestRefresh(
               repositoryRootURL: pending.repositoryRootURL,
-              worktreeIDs: pending.worktreeIDs
+              worktreeIDs: pending.worktreeIDs,
+              trigger: pending.trigger
             )
           )
         )
@@ -2414,7 +2423,8 @@ struct RepositoriesFeature {
           .worktreeInfoEvent(
             .repositoryPullRequestRefresh(
               repositoryRootURL: repository.rootURL,
-              worktreeIDs: repository.worktrees.map(\.id)
+              worktreeIDs: repository.worktrees.map(\.id),
+              trigger: .automatic
             )
           )
         )
@@ -2494,9 +2504,12 @@ struct RepositoriesFeature {
         let repoRoot = worktree.repositoryRootURL
         let repoHost = worktree.host
         let worktreeRoot = worktree.workingDirectory
+        // Consequence of an explicit PR action (merge / close / open), so it
+        // must refresh even when background refresh is off.
         let pullRequestRefresh = WorktreeInfoWatcherClient.Event.repositoryPullRequestRefresh(
           repositoryRootURL: repoRoot,
-          worktreeIDs: repository.worktrees.map(\.id)
+          worktreeIDs: repository.worktrees.map(\.id),
+          trigger: .manual
         )
         let branchName = pullRequest.headRefName ?? worktree.name
         let failingCheckDetailsURL = (pullRequest.statusCheckRollup?.checks ?? []).first {
@@ -3073,6 +3086,8 @@ struct RepositoriesFeature {
         state.inspectorPresented = presented
         return .none
 
+      // Only scheduled after an explicit PR action, to catch the settled state
+      // once GitHub reflects the mutation, so it refreshes as a manual trigger.
       case .delayedPullRequestRefresh(let worktreeID):
         guard let worktree = state.worktree(for: worktreeID),
           let repositoryID = state.repositoryID(containing: worktreeID),
@@ -3089,7 +3104,8 @@ struct RepositoriesFeature {
             .worktreeInfoEvent(
               .repositoryPullRequestRefresh(
                 repositoryRootURL: repositoryRootURL,
-                worktreeIDs: worktreeIDs
+                worktreeIDs: worktreeIDs,
+                trigger: .manual
               )
             )
           )
@@ -3126,7 +3142,18 @@ struct RepositoriesFeature {
               )
             }
           }
-        case .repositoryPullRequestRefresh(let repositoryRootURL, let worktreeIDs):
+          // Coalesce overlapping diffs for the same worktree: a burst of
+          // reconcile / FS events can't stack `git diff` processes.
+          .cancellable(id: CancelID.worktreeLineChanges(worktreeID), cancelInFlight: true)
+        case .repositoryPullRequestRefresh(let repositoryRootURL, let worktreeIDs, let trigger):
+          // An automatic refresh is suppressed while the user has background
+          // repository refresh off; a manual refresh always runs.
+          if trigger == .automatic {
+            @Shared(.settingsFile) var settingsFile
+            guard settingsFile.global.automaticRepositoryRefreshEnabled else {
+              return .none
+            }
+          }
           let worktrees = worktreeIDs.compactMap { state.worktree(for: $0) }
           guard let firstWorktree = worktrees.first,
             let repositoryID = state.repositoryID(containing: firstWorktree.id)
@@ -3153,6 +3180,7 @@ struct RepositoriesFeature {
                 repositoryID: repositoryID,
                 repositoryRootURL: repositoryRootURL,
                 worktreeIDs: worktreeIDs,
+                trigger: trigger,
               )
               return .none
             }
@@ -3188,6 +3216,7 @@ struct RepositoriesFeature {
               repositoryID: repositoryID,
               repositoryRootURL: repositoryRootURL,
               worktreeIDs: worktreeIDs,
+              trigger: trigger,
             )
             return .send(.refreshGithubIntegrationAvailability)
           case .checking:
@@ -3195,6 +3224,7 @@ struct RepositoriesFeature {
               repositoryID: repositoryID,
               repositoryRootURL: repositoryRootURL,
               worktreeIDs: worktreeIDs,
+              trigger: trigger,
             )
             return .none
           case .unavailable:
@@ -3202,6 +3232,7 @@ struct RepositoriesFeature {
               repositoryID: repositoryID,
               repositoryRootURL: repositoryRootURL,
               worktreeIDs: worktreeIDs,
+              trigger: trigger,
             )
             return .none
           case .disabled:
@@ -4346,12 +4377,14 @@ struct RepositoriesFeature {
         state.renameBranchPrompt = nil
         // Refresh only the renamed row's PR; siblings still point at their
         // own branches. The HEAD watcher re-emits the name authoritatively.
+        // User-initiated rename, so it must refresh even with background refresh off.
         guard let repository = state.repositories[id: repositoryID] else { return .none }
         return .send(
           .worktreeInfoEvent(
             .repositoryPullRequestRefresh(
               repositoryRootURL: repository.rootURL,
-              worktreeIDs: [worktreeID]
+              worktreeIDs: [worktreeID],
+              trigger: .manual
             )
           )
         )
@@ -6105,17 +6138,24 @@ extension Dictionary where Key == Repository.ID, Value == RepositoriesFeature.Pe
     repositoryID: Repository.ID,
     repositoryRootURL: URL,
     worktreeIDs: [Worktree.ID],
+    trigger: WorktreeInfoWatcherClient.RefreshTrigger,
   ) {
     if var pending = self[repositoryID] {
       var seenWorktreeIDs = Set(pending.worktreeIDs)
       for worktreeID in worktreeIDs where seenWorktreeIDs.insert(worktreeID).inserted {
         pending.worktreeIDs.append(worktreeID)
       }
+      // A manual request anywhere in the merge wins, so the coalesced replay is
+      // never suppressed by the background-refresh gate.
+      if trigger == .manual {
+        pending.trigger = .manual
+      }
       self[repositoryID] = pending
     } else {
       self[repositoryID] = RepositoriesFeature.PendingPullRequestRefresh(
         repositoryRootURL: repositoryRootURL,
         worktreeIDs: worktreeIDs,
+        trigger: trigger,
       )
     }
   }
