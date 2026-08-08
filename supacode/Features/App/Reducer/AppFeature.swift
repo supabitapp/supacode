@@ -1921,6 +1921,28 @@ struct AppFeature {
         )
       )
     }
+    // Per-tab badge fan-out: each affected content re-projects its snapshot;
+    // the element send bounds invalidation to that worktree's strips.
+    for layout in state.terminals.layouts {
+      for pane in layout.layout.panes {
+        for tab in pane.tabs where tabSurfaceIDs.contains(tab.content.id.rawValue) {
+          let snapshot = presence.rowSnapshot(
+            across: [tab.content.id.rawValue], badgesEnabled: badgesEnabled)
+          effects.append(
+            .send(
+              .terminals(
+                .layouts(
+                  .element(
+                    id: layout.id,
+                    action: .agentPresenceChanged(content: tab.content.id, snapshot: snapshot)
+                  )
+                )
+              )
+            )
+          )
+        }
+      }
+    }
     return .merge(effects)
   }
 

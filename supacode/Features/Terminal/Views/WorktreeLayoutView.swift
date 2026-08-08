@@ -25,7 +25,10 @@ struct WorktreeLayoutView: View {
         LayoutAlertHost(
           store: layoutStore,
           runtime: runtime,
-          dividerColor: manager.splitDividerColor()
+          dividerColor: manager.splitDividerColor(),
+          surfaceState: { [weak manager] surfaceID in
+            manager?.hostIfExists(for: worktree.id)?.surfaceStates[surfaceID]
+          }
         )
       } else {
         EmptyTerminalPaneView(message: "No terminals open")
@@ -85,9 +88,15 @@ private struct LayoutAlertHost: View {
   @Bindable var store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let dividerColor: Color
+  let surfaceState: (UUID) -> WorktreeSurfaceState?
 
   var body: some View {
-    LayoutContentView(store: store, runtime: runtime, dividerColor: dividerColor)
-      .alert($store.scope(state: \.alert, action: \.alert))
+    LayoutContentView(
+      store: store,
+      runtime: runtime,
+      dividerColor: dividerColor,
+      surfaceState: surfaceState
+    )
+    .alert($store.scope(state: \.alert, action: \.alert))
   }
 }
