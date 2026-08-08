@@ -2,12 +2,37 @@ import AppKit
 import ComposableArchitecture
 import SwiftUI
 
-/// Renders one worktree's pane tree: the split structure over panes, each pane
-/// a tab strip above its selected content. Layout-agnostic; the parent sizes it.
+/// Renders one worktree's pane tree inside a stable AppKit container, so live
+/// renderer views survive structural rebuilds without reparenting the whole
+/// hierarchy, assistive tech sees an ordered pane list, and the window tint
+/// mask tracks the terminal body. Layout-agnostic; the parent sizes it.
 struct LayoutContentView: View {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   var dividerColor: Color = Color(nsColor: .separatorColor)
+
+  var body: some View {
+    // Body reads register the observation; the AppKit container below only
+    // receives resolved values.
+    let visiblePaneIDs = store.layout.tree.visibleLeaves()
+    let _ = store.renderEpoch
+    LayoutAXContainer(
+      store: store,
+      runtime: runtime,
+      dividerColor: dividerColor,
+      panes: visiblePaneIDs.compactMap { paneID in
+        store.layout.panes[id: paneID]?.selectedTab.flatMap { runtime.renderer(for: $0.content.id) }
+      }
+    )
+  }
+}
+
+/// Renders the pane tree itself: the split structure over panes, each pane a
+/// tab strip above its selected content.
+struct LayoutPaneTreeView: View {
+  let store: StoreOf<LayoutFeature>
+  let runtime: ContentRuntime
+  let dividerColor: Color
 
   var body: some View {
     if let node = store.layout.tree.visibleNode {
@@ -16,6 +41,100 @@ struct LayoutContentView: View {
     } else {
       EmptyLayoutView()
     }
+  }
+}
+
+/// Wraps the pane tree in an AppKit view exposing an ordered pane list to
+/// assistive technologies, mirroring the split-tree container it replaces.
+private struct LayoutAXContainer: NSViewRepresentable {
+  let store: StoreOf<LayoutFeature>
+  let runtime: ContentRuntime
+  let dividerColor: Color
+  let panes: [NSView]
+
+  func makeNSView(context: Context) -> LayoutAXContainerView {
+    LayoutAXContainerView()
+  }
+
+  func updateNSView(_ nsView: LayoutAXContainerView, context: Context) {
+    nsView.update(
+      rootView: LayoutPaneTreeView(store: store, runtime: runtime, dividerColor: dividerColor),
+      panes: panes
+    )
+  }
+}
+
+@MainActor
+final class LayoutAXContainerView: NSView, WindowTintMaskRegion {
+  // Typed hosting view (no `AnyView`) so re-assigning `rootView` lets SwiftUI
+  // diff against a stable concrete view type.
+  private var hostingView: NSHostingView<LayoutPaneTreeView>?
+  private var panes: [NSView] = []
+  private var panesLabel = "Terminal split: 0 panes"
+  private var lastPaneIDs: [ObjectIdentifier] = []
+
+  func update(rootView: LayoutPaneTreeView, panes: [NSView]) {
+    if let hostingView {
+      hostingView.rootView = rootView
+    } else {
+      let hostingView = NSHostingView(rootView: rootView)
+      hostingView.translatesAutoresizingMaskIntoConstraints = false
+      addSubview(hostingView)
+      NSLayoutConstraint.activate([
+        hostingView.leadingAnchor.constraint(equalTo: leadingAnchor),
+        hostingView.trailingAnchor.constraint(equalTo: trailingAnchor),
+        hostingView.topAnchor.constraint(equalTo: topAnchor),
+        hostingView.bottomAnchor.constraint(equalTo: bottomAnchor),
+      ])
+      self.hostingView = hostingView
+    }
+
+    let newPaneIDs = panes.map(ObjectIdentifier.init)
+    self.panes = panes
+    panesLabel = "Terminal split: \(panes.count) pane" + (panes.count == 1 ? "" : "s")
+
+    for (index, pane) in panes.enumerated() {
+      (pane as? GhosttySurfaceView)?.setAccessibilityPaneIndex(index: index + 1, total: panes.count)
+      // Expose panes as direct children of this split group for predictable
+      // navigation.
+      pane.setAccessibilityParent(self)
+    }
+
+    if newPaneIDs != lastPaneIDs {
+      lastPaneIDs = newPaneIDs
+      // Assistive tech may cache the AX tree; nudge it to re-query when pane
+      // membership or order changes.
+      NSAccessibility.post(element: self, notification: .layoutChanged)
+    }
+  }
+
+  // Drive the window tint mask: this container's bounds are the hole cut out
+  // of the tint, so the terminal body composites over blur.
+  override func layout() {
+    super.layout()
+    NotificationCenter.default.post(name: .ghosttyTintMaskRegionDidChange, object: self)
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    NotificationCenter.default.post(name: .ghosttyTintMaskRegionDidChange, object: self)
+  }
+
+  override func isAccessibilityElement() -> Bool {
+    true
+  }
+
+  override func accessibilityRole() -> NSAccessibility.Role? {
+    // AppKit doesn't provide a named constant for this role.
+    NSAccessibility.Role(rawValue: "AXSplitGroup")
+  }
+
+  override func accessibilityLabel() -> String? {
+    panesLabel
+  }
+
+  override func accessibilityChildren() -> [Any]? {
+    panes
   }
 }
 

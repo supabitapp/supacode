@@ -1299,6 +1299,22 @@ struct LayoutFeatureTests {
     #expect(harness.store.state.layout.isConsistent)
   }
 
+  @Test func renameAndTitleReportsRespectTheTitleLock() async {
+    let harness = await makeHarness()
+    let paneID = harness.paneID
+    // Lock the bootstrap tab's title, as a script tab would be.
+    await harness.store.send(.renameTab(id: harness.tabID, title: "Custom")) {
+      $0.layout.panes[id: paneID]?.tabs[id: harness.tabID]?.customTitle = "Custom"
+    }
+    var locked = harness.store.state.layout
+    locked.panes[id: paneID]?.tabs[id: harness.tabID]?.isTitleLocked = true
+    let bundle = makeStore(layout: locked)
+    await bundle.store.send(.renameTab(id: harness.tabID, title: "Rejected"))
+    await bundle.store.send(.runtime(.titleChanged(id: harness.contentID, title: "Shell Report")))
+    #expect(bundle.store.state.layout.panes[id: paneID]?.tabs[id: harness.tabID]?.customTitle == "Custom")
+    #expect(bundle.store.state.layout.panes[id: paneID]?.tabs[id: harness.tabID]?.title == "One")
+  }
+
   @Test func contentRequestedToggleZoomZoomsTheContentsPane() async {
     let harness = await makeHarness()
     _ = await splitPane(harness, anchor: harness.paneID)

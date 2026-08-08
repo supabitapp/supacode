@@ -21,6 +21,6 @@ enum LayoutPersistence {
         overlaid.panes[paneIndex].tabs[tabIndex].content = live.snapshot()
       }
     }
-    return LayoutRecord(layout: overlaid, origin: origin)
+    return LayoutRecord(layout: overlaid.strippingEphemeralContent(), origin: origin)
   }
 }

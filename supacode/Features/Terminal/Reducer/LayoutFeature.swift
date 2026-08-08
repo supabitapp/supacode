@@ -548,6 +548,8 @@ extension LayoutFeature {
 
   private func reduceRenameTab(_ state: inout State, tabID: TabID, title: String) -> Effect<Action> {
     guard var pane = state.layout.pane(containingTab: tabID) else { return .none }
+    // A script tab owns its title.
+    guard pane.tabs[id: tabID]?.isTitleLocked != true else { return .none }
     // Empty rename clears the override; normalization mirrors the tab manager.
     pane.tabs[id: tabID]?.customTitle = TerminalTabManager.normalizedCustomTitle(title)
     state.layout.panes[id: pane.id] = pane
@@ -810,6 +812,8 @@ extension LayoutFeature {
       contentRuntime.confirmKill(contentID)
     case .titleChanged(let contentID, let title):
       guard let located = state.layout.tab(containingContent: contentID) else { break }
+      // A script tab owns its title; shell reports must not overwrite it.
+      guard !located.tab.isTitleLocked else { break }
       // TUIs rewrite their title constantly; skip no-op writes so an unchanged
       // title does not re-render the tab strip on every report.
       guard located.tab.title != title else { break }

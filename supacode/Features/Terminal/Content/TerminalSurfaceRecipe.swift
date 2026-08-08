@@ -147,6 +147,9 @@ nonisolated enum TerminalSurfaceRecipe {
     var workingDirectory: URL?
     var fontSize: Float32?
     var context: ghostty_surface_context_e
+    /// Blocking-script runners emit their own OSC 133/7 and must not get
+    /// Ghostty's shell integration injected into the host shell.
+    var disableShellIntegration = false
   }
 
   /// Everything a surface plan resolves against beyond the request itself.
@@ -184,8 +187,13 @@ nonisolated enum TerminalSurfaceRecipe {
   /// request's identity and its terminal payload.
   @MainActor
   static func plan(for request: ContentRequest, seed: PlanSeed) -> SurfacePlan {
+    let override = seed.terminalState.launch
     let launch = launch(
-      LaunchIntent(),
+      LaunchIntent(
+        command: override?.command,
+        initialInput: override?.initialInput,
+        bypassZmx: override?.bypassZmx ?? false
+      ),
       for: seed.worktree,
       surfaceID: request.contentID.rawValue,
       zmxExecutablePath: seed.zmxExecutablePath
@@ -218,7 +226,8 @@ nonisolated enum TerminalSurfaceRecipe {
       ),
       workingDirectory: workingDirectory,
       fontSize: fontSize,
-      context: context
+      context: context,
+      disableShellIntegration: override?.bypassZmx ?? false
     )
   }
 
@@ -330,7 +339,7 @@ struct TerminalContentBuilder {
           initialInput: plan.initialInput,
           environmentVariables: plan.environment,
           commandWrapper: plan.commandWrapper,
-          disableShellIntegration: false,
+          disableShellIntegration: plan.disableShellIntegration,
           fontSize: plan.fontSize,
           initialGeometry: geometry,
           context: plan.context

@@ -31,11 +31,28 @@ nonisolated enum ContentKind: String, Codable, Sendable {
   case terminal
 }
 
+/// How a command-running terminal launches (scripts, prompts). Blocking
+/// runners bypass zmx and die with the app; persistence strips this so a
+/// stored layout can never replay a command.
+nonisolated struct LaunchOverride: Equatable, Codable, Sendable {
+  var command: String?
+  var initialInput: String?
+  var bypassZmx: Bool
+
+  init(command: String? = nil, initialInput: String? = nil, bypassZmx: Bool = false) {
+    self.command = command
+    self.initialInput = initialInput
+    self.bypassZmx = bypassZmx
+  }
+}
+
 /// Terminal-specific persisted state; the generic layout never sees grids.
 nonisolated struct TerminalContentState: Equatable, Codable, Sendable {
   let workingDirectory: String?
   let agents: [TerminalLayoutSnapshot.SurfaceAgentRecord]?
   let frozenGrid: FrozenGrid?
+  /// Live-only launch override; the persistence path always strips it.
+  let launch: LaunchOverride?
 
   private enum CodingKeys: String, CodingKey {
     case workingDirectory
@@ -46,11 +63,13 @@ nonisolated struct TerminalContentState: Equatable, Codable, Sendable {
   init(
     workingDirectory: String?,
     agents: [TerminalLayoutSnapshot.SurfaceAgentRecord]? = nil,
-    frozenGrid: FrozenGrid? = nil
+    frozenGrid: FrozenGrid? = nil,
+    launch: LaunchOverride? = nil
   ) {
     self.workingDirectory = workingDirectory
     self.agents = agents
     self.frozenGrid = frozenGrid
+    self.launch = launch
   }
 
   init(from decoder: any Decoder) throws {
@@ -62,6 +81,14 @@ nonisolated struct TerminalContentState: Equatable, Codable, Sendable {
         [TerminalLayoutSnapshot.SurfaceAgentRecord].self, forKey: .agents
       )) ?? nil
     frozenGrid = (try? container.decodeIfPresent(FrozenGrid.self, forKey: .frozenGrid)) ?? nil
+    launch = nil
+  }
+
+  func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encodeIfPresent(workingDirectory, forKey: .workingDirectory)
+    try container.encodeIfPresent(agents, forKey: .agents)
+    try container.encodeIfPresent(frozenGrid, forKey: .frozenGrid)
   }
 }
 
@@ -101,6 +128,14 @@ nonisolated enum ContentState: Equatable, Codable, Sendable {
   var freshSeed: ContentState {
     switch self {
     case .terminal: .terminal(TerminalContentState(workingDirectory: nil))
+    }
+  }
+
+  /// True for content that must die with the app: a blocking-script runner's
+  /// process has no zmx session to reattach.
+  var isEphemeral: Bool {
+    switch self {
+    case .terminal(let state): state.launch?.bypassZmx == true
     }
   }
 }
@@ -151,6 +186,9 @@ nonisolated struct TabItem: Equatable, Identifiable, Codable, Sendable {
   var icon: String?
   var tintColor: RepositoryColor?
   var content: ContentSnapshot
+  /// Live-only: a script tab owns its title and refuses renames. Blocking
+  /// tabs are never persisted, so this stays off the wire.
+  var isTitleLocked = false
 
   private enum CodingKeys: String, CodingKey {
     case id
@@ -167,7 +205,8 @@ nonisolated struct TabItem: Equatable, Identifiable, Codable, Sendable {
     customTitle: String? = nil,
     icon: String? = nil,
     tintColor: RepositoryColor? = nil,
-    content: ContentSnapshot
+    content: ContentSnapshot,
+    isTitleLocked: Bool = false
   ) {
     self.id = id
     self.title = title
@@ -175,6 +214,7 @@ nonisolated struct TabItem: Equatable, Identifiable, Codable, Sendable {
     self.icon = icon
     self.tintColor = tintColor
     self.content = content
+    self.isTitleLocked = isTitleLocked
   }
 
   init(from decoder: any Decoder) throws {
@@ -328,6 +368,44 @@ extension PaneLayout {
     guard Set(tabIDs).count == tabIDs.count else { return false }
     let contentIDs = allContentIDs
     return Set(contentIDs).count == contentIDs.count
+  }
+}
+
+extension PaneLayout {
+  /// The persistable layout: blocking-script tabs die with the app, so they
+  /// (and any pane they empty) drop, retargeting selection to the nearest
+  /// left survivor.
+  func strippingEphemeralContent() -> PaneLayout {
+    var result = self
+    for pane in panes {
+      guard pane.tabs.contains(where: { $0.content.state.isEphemeral }) else { continue }
+      var kept = IdentifiedArrayOf<TabItem>()
+      var selected = pane.selectedTabID
+      for tab in pane.tabs {
+        if tab.content.state.isEphemeral {
+          if selected == tab.id {
+            selected = kept.last?.id
+          }
+        } else {
+          kept.append(tab)
+        }
+      }
+      guard !kept.isEmpty else {
+        if let node = result.tree.find(id: pane.id.rawValue) {
+          result.tree = result.tree.removing(node)
+        }
+        result.panes.remove(id: pane.id)
+        continue
+      }
+      var survivor = pane
+      survivor.tabs = kept
+      survivor.selectedTabID = selected.flatMap { kept[id: $0] != nil ? $0 : nil } ?? kept.first?.id
+      result.panes[id: pane.id] = survivor
+    }
+    if let focused = result.focusedPaneID, result.panes[id: focused] == nil {
+      result.focusedPaneID = result.panes.first?.id
+    }
+    return result
   }
 }
 
