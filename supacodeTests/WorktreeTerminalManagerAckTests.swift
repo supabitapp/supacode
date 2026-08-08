@@ -4,6 +4,7 @@ import DependenciesTestSupport
 import Foundation
 import IdentifiedCollections
 import SupacodeSettingsFeature
+import SupacodeSettingsShared
 import Testing
 
 @testable import supacode
@@ -32,14 +33,18 @@ struct WorktreeTerminalManagerAckTests {
 
   /// Manager wired to a live store whose factory provisions inert content, so
   /// creation flows run end to end without spawning surfaces.
-  private func makeHarness() -> Harness {
+  private func makeHarness(
+    storage: SettingsFileStorage = .inMemory(),
+    killRemoteSession: @escaping @Sendable (RemoteHost, String) -> Void = { _, _ in }
+  ) -> Harness {
     let worktree = makeWorktree()
     let manager = withDependencies {
+      $0.settingsFileStorage = storage
       $0.zmxClient = ZmxClient(
         executableURL: { nil },
         isBundled: { false },
         killSession: { _ in },
-        killRemoteSession: { _, _ in },
+        killRemoteSession: { host, session in killRemoteSession(host, session) },
         listSessionsWithClients: { nil }
       )
     } operation: {
@@ -161,12 +166,10 @@ struct WorktreeTerminalManagerAckTests {
     #expect(events.first == .tabCreated(worktreeID: harness.worktree.id))
   }
 
-  @Test(.dependencies) func removingADeletedWorktreesLayoutWorksWithoutAHost() {
-    let harness = makeHarness()
-    let contentID = UUID()
+  private func singleTabLayout(contentID: UUID) -> PaneLayout {
     let paneID = PaneID()
     let tabID = TabID(rawValue: contentID)
-    let layout = PaneLayout(
+    return PaneLayout(
       tree: SplitTree(view: paneID),
       panes: [
         Pane(
@@ -186,12 +189,32 @@ struct WorktreeTerminalManagerAckTests {
       ],
       focusedPaneID: paneID
     )
+  }
+
+  @Test(.dependencies) func removingADeletedWorktreesLayoutWorksWithoutAHost() async throws {
+    let inner = SettingsFileStorage.inMemory()
+    let (fileWrites, writeSignal) = AsyncStream<LayoutsFile>.makeStream()
+    let storage = SettingsFileStorage(
+      load: { try inner.load($0) },
+      save: { data, url in
+        try inner.save(data, url)
+        if let file = try? JSONDecoder().decode(LayoutsFile.self, from: data) {
+          writeSignal.yield(file)
+        }
+      }
+    )
+    let harness = makeHarness(storage: storage)
+    let contentID = UUID()
+    let layout = singleTabLayout(contentID: contentID)
+    let record = LayoutRecord(layout: layout)
+    try inner.save(
+      JSONEncoder().encode(LayoutsFile(worktrees: [harness.worktree.id.rawValue: record])),
+      SupacodePaths.layoutsURL
+    )
     // Hydrated but never selected: no host exists for this worktree.
     harness.store.send(
       .terminals(
-        .layoutsHydrated(
-          LayoutsFile(worktrees: [harness.worktree.id.rawValue: LayoutRecord(layout: layout)])
-        )
+        .layoutsHydrated(LayoutsFile(worktrees: [harness.worktree.id.rawValue: record]))
       )
     )
     #expect(harness.store.withState { $0.terminals.layouts[id: harness.worktree.id] } != nil)
@@ -199,7 +222,40 @@ struct WorktreeTerminalManagerAckTests {
     harness.manager.handleCommand(
       .removeWorktreeLayout(worktreeID: harness.worktree.id, remoteHost: nil))
 
+    // The in-memory layout detaches AND the persisted record goes with it;
+    // this hostless-hydrated case is exactly the one roster prune cannot reach.
     #expect(harness.store.withState { $0.terminals.layouts[id: harness.worktree.id] } == nil)
+    var writes = fileWrites.makeAsyncIterator()
+    let written = await writes.next()
+    #expect(written?.worktrees.isEmpty == true)
+  }
+
+  @Test(.dependencies) func removingADeletedRemoteWorktreesLayoutKillsItsHostSessions() async {
+    let (remoteKills, killSignal) = AsyncStream<(String, String)>.makeStream()
+    let harness = makeHarness(killRemoteSession: { host, session in
+      killSignal.yield((host.alias, session))
+    })
+    let contentID = UUID()
+    harness.store.send(
+      .terminals(
+        .layoutsHydrated(
+          LayoutsFile(
+            worktrees: [
+              harness.worktree.id.rawValue: LayoutRecord(layout: singleTabLayout(contentID: contentID))
+            ]
+          )
+        )
+      )
+    )
+
+    harness.manager.handleCommand(
+      .removeWorktreeLayout(
+        worktreeID: harness.worktree.id, remoteHost: RemoteHost(alias: "build-box")))
+
+    var kills = remoteKills.makeAsyncIterator()
+    let kill = await kills.next()
+    #expect(kill?.0 == "build-box")
+    #expect(kill?.1 == ZmxSessionID.make(surfaceID: contentID))
   }
 
   @Test(.dependencies) func anchoredCreateLandsInTheAnchorsPane() async {

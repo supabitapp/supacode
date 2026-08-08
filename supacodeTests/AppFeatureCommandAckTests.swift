@@ -1589,6 +1589,73 @@ struct AppFeatureCommandAckTests {
     return (store, readFD)
   }
 
+  @Test(.dependencies) func worktreeDeletedRemovesItsLayoutWithTheResolvedRemoteHost() async {
+    let host = RemoteHost(alias: "build-box")
+    let worktree = makeWorktree()
+    let repository = Repository(
+      id: "/tmp/repo",
+      rootURL: URL(fileURLWithPath: "/tmp/repo"),
+      name: "repo",
+      worktrees: [worktree],
+      host: host
+    )
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.isInitialLoadComplete = true
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .repositories(
+        .worktreeDeleted(
+          worktree.id, repositoryID: repository.id, selectionWasRemoved: false, nextSelection: nil)
+      )
+    )
+    await store.finish()
+
+    // The row is read before the repositories scope drops the worktree, so
+    // the remote host must resolve; nil would strand the host-side session.
+    let removal = sent.value.contains {
+      if case .removeWorktreeLayout(let worktreeID, let remoteHost) = $0 {
+        return worktreeID == worktree.id && remoteHost == host
+      }
+      return false
+    }
+    #expect(removal)
+  }
+
+  @Test(.dependencies) func archivingAWorktreeKeepsItsLayout() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+
+    await store.send(.repositories(.archiveWorktreeApplied(worktree.id)))
+    await store.finish()
+
+    // Archiving must never tear the layout down; only deletion does.
+    let removal = sent.value.contains {
+      if case .removeWorktreeLayout = $0 { return true }
+      return false
+    }
+    #expect(!removal)
+  }
+
   private func makeWorktree() -> Worktree {
     Worktree(
       id: WorktreeID("/tmp/repo/wt-1"),
