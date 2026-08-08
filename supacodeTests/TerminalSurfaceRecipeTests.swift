@@ -19,7 +19,7 @@ struct TerminalSurfaceRecipeTests {
   }
 
   @Test func environmentCarriesIdentityMarkers() {
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let surfaceID = UUID()
     let env = TerminalSurfaceRecipe.environment(
       for: Self.makeWorktree(),
@@ -39,7 +39,7 @@ struct TerminalSurfaceRecipeTests {
   @Test func environmentOmitsSocketWhenAbsent() {
     let env = TerminalSurfaceRecipe.environment(
       for: Self.makeWorktree(),
-      tabID: TerminalTabID(),
+      tabID: TabID(),
       surfaceID: UUID(),
       socketPath: nil
     )
@@ -49,7 +49,7 @@ struct TerminalSurfaceRecipeTests {
   @Test func extraVariablesCannotOverrideTheZmxDirectoryLock() {
     let env = TerminalSurfaceRecipe.environment(
       for: Self.makeWorktree(),
-      tabID: TerminalTabID(),
+      tabID: TabID(),
       surfaceID: UUID(),
       socketPath: nil,
       extraVariables: ["ZMX_DIR": "/evil", "SUPACODE_SCRIPT": "1"]
@@ -93,7 +93,7 @@ struct TerminalSurfaceRecipeTests {
   ) -> ContentRequest {
     ContentRequest(
       worktreeID: makeWorktree().id,
-      tabID: TerminalTabID(),
+      tabID: TabID(),
       contentID: ContentID(),
       content: .terminal(state),
       origin: origin

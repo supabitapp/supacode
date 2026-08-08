@@ -263,9 +263,9 @@ struct AppFeature {
     /// worktree is created, then its first tab resolves the ack.
     case worktreeNew(pendingID: Worktree.ID, worktreeID: Worktree.ID?)
     /// tab close.
-    case tabRemoved(worktreeID: Worktree.ID, tabID: TerminalTabID)
+    case tabRemoved(worktreeID: Worktree.ID, tabID: TabID)
     /// tab rename: resolves when the manager reports whether the title applied.
-    case tabRenamed(worktreeID: Worktree.ID, tabID: TerminalTabID)
+    case tabRenamed(worktreeID: Worktree.ID, tabID: TabID)
     /// surface close (scoped by worktree so a duplicate id elsewhere can't cross-resolve).
     case surfaceClosed(worktreeID: Worktree.ID, surfaceID: UUID)
     /// worktree delete (git worktree removed).
@@ -2415,7 +2415,7 @@ struct AppFeature {
     case .tab(let tabID):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
       return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
-        .selectTab(worktree, tabID: TerminalTabID(rawValue: tabID))
+        .selectTab(worktree, tabID: TabID(rawValue: tabID))
       }
     case .tabNew(let input, let id, let title):
       // A new tab has no override to clear, so a blank title would be dropped silently.
@@ -2428,7 +2428,7 @@ struct AppFeature {
       // Reject explicit IDs that collide with an existing or in-flight tab, so a
       // duplicate id can't have one creation resolve the other's ack.
       if let id,
-        terminalClient.tabExists(worktreeID, TerminalTabID(rawValue: id))
+        terminalClient.tabExists(worktreeID, TabID(rawValue: id))
           || Self.hasPendingCreationAck(id: id, state: state)
       {
         state.alert = AlertState {
@@ -2477,7 +2477,7 @@ struct AppFeature {
           message: "The tab title has no visible characters. Pass an empty title to clear it.")
         return .none
       }
-      guard terminalClient.tabCanRename(worktreeID, TerminalTabID(rawValue: tabID)) else {
+      guard terminalClient.tabCanRename(worktreeID, TabID(rawValue: tabID)) else {
         deeplinkLogger.warning("Tab \(tabID) has a locked title in worktree \(worktreeID)")
         state.alert = AlertState {
           TextState("Tab cannot be renamed")
@@ -2491,10 +2491,10 @@ struct AppFeature {
         return .none
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
-        .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: title)
+        .renameTab(worktree, tabID: TabID(rawValue: tabID), title: title)
       }
       return awaitingCompletion(
-        effect, match: .tabRenamed(worktreeID: worktreeID, tabID: TerminalTabID(rawValue: tabID)),
+        effect, match: .tabRenamed(worktreeID: worktreeID, tabID: TabID(rawValue: tabID)),
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .tabDestroy(let tabID):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
@@ -2509,10 +2509,10 @@ struct AppFeature {
           background: background)
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
-        .destroyTab(worktree, tabID: TerminalTabID(rawValue: tabID), focusing: !background)
+        .destroyTab(worktree, tabID: TabID(rawValue: tabID), focusing: !background)
       }
       return awaitingCompletion(
-        effect, match: .tabRemoved(worktreeID: worktreeID, tabID: TerminalTabID(rawValue: tabID)),
+        effect, match: .tabRemoved(worktreeID: worktreeID, tabID: TabID(rawValue: tabID)),
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .surface(let tabID, let surfaceID, let input):
       guard validateSurface(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, state: &state) else {
@@ -2528,7 +2528,7 @@ struct AppFeature {
       // Focus has no reliable completion signal (the event only fires when
       // focus actually moves), so this acks immediately.
       return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
-        .focusSurface(worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID, input: input)
+        .focusSurface(worktree, tabID: TabID(rawValue: tabID), surfaceID: surfaceID, input: input)
       }
     case .surfaceSplit(let tabID, let surfaceID, let direction, let input, let id):
       guard validateSurface(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, state: &state) else {
@@ -2558,7 +2558,7 @@ struct AppFeature {
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .splitSurface(
-          worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID,
+          worktree, tabID: TabID(rawValue: tabID), surfaceID: surfaceID,
           direction: direction, input: input, id: id, focusing: !background)
       }
       return awaitingCompletion(
@@ -2580,7 +2580,7 @@ struct AppFeature {
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .destroySurface(
-          worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID, focusing: !background)
+          worktree, tabID: TabID(rawValue: tabID), surfaceID: surfaceID, focusing: !background)
       }
       return awaitingCompletion(
         effect, match: .surfaceClosed(worktreeID: worktreeID, surfaceID: surfaceID),
@@ -3326,7 +3326,7 @@ struct AppFeature {
     tabID: UUID,
     state: inout State
   ) -> Bool {
-    guard terminalClient.tabExists(worktreeID, TerminalTabID(rawValue: tabID)) else {
+    guard terminalClient.tabExists(worktreeID, TabID(rawValue: tabID)) else {
       deeplinkLogger.warning("Tab \(tabID) not found in worktree \(worktreeID)")
       state.alert = AlertState {
         TextState("Tab not found")
@@ -3356,7 +3356,7 @@ struct AppFeature {
       return true
     }
     guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return false }
-    guard terminalClient.surfaceExists(worktreeID, TerminalTabID(rawValue: tabID), surfaceID) else {
+    guard terminalClient.surfaceExists(worktreeID, TabID(rawValue: tabID), surfaceID) else {
       deeplinkLogger.warning("Surface \(surfaceID) not found in tab \(tabID) of worktree \(worktreeID)")
       state.alert = AlertState {
         TextState("Surface not found")

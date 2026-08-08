@@ -9,10 +9,10 @@ import GhosttyKit
 struct TerminalTabFeature {
   @ObservableState
   struct State: Identifiable, Equatable, Sendable {
-    /// Typed `TerminalTabID` so the nominal-type wall against an unrelated
+    /// Typed `TabID` so the nominal-type wall against an unrelated
     /// raw `UUID` reaches every scoping site. `IdentifiedArrayOf` keys by
     /// this id directly.
-    let id: TerminalTabID
+    let id: TabID
     let worktreeID: Worktree.ID
 
     /// Surface IDs in this tab in split-tree order. Mirrored from

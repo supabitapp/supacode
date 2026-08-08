@@ -565,20 +565,20 @@ struct WorktreeTerminalManagerTests {
     // Local: an unbuildable launch reports completion instead of a silent nil,
     // with no tab (there is no surface, so a View Terminal button would be dead).
     let local = manager.state(for: makeWorktree())
-    var localCompletions: [(Int?, TerminalTabID?)] = []
+    var localCompletions: [(Int?, TabID?)] = []
     local.onBlockingScriptCompleted = { _, exitCode, tabId in localCompletions.append((exitCode, tabId)) }
     #expect(local.runBlockingScript(kind: .script(definition), "   ") == nil)
     #expect(localCompletions.map(\.0) == [1])
-    #expect(localCompletions.map(\.1) == [TerminalTabID?.none])
+    #expect(localCompletions.map(\.1) == [TabID?.none])
     #expect(local.currentProjection().runningScripts.isEmpty)
 
     // Remote: an unbuildable ssh command reports the same completion.
     let remote = manager.state(for: makeRemoteWorktree())
-    var remoteCompletions: [(Int?, TerminalTabID?)] = []
+    var remoteCompletions: [(Int?, TabID?)] = []
     remote.onBlockingScriptCompleted = { _, exitCode, tabId in remoteCompletions.append((exitCode, tabId)) }
     #expect(remote.runBlockingScript(kind: .script(definition), "   ") == nil)
     #expect(remoteCompletions.map(\.0) == [1])
-    #expect(remoteCompletions.map(\.1) == [TerminalTabID?.none])
+    #expect(remoteCompletions.map(\.1) == [TabID?.none])
     #expect(remote.currentProjection().runningScripts.isEmpty)
   }
 
@@ -3335,7 +3335,7 @@ struct WorktreeTerminalManagerTests {
     let worktree = makeWorktree()
     let state = manager.state(for: worktree)
     let stream = manager.eventStream()
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let projection = WorktreeTabProjection(
       tabID: tabID,
       surfaceIDs: [UUID()],
@@ -3893,7 +3893,7 @@ struct WorktreeTerminalManagerTests {
 
     _ = state.createTab()
 
-    manager.handleCommand(.beginTabRename(worktree, tabID: TerminalTabID()))
+    manager.handleCommand(.beginTabRename(worktree, tabID: TabID()))
 
     #expect(state.tabManager.editingTabID == nil)
   }
@@ -4072,7 +4072,7 @@ struct WorktreeTerminalManagerTests {
   @Test func renameTabCommandOnUnknownWorktreeEmitsNotAppliedWithoutResurrectingState() async {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let worktree = makeWorktree()
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let stream = manager.eventStream()
 
     manager.handleCommand(.renameTab(worktree, tabID: tabID, title: "implement"))

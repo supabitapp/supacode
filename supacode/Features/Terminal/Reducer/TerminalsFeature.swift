@@ -19,7 +19,7 @@ struct TerminalsFeature {
   /// is torn down without shadowing a legitimate re-add.
   struct RecentlyRemovedTab: Equatable, Sendable {
     let worktreeID: Worktree.ID
-    let tabID: TerminalTabID
+    let tabID: TabID
   }
 
   @ObservableState
@@ -29,7 +29,7 @@ struct TerminalsFeature {
     /// True when the persisted file was written by a newer schema; its records
     /// are served but must never be written back.
     var layoutsAreReadOnly = false
-    /// Per-tab feature instances keyed by `TerminalTabID`. Tab-bar leaves
+    /// Per-tab feature instances keyed by `TabID`. Tab-bar leaves
     /// scope through `\.terminalTabs[id:]` for per-tab observation isolation
     /// during agent storms.
     var terminalTabs: IdentifiedArrayOf<TerminalTabFeature.State> = []
@@ -54,7 +54,7 @@ struct TerminalsFeature {
       initialAgentSnapshot: AgentPresenceFeature.RowSnapshot
     )
     /// Tab destroyed in the worktree state. Drops the matching feature state.
-    case tabRemoved(worktreeID: Worktree.ID, tabID: TerminalTabID)
+    case tabRemoved(worktreeID: Worktree.ID, tabID: TabID)
     /// Worktree's entire terminal state was torn down (prune path). Drops any
     /// orphan `terminalTabs` rows and removed-tab FIFO records for this
     /// worktree so a same-session re-attach starts clean.

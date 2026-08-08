@@ -371,7 +371,7 @@ struct LayoutPersistenceManagerTests {
     await waitUntil { readDict(harness)[worktree.id.rawValue] != nil }
     let savesBefore = harness.saveCount.value
 
-    #expect(state.renameTab(TerminalTabID(), title: "implement") == false)
+    #expect(state.renameTab(TabID(), title: "implement") == false)
     await settleThenAdvance(harness.clock)
 
     #expect(harness.saveCount.value == savesBefore)

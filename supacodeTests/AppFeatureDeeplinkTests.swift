@@ -1724,7 +1724,7 @@ struct AppFeatureDeeplinkTests {
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .tab(tabID: tabUUID))))
     await store.receive(\.repositories.selectWorktree)
-    let expected = TerminalClient.Command.selectTab(worktree, tabID: TerminalTabID(rawValue: tabUUID))
+    let expected = TerminalClient.Command.selectTab(worktree, tabID: TabID(rawValue: tabUUID))
     #expect(sent.value.contains(expected))
   }
 
@@ -2046,7 +2046,7 @@ struct AppFeatureDeeplinkTests {
     )
     #expect(
       sent.value.contains(
-        .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: "review")
+        .renameTab(worktree, tabID: TabID(rawValue: tabID), title: "review")
       )
     )
   }
@@ -2078,7 +2078,7 @@ struct AppFeatureDeeplinkTests {
     )
     #expect(
       sent.value.contains(
-        .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: "")
+        .renameTab(worktree, tabID: TabID(rawValue: tabID), title: "")
       )
     )
     #expect(store.state.alert == nil)

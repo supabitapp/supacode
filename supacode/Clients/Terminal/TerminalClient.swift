@@ -5,12 +5,12 @@ import SupacodeSettingsShared
 struct TerminalClient {
   var send: @MainActor @Sendable (Command) -> Void
   var events: @MainActor @Sendable () -> AsyncStream<Event>
-  var tabExists: @MainActor @Sendable (Worktree.ID, TerminalTabID) -> Bool
-  var tabCanRename: @MainActor @Sendable (Worktree.ID, TerminalTabID) -> Bool
-  var surfaceExists: @MainActor @Sendable (Worktree.ID, TerminalTabID, UUID) -> Bool
+  var tabExists: @MainActor @Sendable (Worktree.ID, TabID) -> Bool
+  var tabCanRename: @MainActor @Sendable (Worktree.ID, TabID) -> Bool
+  var surfaceExists: @MainActor @Sendable (Worktree.ID, TabID, UUID) -> Bool
   var surfaceExistsInWorktree: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
-  var tabID: @MainActor @Sendable (Worktree.ID, UUID) -> TerminalTabID?
-  var selectedTabID: @MainActor @Sendable (Worktree.ID) -> TerminalTabID?
+  var tabID: @MainActor @Sendable (Worktree.ID, UUID) -> TabID?
+  var selectedTabID: @MainActor @Sendable (Worktree.ID) -> TabID?
   /// Active surface in the selected tab. Lets the reducer capture the target
   /// synchronously before an async dispatch races against AppKit focus reshuffle
   /// (e.g. when a palette dismisses and the leftmost pane reclaims first responder).
@@ -65,16 +65,16 @@ struct TerminalClient {
     case navigateSearchNext(Worktree)
     case navigateSearchPrevious(Worktree)
     case endSearch(Worktree)
-    case selectTab(Worktree, tabID: TerminalTabID)
+    case selectTab(Worktree, tabID: TabID)
     case selectTabAtIndex(Worktree, index: Int)
-    case focusSurface(Worktree, tabID: TerminalTabID, surfaceID: UUID, input: String? = nil)
+    case focusSurface(Worktree, tabID: TabID, surfaceID: UUID, input: String? = nil)
     case splitSurface(
-      Worktree, tabID: TerminalTabID, surfaceID: UUID, direction: SplitDirection,
+      Worktree, tabID: TabID, surfaceID: UUID, direction: SplitDirection,
       input: String?, id: UUID? = nil, focusing: Bool = true)
-    case destroyTab(Worktree, tabID: TerminalTabID, focusing: Bool = true)
-    case destroySurface(Worktree, tabID: TerminalTabID, surfaceID: UUID, focusing: Bool = true)
-    case beginTabRename(Worktree, tabID: TerminalTabID? = nil)
-    case renameTab(Worktree, tabID: TerminalTabID, title: String)
+    case destroyTab(Worktree, tabID: TabID, focusing: Bool = true)
+    case destroySurface(Worktree, tabID: TabID, surfaceID: UUID, focusing: Bool = true)
+    case beginTabRename(Worktree, tabID: TabID? = nil)
+    case renameTab(Worktree, tabID: TabID, title: String)
     case prune(keeping: Set<Worktree.ID>, protectingRepositoryIDs: Set<Repository.ID>)
     case setNotificationsEnabled(Bool)
     case enforceNotificationRetentionLimit
@@ -93,7 +93,7 @@ struct TerminalClient {
     case focusChanged(worktreeID: Worktree.ID, surfaceID: UUID)
     case taskStatusChanged(worktreeID: Worktree.ID, status: WorktreeTaskStatus)
     case blockingScriptCompleted(
-      worktreeID: Worktree.ID, kind: BlockingScriptKind, exitCode: Int?, tabId: TerminalTabID?)
+      worktreeID: Worktree.ID, kind: BlockingScriptKind, exitCode: Int?, tabId: TabID?)
     case commandPaletteToggleRequested(worktreeID: Worktree.ID)
     case setupScriptConsumed(worktreeID: Worktree.ID)
     /// Per-worktree projection emitted when surfaces / task-running / unseen / notifications drift.
@@ -104,10 +104,10 @@ struct TerminalClient {
     case tabProjectionChanged(worktreeID: Worktree.ID, WorktreeTabProjection)
     /// A tab was destroyed in the worktree state. Parent removes the matching
     /// `TerminalTabFeature.State` from `terminalTabs`.
-    case tabRemoved(worktreeID: Worktree.ID, tabID: TerminalTabID)
+    case tabRemoved(worktreeID: Worktree.ID, tabID: TabID)
     /// A rename command settled. `applied` is false when the tab vanished or its
     /// title was locked, so the CLI ack reports the failure instead of ok.
-    case tabRenamed(worktreeID: Worktree.ID, tabID: TerminalTabID, applied: Bool)
+    case tabRenamed(worktreeID: Worktree.ID, tabID: TabID, applied: Bool)
     /// The entire `WorktreeTerminalState` was torn down (worktree pruned).
     /// Parent drops any orphan `terminalTabs` entries and removed-tab FIFO
     /// records owned by this worktree so a fresh re-attach starts clean.
@@ -115,7 +115,7 @@ struct TerminalClient {
     /// A tab's stripe-progress display flipped. Routed into the matching
     /// `TerminalTabFeature.State.progressDisplay` so the stripe recolors.
     case tabProgressDisplayChanged(
-      worktreeID: Worktree.ID, tabID: TerminalTabID, display: TerminalTabProgressDisplay?)
+      worktreeID: Worktree.ID, tabID: TabID, display: TerminalTabProgressDisplay?)
     /// Forwarded from the terminal manager when surfaces close (single or bulk).
     /// `AppFeature` translates this into `agentPresence(.surfaceClosed/surfacesClosed)`.
     /// `worktreeID` scopes the CLI close ack so a duplicate id elsewhere can't cross-resolve.

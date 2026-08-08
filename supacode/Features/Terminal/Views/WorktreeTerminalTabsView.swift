@@ -132,7 +132,7 @@ struct WorktreeTerminalTabsView: View {
 /// are `@ObservationIgnored`, so without this dependency Cmd+D / Cmd+W would not
 /// re-render until something else (a worktree switch) forced a body recompute.
 private struct TerminalSplitTreePane: View {
-  let tabId: TerminalTabID
+  let tabId: TabID
   let terminalState: WorktreeTerminalState
   let terminalsStore: StoreOf<TerminalsFeature>
   let unfocusedSplitOverlay: (fill: Color?, opacity: Double)

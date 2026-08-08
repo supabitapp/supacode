@@ -141,7 +141,7 @@ struct LayoutsIncrementalWriterTests {
 
   private func record(_ marker: String) -> LayoutRecord {
     let paneID = PaneID()
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     return LayoutRecord(
       layout: PaneLayout(
         tree: SplitTree(view: paneID),

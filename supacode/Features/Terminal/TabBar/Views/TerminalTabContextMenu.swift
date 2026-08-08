@@ -2,7 +2,7 @@ import SwiftUI
 
 extension View {
   func terminalTabContextMenu(
-    tabId: TerminalTabID,
+    tabId: TabID,
     tabs: [TerminalTabItem],
     actions: TerminalTabContextMenuActions
   ) -> some View {
@@ -17,7 +17,7 @@ extension View {
 }
 
 struct TerminalTabContextMenu: ViewModifier {
-  let tabId: TerminalTabID
+  let tabId: TabID
   let tabs: [TerminalTabItem]
   let actions: TerminalTabContextMenuActions
 

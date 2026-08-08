@@ -9,7 +9,7 @@ import Testing
 @MainActor
 struct TerminalTabFeatureTests {
   @Test func projectionChangedShortCircuitsOnEqualPayload() async {
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     let initial = TerminalTabFeature.State(
       id: tabID,
       worktreeID: "/tmp/repo",
@@ -32,7 +32,7 @@ struct TerminalTabFeatureTests {
   }
 
   @Test func projectionChangedAppliesEachFieldIndependently() async {
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     let store = TestStore(
       initialState: TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repo")
     ) { TerminalTabFeature() }
@@ -59,7 +59,7 @@ struct TerminalTabFeatureTests {
   }
 
   @Test func projectionChangedPropagatesSurfaceGeneration() async {
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     let surface = UUID()
     let store = TestStore(
       initialState: TerminalTabFeature.State(
@@ -89,7 +89,7 @@ struct TerminalTabFeatureTests {
   }
 
   @Test func projectionChangedTogglesSplitZoomedIndependently() async {
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     let surface = UUID()
     let store = TestStore(
       initialState: TerminalTabFeature.State(
@@ -118,7 +118,7 @@ struct TerminalTabFeatureTests {
   }
 
   @Test func projectionChangedTogglesDormantIndependently() async {
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     let surface = UUID()
     let store = TestStore(
       initialState: TerminalTabFeature.State(
@@ -161,7 +161,7 @@ struct TerminalTabFeatureTests {
   }
 
   @Test func agentSnapshotChangedShortCircuitsOnEqualSnapshot() async {
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     let snapshot = AgentPresenceFeature.RowSnapshot(
       agents: [AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)],
       isWorking: true
@@ -178,7 +178,7 @@ struct TerminalTabFeatureTests {
   }
 
   @Test func agentSnapshotChangedReplacesSnapshotOnDiff() async {
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     let store = TestStore(
       initialState: TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repo")
     ) { TerminalTabFeature() }
@@ -192,7 +192,7 @@ struct TerminalTabFeatureTests {
   }
 
   @Test func shimmerCombinesProgressAgentAndSelectedLifecycleActivity() {
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     var state = TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repo")
 
     #expect(!state.shouldShimmer(isLifecycleRepresentative: false))
@@ -216,7 +216,7 @@ struct TerminalTabFeatureTests {
   }
 
   @Test func progressDisplayChangedShortCircuitsOnEqualDisplay() async {
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     let display = TerminalTabProgressDisplay(style: .indeterminate)
     let store = TestStore(
       initialState: TerminalTabFeature.State(
@@ -228,7 +228,7 @@ struct TerminalTabFeatureTests {
   }
 
   @Test func progressDisplayChangedClearsToNil() async {
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     let store = TestStore(
       initialState: TerminalTabFeature.State(
         id: tabID, worktreeID: "/tmp/repo",

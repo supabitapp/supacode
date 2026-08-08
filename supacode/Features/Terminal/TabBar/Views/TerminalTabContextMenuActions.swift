@@ -1,7 +1,7 @@
 struct TerminalTabContextMenuActions {
-  let closeTab: (TerminalTabID) -> Void
-  let closeOthers: (TerminalTabID) -> Void
-  let closeToRight: (TerminalTabID) -> Void
+  let closeTab: (TabID) -> Void
+  let closeOthers: (TabID) -> Void
+  let closeToRight: (TabID) -> Void
   let closeAll: () -> Void
-  let renameTab: (TerminalTabID) -> Void
+  let renameTab: (TabID) -> Void
 }

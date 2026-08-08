@@ -88,8 +88,8 @@ final class WorktreeTerminalManager {
   /// piece of state, so an identical repeat is a no-op and is dropped.
   private enum CoalesceKey: Hashable {
     case worktreeProjection(Worktree.ID)
-    case tabProjection(TerminalTabID)
-    case tabProgress(TerminalTabID)
+    case tabProjection(TabID)
+    case tabProgress(TabID)
     case taskStatus(Worktree.ID)
     case focus(Worktree.ID)
     case notificationIndicator
@@ -274,7 +274,7 @@ final class WorktreeTerminalManager {
     guard let state = states[WorktreeID(decoded)],
       let tabUUID = UUID(uuidString: tabID)
     else { return nil }
-    let terminalTabID = TerminalTabID(rawValue: tabUUID)
+    let terminalTabID = TabID(rawValue: tabUUID)
     return state.listSurfaces(tabID: terminalTabID)
   }
 
@@ -934,15 +934,15 @@ final class WorktreeTerminalManager {
     }
   }
 
-  func tabExists(worktreeID: Worktree.ID, tabID: TerminalTabID) -> Bool {
+  func tabExists(worktreeID: Worktree.ID, tabID: TabID) -> Bool {
     states[worktreeID]?.hasTab(tabID) ?? false
   }
 
-  func tabCanRename(worktreeID: Worktree.ID, tabID: TerminalTabID) -> Bool {
+  func tabCanRename(worktreeID: Worktree.ID, tabID: TabID) -> Bool {
     states[worktreeID]?.tabManager.canRename(tabID) ?? false
   }
 
-  func surfaceExists(worktreeID: Worktree.ID, tabID: TerminalTabID, surfaceID: UUID) -> Bool {
+  func surfaceExists(worktreeID: Worktree.ID, tabID: TabID, surfaceID: UUID) -> Bool {
     states[worktreeID]?.hasSurface(surfaceID, in: tabID) ?? false
   }
 
@@ -952,7 +952,7 @@ final class WorktreeTerminalManager {
   }
 
   /// Surface IDs that live in this tab.
-  func surfaceIDs(forTabID tabID: TerminalTabID) -> [UUID] {
+  func surfaceIDs(forTabID tabID: TabID) -> [UUID] {
     for state in states.values {
       let ids = state.surfaceIDs(inTab: tabID)
       if !ids.isEmpty { return ids }
@@ -1185,7 +1185,7 @@ final class WorktreeTerminalManager {
   }
 
   /// Resolves the tab containing the given surface, if any.
-  func tabID(forWorktreeID worktreeID: Worktree.ID, surfaceID: UUID) -> TerminalTabID? {
+  func tabID(forWorktreeID worktreeID: Worktree.ID, surfaceID: UUID) -> TabID? {
     states[worktreeID]?.tabID(containing: surfaceID)
   }
 

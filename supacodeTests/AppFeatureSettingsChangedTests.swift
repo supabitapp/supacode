@@ -67,8 +67,8 @@ struct AppFeatureSettingsChangedTests {
     appState.agentPresence.records[
       AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
     ] = AgentPresenceFeature.PresenceRecord(activity: .busy, pids: [42])
-    let tabID = TerminalTabID(rawValue: UUID())
-    let idleTabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
+    let idleTabID = TabID(rawValue: UUID())
     appState.terminals.terminalTabs.append(
       TerminalTabFeature.State(
         id: tabID,
@@ -169,8 +169,8 @@ struct AppFeatureSettingsChangedTests {
     appState.agentPresence.records[
       AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: changedSurfaceID)
     ] = AgentPresenceFeature.PresenceRecord(activity: .busy, pids: [42])
-    let changedTabID = TerminalTabID(rawValue: UUID())
-    let siblingTabID = TerminalTabID(rawValue: UUID())
+    let changedTabID = TabID(rawValue: UUID())
+    let siblingTabID = TabID(rawValue: UUID())
     appState.terminals.terminalTabs.append(
       TerminalTabFeature.State(
         id: changedTabID,

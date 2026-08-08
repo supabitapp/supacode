@@ -71,7 +71,7 @@ struct DormantTerminalTests {
     ZmxSessionID.make(surfaceID: surfaceID)
   }
 
-  private func firstSurfaceID(_ state: WorktreeTerminalState, tab: TerminalTabID) -> UUID {
+  private func firstSurfaceID(_ state: WorktreeTerminalState, tab: TabID) -> UUID {
     state.splitTree(for: tab).root!.leftmostLeaf().id
   }
 
@@ -298,7 +298,7 @@ struct DormantTerminalTests {
 
   @Test func hibernationClearsCachedTabProgress() {
     let state = makeState()
-    let captured = LockIsolated<[TerminalTabID: TerminalTabProgressDisplay?]>([:])
+    let captured = LockIsolated<[TabID: TerminalTabProgressDisplay?]>([:])
     state.onTabProgressDisplayChanged = { tabId, display in
       captured.withValue { $0[tabId] = display }
     }
@@ -391,7 +391,7 @@ struct DormantTerminalTests {
     let tab = state.createTab(activation: .selected)!
     let surface = firstSurfaceID(state, tab: tab)
 
-    var removed: [TerminalTabID] = []
+    var removed: [TabID] = []
     var projections: [WorktreeTabProjection] = []
     state.onTabRemoved = { removed.append($0) }
     state.onTabProjectionChanged = { projections.append($0) }
@@ -614,7 +614,7 @@ struct DormantTerminalTests {
     }
   }
 
-  private func layout(_ state: WorktreeTerminalState, tab: TerminalTabID)
+  private func layout(_ state: WorktreeTerminalState, tab: TabID)
     -> TerminalLayoutSnapshot.LayoutNode?
   {
     state.captureLayoutSnapshot()?.tabs.first { $0.id == tab.rawValue }?.layout
@@ -916,7 +916,7 @@ struct DormantTerminalTests {
     let tab = state.createTab(activation: .selected)!
     let surface = firstSurfaceID(state, tab: tab)
     var closed: Set<UUID> = []
-    var removed: [TerminalTabID] = []
+    var removed: [TabID] = []
     state.onSurfacesClosed = { closed.formUnion($0) }
     state.onTabRemoved = { removed.append($0) }
 
@@ -1160,7 +1160,7 @@ struct HibernationTimerTests {
     }
   }
 
-  private func firstSurfaceID(_ state: WorktreeTerminalState, tab: TerminalTabID) -> UUID {
+  private func firstSurfaceID(_ state: WorktreeTerminalState, tab: TabID) -> UUID {
     state.splitTree(for: tab).root!.leftmostLeaf().id
   }
 
@@ -1372,7 +1372,7 @@ struct DormantCLIWakeTests {
     }
   }
 
-  private func firstSurfaceID(_ state: WorktreeTerminalState, tab: TerminalTabID) -> UUID {
+  private func firstSurfaceID(_ state: WorktreeTerminalState, tab: TabID) -> UUID {
     state.splitTree(for: tab).root!.leftmostLeaf().id
   }
 
@@ -1523,7 +1523,7 @@ struct DormantOSCIngestTests {
     }
   }
 
-  private func firstSurfaceID(_ state: WorktreeTerminalState, tab: TerminalTabID) -> UUID {
+  private func firstSurfaceID(_ state: WorktreeTerminalState, tab: TabID) -> UUID {
     state.splitTree(for: tab).root!.leftmostLeaf().id
   }
 

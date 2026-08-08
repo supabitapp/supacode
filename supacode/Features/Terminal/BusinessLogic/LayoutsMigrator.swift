@@ -185,7 +185,7 @@ nonisolated enum LayoutsMigrator {
     }
     builder.usedTabIDs.insert(tabID)
     return TabItem(
-      id: TerminalTabID(rawValue: tabID),
+      id: TabID(rawValue: tabID),
       title: tab.title,
       customTitle: carriesTabIdentity ? tab.customTitle : nil,
       icon: tab.icon,

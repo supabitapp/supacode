@@ -277,7 +277,7 @@ struct SplitTreeTests {
 
 private struct WorktreeFixture {
   let state: WorktreeTerminalState
-  let tabId: TerminalTabID
+  let tabId: TabID
   let first: GhosttySurfaceView
   let second: GhosttySurfaceView?
 }

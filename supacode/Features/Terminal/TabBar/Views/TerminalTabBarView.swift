@@ -10,12 +10,12 @@ struct TerminalTabBarView: View {
   let createTab: () -> Void
   let split: (TerminalSplitMenuDirection) -> Void
   let canSplit: Bool
-  let closeTab: (TerminalTabID) -> Void
-  let closeOthers: (TerminalTabID) -> Void
-  let closeToRight: (TerminalTabID) -> Void
+  let closeTab: (TabID) -> Void
+  let closeOthers: (TabID) -> Void
+  let closeToRight: (TabID) -> Void
   let closeAll: () -> Void
-  let dismissSplitZoom: (TerminalTabID) -> Void
-  let renameTab: (TerminalTabID, String) -> Void
+  let dismissSplitZoom: (TabID) -> Void
+  let renameTab: (TabID, String) -> Void
   @Environment(\.controlActiveState)
   private var controlActiveState
 

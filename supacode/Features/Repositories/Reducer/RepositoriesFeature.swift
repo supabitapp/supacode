@@ -464,18 +464,18 @@ struct RepositoriesFeature {
     case consumeSetupScript(Worktree.ID)
     case consumeTerminalFocus(Worktree.ID)
     case scriptCompleted(
-      worktreeID: Worktree.ID, kind: BlockingScriptKind, exitCode: Int?, tabId: TerminalTabID?)
+      worktreeID: Worktree.ID, kind: BlockingScriptKind, exitCode: Int?, tabId: TabID?)
     case requestArchiveWorktree(Worktree.ID, Repository.ID)
     case requestArchiveWorktrees([ArchiveWorktreeTarget])
     case archiveWorktreeConfirmed(Worktree.ID, Repository.ID, background: Bool = false)
-    case archiveScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TerminalTabID?)
+    case archiveScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TabID?)
     case archiveWorktreeApply(Worktree.ID, Repository.ID)
     case archiveWorktreeApplied(Worktree.ID)
     case archiveWorktreeApplyFailed(Worktree.ID)
     case unarchiveWorktree(Worktree.ID)
     case requestDeleteSidebarItems([DeleteWorktreeTarget])
     case deleteSidebarItemConfirmed(Worktree.ID, Repository.ID, background: Bool = false)
-    case deleteScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TerminalTabID?)
+    case deleteScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TabID?)
     case deleteWorktreeApply(Worktree.ID, Repository.ID)
     case worktreeDeleted(
       Worktree.ID,
@@ -597,7 +597,7 @@ struct RepositoriesFeature {
     case confirmDeleteSidebarItems([DeleteWorktreeTarget], disposition: DeleteDisposition)
     case confirmDeleteRepository(Repository.ID)
     case confirmRemoveFailedRepository(Repository.ID)
-    case viewTerminalTab(Worktree.ID, tabId: TerminalTabID)
+    case viewTerminalTab(Worktree.ID, tabId: TabID)
   }
 
   enum PullRequestAction: Equatable {
@@ -622,7 +622,7 @@ struct RepositoriesFeature {
       Worktree, repositoryID: Repository.ID, kind: BlockingScriptKind, script: String,
       focusing: Bool = true
     )
-    case selectTerminalTab(Worktree.ID, tabId: TerminalTabID)
+    case selectTerminalTab(Worktree.ID, tabId: TabID)
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
@@ -5151,7 +5151,7 @@ struct RepositoriesFeature {
     kind: BlockingScriptKind,
     exitCode: Int,
     worktreeID: Worktree.ID,
-    tabId: TerminalTabID?,
+    tabId: TabID?,
     state: State
   ) -> AlertState<Alert> {
     let worktreeName = state.worktree(for: worktreeID)?.name

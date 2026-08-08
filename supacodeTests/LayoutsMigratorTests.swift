@@ -162,10 +162,10 @@ struct LayoutsMigratorTests {
     // tab's leaves stay adjacent with identity on its focused leaf.
     #expect(ids == [selectedID, backgroundID, surfaceT1, fannedID])
     #expect(pane.selectedTabID?.rawValue == selectedID)
-    #expect(pane.tabs[id: TerminalTabID(rawValue: backgroundID)]?.customTitle == "bg")
-    #expect(pane.tabs[id: TerminalTabID(rawValue: surfaceT1)]?.customTitle == nil)
-    #expect(pane.tabs[id: TerminalTabID(rawValue: fannedID)]?.customTitle == "fanned")
-    #expect(pane.tabs[id: TerminalTabID(rawValue: fannedID)]?.content.id.rawValue == surfaceT2)
+    #expect(pane.tabs[id: TabID(rawValue: backgroundID)]?.customTitle == "bg")
+    #expect(pane.tabs[id: TabID(rawValue: surfaceT1)]?.customTitle == nil)
+    #expect(pane.tabs[id: TabID(rawValue: fannedID)]?.customTitle == "fanned")
+    #expect(pane.tabs[id: TabID(rawValue: fannedID)]?.content.id.rawValue == surfaceT2)
   }
 
   @Test func everyContentAndTabReferenceSurvivesMigration() throws {
@@ -192,11 +192,11 @@ struct LayoutsMigratorTests {
     // Every old tab ID still resolves to a tab.
     for tab in tabs {
       guard let oldID = tab.id else { continue }
-      #expect(layout.pane(containingTab: TerminalTabID(rawValue: oldID)) != nil)
+      #expect(layout.pane(containingTab: TabID(rawValue: oldID)) != nil)
     }
     // A legacy tab with no persisted ID adopts its content UUID.
     let legacySurface = tabs[2].layout.firstLeaf.id
-    #expect(layout.pane(containingTab: TerminalTabID(rawValue: legacySurface!)) != nil)
+    #expect(layout.pane(containingTab: TabID(rawValue: legacySurface!)) != nil)
   }
 
   @Test func identityLeafKeepsTheOldTabIDEvenWhenASiblingSharesIt() throws {
@@ -224,8 +224,8 @@ struct LayoutsMigratorTests {
     )
     let layout = LayoutsMigrator.migrate(snapshot).layout
     #expect(layout.isConsistent)
-    let identityPane = try #require(layout.pane(containingTab: TerminalTabID(rawValue: tabID)))
-    let identityTab = try #require(identityPane.tabs[id: TerminalTabID(rawValue: tabID)])
+    let identityPane = try #require(layout.pane(containingTab: TabID(rawValue: tabID)))
+    let identityTab = try #require(identityPane.tabs[id: TabID(rawValue: tabID)])
     #expect(identityTab.customTitle == "mine")
     #expect(identityTab.content.id.rawValue == secondSurface)
     // The sibling holding the old tab's surface reminted its tab ID; its

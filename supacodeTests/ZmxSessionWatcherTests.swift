@@ -537,7 +537,7 @@ struct ZmxDormantWatcherRegistryTests {
     )
   }
 
-  private func firstSurfaceID(_ state: WorktreeTerminalState, tab: TerminalTabID) -> UUID {
+  private func firstSurfaceID(_ state: WorktreeTerminalState, tab: TabID) -> UUID {
     state.splitTree(for: tab).root!.leftmostLeaf().id
   }
 

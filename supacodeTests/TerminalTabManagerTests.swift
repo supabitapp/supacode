@@ -189,7 +189,7 @@ struct TerminalTabManagerTests {
     let manager = TerminalTabManager()
     let first = manager.createTab(title: "one", icon: nil)
     let second = manager.createTab(title: "two", icon: nil)
-    #expect(manager.moveTab(TerminalTabID(), by: 1) == false)
+    #expect(manager.moveTab(TabID(), by: 1) == false)
     #expect(manager.tabs.map(\.id) == [first, second])
   }
 
@@ -324,7 +324,7 @@ struct TerminalTabManagerTests {
 
     #expect(manager.canRename(unlockedID))
     #expect(!manager.canRename(lockedID))
-    #expect(!manager.canRename(TerminalTabID()))
+    #expect(!manager.canRename(TabID()))
   }
 
   @Test func setCustomTitleTrimsLeadingAndTrailingWhitespace() {
@@ -346,7 +346,7 @@ struct TerminalTabManagerTests {
   @Test func setCustomTitleOnUnknownTabIsNoOp() {
     let manager = TerminalTabManager()
     let id = manager.createTab(title: "tab 1", icon: nil)
-    manager.setCustomTitle(TerminalTabID(), title: "my name")
+    manager.setCustomTitle(TabID(), title: "my name")
     #expect(manager.tabs.first { $0.id == id }!.customTitle == nil)
   }
 
@@ -457,7 +457,7 @@ struct TerminalTabManagerTests {
   @Test func beginTabRenameIgnoresUnknownTabID() {
     let manager = TerminalTabManager()
     _ = manager.createTab(title: "tab 1", icon: nil)
-    manager.beginTabRename(TerminalTabID())
+    manager.beginTabRename(TabID())
     #expect(manager.editingTabID == nil)
   }
 }

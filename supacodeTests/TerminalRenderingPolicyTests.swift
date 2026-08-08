@@ -227,7 +227,7 @@ struct TerminalRenderingPolicyTests {
   }
 
   @Test func tabContentStackReturnsSelectedTabWhenItExists() {
-    let selected = TerminalTabID()
+    let selected = TabID()
     let tabs = [
       TerminalTabItem(title: "one", icon: nil),
       TerminalTabItem(id: selected, title: "two", icon: nil),
@@ -240,7 +240,7 @@ struct TerminalRenderingPolicyTests {
   }
 
   @Test func tabContentStackReturnsNilWhenSelectionDoesNotExist() {
-    let selected = TerminalTabID()
+    let selected = TabID()
     let tabs = [
       TerminalTabItem(title: "one", icon: nil),
       TerminalTabItem(title: "two", icon: nil),

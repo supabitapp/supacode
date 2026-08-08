@@ -78,7 +78,7 @@ struct LayoutFeatureTests {
     let runtime: ContentRuntime
     let recorder: ContentRecorder
     let paneID: PaneID
-    let tabID: TerminalTabID
+    let tabID: TabID
     let contentID: ContentID
 
     var mock: MockTabContent? { recorder.contents[contentID] }
@@ -89,7 +89,7 @@ struct LayoutFeatureTests {
   private static let seedState = TerminalContentState(workingDirectory: "/tmp/layout-feature")
 
   private static func spec(
-    tabID: TerminalTabID? = nil,
+    tabID: TabID? = nil,
     contentID: ContentID? = nil,
     title: String = "Tab",
     geometry: ContentGeometry = .fallback,
@@ -106,7 +106,7 @@ struct LayoutFeatureTests {
   }
 
   private static func tab(
-    id tabID: TerminalTabID,
+    id tabID: TabID,
     contentID: ContentID,
     title: String,
     state: TerminalContentState = seedState
@@ -152,7 +152,7 @@ struct LayoutFeatureTests {
     preserveZoom: Bool = false,
     killer: ContentSessionKiller? = nil
   ) async -> Harness {
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let contentID = ContentID()
     let bundle = makeStore(
       layout: PaneLayout(
@@ -184,8 +184,8 @@ struct LayoutFeatureTests {
   private func addTab(
     _ harness: Harness,
     title: String
-  ) async -> (tabID: TerminalTabID, contentID: ContentID) {
-    let tabID = TerminalTabID()
+  ) async -> (tabID: TabID, contentID: ContentID) {
+    let tabID = TabID()
     let contentID = ContentID()
     let paneID = harness.paneID
     await harness.store.send(
@@ -200,7 +200,7 @@ struct LayoutFeatureTests {
 
   private struct SplitResult {
     let paneID: PaneID
-    let tabID: TerminalTabID
+    let tabID: TabID
     let contentID: ContentID
   }
 
@@ -213,7 +213,7 @@ struct LayoutFeatureTests {
     title: String = "Split"
   ) async -> SplitResult {
     let newPaneID = PaneID(rawValue: UUID(mintIndex))
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let contentID = ContentID()
     await harness.store.send(
       .splitPane(id: anchor, direction: direction, spec: Self.spec(tabID: tabID, contentID: contentID, title: title))
@@ -232,7 +232,7 @@ struct LayoutFeatureTests {
   @Test func newTabProvisionsAndStartsSessionOnceAtGivenGeometry() async throws {
     let harness = await makeHarness()
     let geometry = try #require(ContentGeometry.candidate(pointSize: CGSize(width: 900, height: 600), scale: 2))
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let contentID = ContentID()
     await harness.store.send(
       .newTab(inPane: harness.paneID, spec: Self.spec(tabID: tabID, contentID: contentID, geometry: geometry))
@@ -255,7 +255,7 @@ struct LayoutFeatureTests {
     // Tombstone the identity up front so the runtime refuses to provision it.
     harness.runtime.remove(contentID, tombstone: true)
     await harness.store.send(
-      .newTab(inPane: harness.paneID, spec: Self.spec(tabID: TerminalTabID(), contentID: contentID))
+      .newTab(inPane: harness.paneID, spec: Self.spec(tabID: TabID(), contentID: contentID))
     )
     #expect(harness.recorder.contents[contentID]?.startGeometries.isEmpty == true)
     #expect(harness.runtime.content(for: contentID) == nil)
@@ -265,7 +265,7 @@ struct LayoutFeatureTests {
   @Test func newTabBackgroundAppendsWithoutTakingSelectionOrFocus() async {
     let harness = await makeHarness()
     let split = await splitPane(harness, anchor: harness.paneID)
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let contentID = ContentID()
     await harness.store.send(
       .newTab(
@@ -289,7 +289,7 @@ struct LayoutFeatureTests {
     await harness.store.send(.selectTab(id: harness.tabID)) {
       $0.layout.panes[id: paneID]?.selectedTabID = harness.tabID
     }
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let contentID = ContentID()
     await harness.store.send(
       .newTab(inPane: paneID, spec: Self.spec(tabID: tabID, contentID: contentID, title: "After"))
@@ -305,7 +305,7 @@ struct LayoutFeatureTests {
     let bundle = makeStore(
       layout: PaneLayout(tree: SplitTree(view: paneID), panes: [Pane(id: paneID)], focusedPaneID: paneID)
     )
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let contentID = ContentID()
     await bundle.store.send(
       .newTab(inPane: paneID, spec: Self.spec(tabID: tabID, contentID: contentID, select: false))
@@ -319,7 +319,7 @@ struct LayoutFeatureTests {
   @Test func newTabIntoEmptyLayoutMaterializesThePane() async {
     let bundle = makeStore(layout: PaneLayout())
     let paneID = PaneID()
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let contentID = ContentID()
     await bundle.store.send(
       .newTab(inPane: paneID, spec: Self.spec(tabID: tabID, contentID: contentID, select: false))
@@ -343,7 +343,7 @@ struct LayoutFeatureTests {
     // Tombstoned content must not leave a half-materialized root pane behind.
     bundle.runtime.remove(contentID, tombstone: true)
     await bundle.store.send(
-      .newTab(inPane: PaneID(), spec: Self.spec(tabID: TerminalTabID(), contentID: contentID))
+      .newTab(inPane: PaneID(), spec: Self.spec(tabID: TabID(), contentID: contentID))
     )
     #expect(bundle.store.state.layout.panes.isEmpty)
     #expect(bundle.store.state.layout.tree.isEmpty)
@@ -353,7 +353,7 @@ struct LayoutFeatureTests {
   @Test func newTabDuplicateTabIDMintsAFreshOne() async {
     let harness = await makeHarness()
     let contentID = ContentID()
-    let minted = TerminalTabID(rawValue: UUID(0))
+    let minted = TabID(rawValue: UUID(0))
     await harness.store.send(
       .newTab(inPane: harness.paneID, spec: Self.spec(tabID: harness.tabID, contentID: contentID))
     ) {
@@ -367,7 +367,7 @@ struct LayoutFeatureTests {
   @Test func newTabDuplicateContentIDIsRefusedBeforeProvisioning() async {
     let harness = await makeHarness()
     await harness.store.send(
-      .newTab(inPane: harness.paneID, spec: Self.spec(tabID: TerminalTabID(), contentID: harness.contentID))
+      .newTab(inPane: harness.paneID, spec: Self.spec(tabID: TabID(), contentID: harness.contentID))
     )
     // Only the bootstrap tab ever reached the factory.
     #expect(harness.recorder.madeStates.count == 1)
@@ -398,7 +398,7 @@ struct LayoutFeatureTests {
 
   @Test func splitPaneUnknownAnchorIsRefusedBeforeProvisioning() async {
     let harness = await makeHarness()
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let contentID = ContentID()
     await harness.store.send(
       .splitPane(id: PaneID(), direction: .right, spec: Self.spec(tabID: tabID, contentID: contentID))
@@ -414,7 +414,7 @@ struct LayoutFeatureTests {
     // Seeding the pane at UUID(0) makes the minted pane ID collide, forcing
     // the insert to throw after provisioning succeeded.
     let harness = await makeHarness(paneID: PaneID(rawValue: UUID(0)))
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let contentID = ContentID()
     await harness.store.send(
       .splitPane(id: harness.paneID, direction: .right, spec: Self.spec(tabID: tabID, contentID: contentID))
@@ -430,7 +430,7 @@ struct LayoutFeatureTests {
   @Test func splitPaneWithBackgroundSpecKeepsFocus() async throws {
     let harness = await makeHarness()
     let newPaneID = PaneID(rawValue: UUID(0))
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let contentID = ContentID()
     await harness.store.send(
       .splitPane(
@@ -514,7 +514,7 @@ struct LayoutFeatureTests {
     #expect(harness.runtime.pendingKill.isEmpty)
     // The empty layout is re-enterable: newTab materializes a fresh pane.
     let paneID = PaneID()
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let contentID = ContentID()
     await harness.store.send(.newTab(inPane: paneID, spec: Self.spec(tabID: tabID, contentID: contentID))) {
       $0.layout = PaneLayout(
@@ -533,7 +533,7 @@ struct LayoutFeatureTests {
   @Test func closePaneTombstonesEveryTab() async {
     let harness = await makeHarness()
     let split = await splitPane(harness, anchor: harness.paneID)
-    let extraTabID = TerminalTabID()
+    let extraTabID = TabID()
     let extraContentID = ContentID()
     await harness.store.send(
       .newTab(inPane: split.paneID, spec: Self.spec(tabID: extraTabID, contentID: extraContentID, title: "Extra"))
@@ -853,7 +853,7 @@ struct LayoutFeatureTests {
   @Test func wakeTabWithoutAFrozenGridFallsBack() async throws {
     let harness = await makeHarness()
     let custom = try #require(ContentGeometry.candidate(pointSize: CGSize(width: 800, height: 600), scale: 2))
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let contentID = ContentID()
     let paneID = harness.paneID
     await harness.store.send(
@@ -901,7 +901,7 @@ struct LayoutFeatureTests {
     await harness.store.receive(.runtime(.killConfirmed(id: second.contentID)))
     #expect(harness.runtime.pendingKill.isEmpty)
     // The identity is reusable again once the kill is confirmed.
-    let reusedTabID = TerminalTabID()
+    let reusedTabID = TabID()
     await harness.store.send(
       .newTab(inPane: paneID, spec: Self.spec(tabID: reusedTabID, contentID: second.contentID, title: "Reborn"))
     ) {
@@ -957,7 +957,7 @@ struct LayoutFeatureTests {
 
   // MARK: - Close confirmation.
 
-  private func closeConfirmAlert(tab tabID: TerminalTabID) -> AlertState<LayoutFeature.Action.Alert> {
+  private func closeConfirmAlert(tab tabID: TabID) -> AlertState<LayoutFeature.Action.Alert> {
     AlertState {
       TextState("Close Tab?")
     } actions: {

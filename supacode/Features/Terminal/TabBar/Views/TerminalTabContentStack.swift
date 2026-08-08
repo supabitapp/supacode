@@ -2,13 +2,13 @@ import SwiftUI
 
 struct TerminalTabContentStack<Content: View>: View {
   let tabs: [TerminalTabItem]
-  let selectedTabId: TerminalTabID
-  let content: (TerminalTabID) -> Content
+  let selectedTabId: TabID
+  let content: (TabID) -> Content
 
   init(
     tabs: [TerminalTabItem],
-    selectedTabId: TerminalTabID,
-    @ViewBuilder content: @escaping (TerminalTabID) -> Content
+    selectedTabId: TabID,
+    @ViewBuilder content: @escaping (TabID) -> Content
   ) {
     self.tabs = tabs
     self.selectedTabId = selectedTabId
@@ -22,7 +22,7 @@ struct TerminalTabContentStack<Content: View>: View {
     }
   }
 
-  static func selectedTabID(in tabs: [TerminalTabItem], selectedTabId: TerminalTabID) -> TerminalTabID? {
+  static func selectedTabID(in tabs: [TerminalTabItem], selectedTabId: TabID) -> TabID? {
     tabs.contains { $0.id == selectedTabId } ? selectedTabId : nil
   }
 }

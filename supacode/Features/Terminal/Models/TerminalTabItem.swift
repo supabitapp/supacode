@@ -2,7 +2,7 @@ import Foundation
 import SupacodeSettingsShared
 
 struct TerminalTabItem: Identifiable, Equatable, Sendable {
-  let id: TerminalTabID
+  let id: TabID
   /// Live shell title; for display use `displayTitle`.
   var title: String
   /// User-supplied override; nil means follow the live shell title.
@@ -20,7 +20,7 @@ struct TerminalTabItem: Identifiable, Equatable, Sendable {
   var displayTitle: String { customTitle ?? title }
 
   init(
-    id: TerminalTabID = TerminalTabID(),
+    id: TabID = TabID(),
     title: String,
     customTitle: String? = nil,
     icon: String?,

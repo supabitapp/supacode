@@ -4039,7 +4039,7 @@ struct RepositoriesFeatureTests {
     let repoRoot = "/tmp/\(testID)-repo"
     let worktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [worktree])
-    let tabId = TerminalTabID()
+    let tabId = TabID()
     let definition = ScriptDefinition(kind: .run, name: "Run", command: "npm start")
     var state = makeState(repositories: [repository])
     state.reconcileSidebarForTesting()
@@ -4086,7 +4086,7 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let tabId = TerminalTabID()
+    let tabId = TabID()
     var state = makeState(repositories: [repository])
     state.reconcileSidebarForTesting()
     state.sidebarItems[id: featureWorktree.id]?.lifecycle = .archiving
@@ -4118,7 +4118,7 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let tabId = TerminalTabID()
+    let tabId = TabID()
     var state = makeState(repositories: [repository])
     state.reconcileSidebarForTesting()
     state.sidebarItems[id: featureWorktree.id]?.lifecycle = .deletingScript
@@ -7895,7 +7895,7 @@ struct RepositoriesFeatureTests {
     kind: BlockingScriptKind,
     exitMessage: String,
     worktreeID: Worktree.ID,
-    tabId: TerminalTabID? = nil,
+    tabId: TabID? = nil,
     repoName: String,
     worktreeName: String
   ) -> AlertState<RepositoriesFeature.Alert> {

@@ -786,7 +786,7 @@ struct AgentBusyStateTests {
     let manager: WorktreeTerminalManager
     let presence: PresenceTestHarness
     let state: WorktreeTerminalState
-    let tabId: TerminalTabID
+    let tabId: TabID
     let surface: GhosttySurfaceView
 
     func startSession(agent: SkillAgent = .claude, pid: pid_t = getpid()) {

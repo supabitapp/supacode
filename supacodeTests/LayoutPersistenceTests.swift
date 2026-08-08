@@ -25,7 +25,7 @@ struct LayoutPersistenceTests {
     }
   }
 
-  private func layout(paneID: PaneID, tabID: TerminalTabID, contentID: ContentID) -> PaneLayout {
+  private func layout(paneID: PaneID, tabID: TabID, contentID: ContentID) -> PaneLayout {
     PaneLayout(
       tree: SplitTree(view: paneID),
       panes: [
@@ -50,7 +50,7 @@ struct LayoutPersistenceTests {
 
   @Test func overlaysLiveSnapshotsOverStoredOnes() throws {
     let paneID = PaneID()
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let contentID = ContentID()
     let runtime = ContentRuntime()
     let grid = try #require(
@@ -79,7 +79,7 @@ struct LayoutPersistenceTests {
 
   @Test func keepsStoredSnapshotWhenContentIsHibernated() {
     let paneID = PaneID()
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let contentID = ContentID()
     let runtime = ContentRuntime()
 

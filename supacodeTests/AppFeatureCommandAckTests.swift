@@ -55,7 +55,7 @@ struct AppFeatureCommandAckTests {
         .tabProjectionChanged(
           worktreeID: worktree.id,
           WorktreeTabProjection(
-            tabID: TerminalTabID(rawValue: tabID),
+            tabID: TabID(rawValue: tabID),
             surfaceIDs: [tabID],
             activeSurfaceID: tabID,
             unseenNotificationCount: 0
@@ -330,7 +330,7 @@ struct AppFeatureCommandAckTests {
     #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
 
     await store.send(
-      .terminalEvent(.tabRemoved(worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID)))
+      .terminalEvent(.tabRemoved(worktreeID: worktree.id, tabID: TabID(rawValue: tabID)))
     )
     await store.finish()
 
@@ -450,7 +450,7 @@ struct AppFeatureCommandAckTests {
     await store.send(
       .terminalEvent(
         .tabRenamed(
-          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: true))
+          worktreeID: worktree.id, tabID: TabID(rawValue: tabID), applied: true))
     )
     await store.finish()
 
@@ -458,7 +458,7 @@ struct AppFeatureCommandAckTests {
     #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
     #expect(
       sent.value.contains(
-        .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: "review")))
+        .renameTab(worktree, tabID: TabID(rawValue: tabID), title: "review")))
   }
 
   @Test(.dependencies) func tabRenameSocketDeeplinkFailsWhenRenameDoesNotApply() async {
@@ -482,7 +482,7 @@ struct AppFeatureCommandAckTests {
     await store.send(
       .terminalEvent(
         .tabRenamed(
-          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: false))
+          worktreeID: worktree.id, tabID: TabID(rawValue: tabID), applied: false))
     )
     await store.finish()
 
@@ -525,7 +525,7 @@ struct AppFeatureCommandAckTests {
     await store.send(
       .terminalEvent(
         .tabRenamed(
-          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: true))
+          worktreeID: worktree.id, tabID: TabID(rawValue: tabID), applied: true))
     )
     await store.finish()
 
@@ -745,7 +745,7 @@ struct AppFeatureCommandAckTests {
     await store.send(
       .terminalEvent(
         .tabRenamed(
-          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: true))
+          worktreeID: worktree.id, tabID: TabID(rawValue: tabID), applied: true))
     )
     await store.finish()
 

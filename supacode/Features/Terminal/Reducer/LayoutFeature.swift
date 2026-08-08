@@ -7,7 +7,7 @@ import SupacodeSettingsShared
 /// Recipe for a new tab: identity (minted when nil), the kind-keyed content
 /// seed, spawn geometry, and whether the tab takes selection and pane focus.
 nonisolated struct NewTabSpec: Equatable, Sendable {
-  let tabID: TerminalTabID?
+  let tabID: TabID?
   let contentID: ContentID?
   let title: String
   let content: ContentState
@@ -15,7 +15,7 @@ nonisolated struct NewTabSpec: Equatable, Sendable {
   let select: Bool
 
   init(
-    tabID: TerminalTabID? = nil,
+    tabID: TabID? = nil,
     contentID: ContentID? = nil,
     title: String,
     content: ContentState,
@@ -117,24 +117,24 @@ struct LayoutFeature {
   enum Action: Equatable, Sendable {
     case newTab(inPane: PaneID, spec: NewTabSpec)
     case splitPane(id: PaneID, direction: SplitTree<PaneID>.NewDirection, spec: NewTabSpec)
-    case closeTab(id: TerminalTabID)
+    case closeTab(id: TabID)
     case closePane(id: PaneID)
-    case selectTab(id: TerminalTabID)
-    case renameTab(id: TerminalTabID, title: String)
+    case selectTab(id: TabID)
+    case renameTab(id: TabID, title: String)
     case focusPane(FocusTarget)
-    case moveTab(id: TerminalTabID, toPane: PaneID, index: Int)
+    case moveTab(id: TabID, toPane: PaneID, index: Int)
     case resizePane(node: SplitTree<PaneID>.Node, ratio: Double)
     case equalizePanes
     case toggleZoom(paneID: PaneID)
-    case hibernateTab(id: TerminalTabID)
-    case wakeTab(id: TerminalTabID)
+    case hibernateTab(id: TabID)
+    case wakeTab(id: TabID)
     case runtime(RuntimeEvent)
     /// A content asked to close itself; gated by the confirm-close-tab mode.
     case contentRequestedClose(content: ContentID)
     case alert(PresentationAction<Alert>)
 
     nonisolated enum Alert: Equatable, Sendable {
-      case confirmClose(tab: TerminalTabID)
+      case confirmClose(tab: TabID)
     }
   }
 
@@ -295,7 +295,7 @@ extension LayoutFeature {
     return .none
   }
 
-  private func reduceCloseTab(_ state: inout State, tabID: TerminalTabID) -> Effect<Action> {
+  private func reduceCloseTab(_ state: inout State, tabID: TabID) -> Effect<Action> {
     guard var pane = state.layout.pane(containingTab: tabID), let index = pane.tabs.index(id: tabID) else {
       return .none
     }
@@ -315,7 +315,7 @@ extension LayoutFeature {
 
   private func reduceMoveTab(
     _ state: inout State,
-    tabID: TerminalTabID,
+    tabID: TabID,
     targetPaneID: PaneID,
     index: Int
   ) -> Effect<Action> {
@@ -350,7 +350,7 @@ extension LayoutFeature {
     return .none
   }
 
-  private func reduceSelectTab(_ state: inout State, tabID: TerminalTabID) -> Effect<Action> {
+  private func reduceSelectTab(_ state: inout State, tabID: TabID) -> Effect<Action> {
     guard var pane = state.layout.pane(containingTab: tabID) else { return .none }
     pane.selectedTabID = tabID
     state.layout.panes[id: pane.id] = pane
@@ -358,7 +358,7 @@ extension LayoutFeature {
     return .none
   }
 
-  private func reduceRenameTab(_ state: inout State, tabID: TerminalTabID, title: String) -> Effect<Action> {
+  private func reduceRenameTab(_ state: inout State, tabID: TabID, title: String) -> Effect<Action> {
     guard var pane = state.layout.pane(containingTab: tabID) else { return .none }
     // Empty rename clears the override; normalization mirrors the tab manager.
     pane.tabs[id: tabID]?.customTitle = TerminalTabManager.normalizedCustomTitle(title)
@@ -366,7 +366,7 @@ extension LayoutFeature {
     return .none
   }
 
-  private func reduceHibernateTab(_ state: inout State, tabID: TerminalTabID) -> Effect<Action> {
+  private func reduceHibernateTab(_ state: inout State, tabID: TabID) -> Effect<Action> {
     guard var pane = state.layout.pane(containingTab: tabID), let contentID = pane.tabs[id: tabID]?.content.id else {
       return .none
     }
@@ -383,7 +383,7 @@ extension LayoutFeature {
     return .none
   }
 
-  private func reduceWakeTab(_ state: inout State, tabID: TerminalTabID) -> Effect<Action> {
+  private func reduceWakeTab(_ state: inout State, tabID: TabID) -> Effect<Action> {
     guard let pane = state.layout.pane(containingTab: tabID), let snapshot = pane.tabs[id: tabID]?.content else {
       return .none
     }
@@ -414,7 +414,7 @@ extension LayoutFeature {
 
   /// Refreshes the tab's stored snapshot from the now-live content so a wake
   /// that reflowed the grid persists the fresher one, mirroring hibernate.
-  private func landWokenSnapshot(_ state: inout State, tabID: TerminalTabID, content: any TabContent) {
+  private func landWokenSnapshot(_ state: inout State, tabID: TabID, content: any TabContent) {
     guard let paneID = state.layout.pane(containingTab: tabID)?.id else { return }
     state.layout.panes[id: paneID]?.tabs[id: tabID]?.content = content.snapshot()
   }
@@ -591,11 +591,11 @@ extension LayoutFeature {
     in layout: PaneLayout,
     for spec: NewTabSpec,
     operation: StaticString
-  ) -> (tabID: TerminalTabID, contentID: ContentID)? {
-    var tabID = spec.tabID ?? TerminalTabID(rawValue: uuid())
+  ) -> (tabID: TabID, contentID: ContentID)? {
+    var tabID = spec.tabID ?? TabID(rawValue: uuid())
     if layout.pane(containingTab: tabID) != nil {
       Self.logger.warning("\(operation): duplicate tab ID \(tabID.rawValue), generating a new one.")
-      tabID = TerminalTabID(rawValue: uuid())
+      tabID = TabID(rawValue: uuid())
     }
     let contentID = spec.contentID ?? ContentID(rawValue: uuid())
     guard layout.tab(containingContent: contentID) == nil else {

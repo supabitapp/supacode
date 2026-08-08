@@ -92,7 +92,7 @@ nonisolated enum TerminalSurfaceRecipe {
   @MainActor
   static func environment(
     for worktree: Worktree,
-    tabID: TerminalTabID,
+    tabID: TabID,
     surfaceID: UUID,
     socketPath: String?,
     extraVariables: [String: String] = [:]

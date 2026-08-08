@@ -11,7 +11,7 @@ struct PaneLayoutTests {
     workingDirectory: String? = nil
   ) -> TabItem {
     TabItem(
-      id: TerminalTabID(rawValue: id),
+      id: TabID(rawValue: id),
       title: title,
       content: ContentSnapshot(
         id: ContentID(rawValue: id),
@@ -50,7 +50,7 @@ struct PaneLayoutTests {
         Pane(
           id: paneID,
           tabs: [Self.terminalTab(id: tabID, title: "agent", workingDirectory: "/repo")],
-          selectedTabID: TerminalTabID(rawValue: tabID)
+          selectedTabID: TabID(rawValue: tabID)
         )
       ],
       focusedPaneID: paneID
@@ -79,7 +79,7 @@ struct PaneLayoutTests {
       focusedPaneID: paneID
     )
     // Corrupt selection and focus to IDs that do not resolve.
-    layout.panes[id: paneID]?.selectedTabID = TerminalTabID()
+    layout.panes[id: paneID]?.selectedTabID = TabID()
     layout.focusedPaneID = nil
     let data = try JSONEncoder().encode(layout)
     let decoded = try JSONDecoder().decode(PaneLayout.self, from: data)

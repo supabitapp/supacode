@@ -12,7 +12,7 @@ struct AppFeatureRenameTabTests {
   @Test(.dependencies) func selectedTabBeginsRename() async {
     let worktree = Self.makeWorktree(id: "/tmp/rename-tab/wt-1")
     let store = Self.makeStore(worktrees: [worktree], selection: worktree.id)
-    let tabID = TerminalTabID()
+    let tabID = TabID()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     store.dependencies.terminalClient.selectedTabID = { _ in tabID }
     store.dependencies.terminalClient.send = { command in
@@ -65,8 +65,8 @@ struct AppFeatureRenameTabTests {
 
   @Test(.dependencies) func selectedTabIsCapturedBeforeAsyncDispatch() async {
     let worktree = Self.makeWorktree(id: "/tmp/rename-tab/wt-1")
-    let firstTabID = TerminalTabID()
-    let secondTabID = TerminalTabID()
+    let firstTabID = TabID()
+    let secondTabID = TabID()
     let currentTabID = LockIsolated(firstTabID)
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = Self.makeStore(worktrees: [worktree], selection: worktree.id)

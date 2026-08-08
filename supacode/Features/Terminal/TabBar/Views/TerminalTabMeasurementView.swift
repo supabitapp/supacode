@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct TerminalTabMeasurementView: View {
-  let tabId: TerminalTabID
-  let onFrameChange: (TerminalTabID, CGRect) -> Void
+  let tabId: TabID
+  let onFrameChange: (TabID, CGRect) -> Void
 
   var body: some View {
     GeometryReader { proxy in

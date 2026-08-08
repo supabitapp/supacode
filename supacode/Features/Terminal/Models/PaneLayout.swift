@@ -138,7 +138,7 @@ nonisolated struct ContentSnapshot: Equatable, Codable, Sendable {
 
 /// One tab in a pane's strip, hosting exactly one content.
 nonisolated struct TabItem: Equatable, Identifiable, Codable, Sendable {
-  let id: TerminalTabID
+  let id: TabID
   var title: String
   var customTitle: String?
   var icon: String?
@@ -155,7 +155,7 @@ nonisolated struct TabItem: Equatable, Identifiable, Codable, Sendable {
   }
 
   init(
-    id: TerminalTabID,
+    id: TabID,
     title: String,
     customTitle: String? = nil,
     icon: String? = nil,
@@ -172,7 +172,7 @@ nonisolated struct TabItem: Equatable, Identifiable, Codable, Sendable {
 
   init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    id = try container.decode(TerminalTabID.self, forKey: .id)
+    id = try container.decode(TabID.self, forKey: .id)
     title = try container.decode(String.self, forKey: .title)
     customTitle = try container.decodeIfPresent(String.self, forKey: .customTitle)
     icon = try container.decodeIfPresent(String.self, forKey: .icon)
@@ -187,7 +187,7 @@ nonisolated struct TabItem: Equatable, Identifiable, Codable, Sendable {
 nonisolated struct Pane: Equatable, Identifiable, Codable, Sendable {
   let id: PaneID
   var tabs: IdentifiedArrayOf<TabItem>
-  var selectedTabID: TerminalTabID?
+  var selectedTabID: TabID?
 
   private enum CodingKeys: String, CodingKey {
     case id
@@ -195,7 +195,7 @@ nonisolated struct Pane: Equatable, Identifiable, Codable, Sendable {
     case selectedTabID
   }
 
-  init(id: PaneID, tabs: IdentifiedArrayOf<TabItem> = [], selectedTabID: TerminalTabID? = nil) {
+  init(id: PaneID, tabs: IdentifiedArrayOf<TabItem> = [], selectedTabID: TabID? = nil) {
     self.id = id
     self.tabs = tabs
     // Mirror decode's repair so both construction paths satisfy the invariant.
@@ -216,7 +216,7 @@ nonisolated struct Pane: Equatable, Identifiable, Codable, Sendable {
       unique.append(tab)
     }
     tabs = unique
-    let decodedSelection = try container.decodeIfPresent(TerminalTabID.self, forKey: .selectedTabID)
+    let decodedSelection = try container.decodeIfPresent(TabID.self, forKey: .selectedTabID)
     selectedTabID = decodedSelection.flatMap { unique[id: $0] != nil ? $0 : nil } ?? unique.first?.id
   }
 
@@ -280,7 +280,7 @@ nonisolated struct PaneLayout: Equatable, Codable, Sendable {
 
 extension PaneLayout {
   /// The pane a tab lives in.
-  func pane(containingTab tabID: TerminalTabID) -> Pane? {
+  func pane(containingTab tabID: TabID) -> Pane? {
     panes.first { $0.tabs[id: tabID] != nil }
   }
 

@@ -334,7 +334,7 @@ struct AppFeatureArchivedSelectionTests {
 
   @Test(.dependencies) func restoredTabProjectionHydratesBusyAgentWhenBadgesAreDisabled() async throws {
     let surfaceID = UUID()
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     let worktree = Worktree(
       id: "/tmp/repo/wt-feature",
       name: "feature",

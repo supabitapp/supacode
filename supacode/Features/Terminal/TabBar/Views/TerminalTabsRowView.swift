@@ -7,18 +7,18 @@ struct TerminalTabsRowView: View {
   let terminalState: WorktreeTerminalState
   let terminalsStore: StoreOf<TerminalsFeature>
   let isLifecycleBusy: Bool
-  @Binding var openedTabs: [TerminalTabID]
-  @Binding var tabLocations: [TerminalTabID: CGRect]
-  @Binding var draggingTabId: TerminalTabID?
+  @Binding var openedTabs: [TabID]
+  @Binding var tabLocations: [TabID: CGRect]
+  @Binding var draggingTabId: TabID?
   @Binding var draggingStartLocation: CGFloat?
   @Binding var closeButtonGestureActive: Bool
   let fixedTabWidth: CGFloat?
-  let closeTab: (TerminalTabID) -> Void
-  let closeOthers: (TerminalTabID) -> Void
-  let closeToRight: (TerminalTabID) -> Void
+  let closeTab: (TabID) -> Void
+  let closeOthers: (TabID) -> Void
+  let closeToRight: (TabID) -> Void
   let closeAll: () -> Void
-  let dismissSplitZoom: (TerminalTabID) -> Void
-  let renameTab: (TerminalTabID, String) -> Void
+  let dismissSplitZoom: (TabID) -> Void
+  let renameTab: (TabID, String) -> Void
   let scrollReader: ScrollViewProxy
 
   @State private var dropTargetIndex: Int?
@@ -150,7 +150,7 @@ struct TerminalTabsRowView: View {
     .frame(height: TerminalTabBarMetrics.barHeight)
   }
 
-  private func makeTabDragGesture(id: TerminalTabID) -> some Gesture {
+  private func makeTabDragGesture(id: TabID) -> some Gesture {
     DragGesture(minimumDistance: 2, coordinateSpace: .global)
       .onChanged { value in
         if closeButtonGestureActive {

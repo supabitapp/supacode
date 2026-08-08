@@ -12,7 +12,7 @@ final class TerminalTabManager {
       editingTabID = nil
     }
   }
-  var selectedTabId: TerminalTabID? {
+  var selectedTabId: TabID? {
     // Single choke point for the ~nine selection write sites: the owning state
     // recomputes tab visibility (and its hibernation timers) once per change.
     didSet {
@@ -20,7 +20,7 @@ final class TerminalTabManager {
       onSelectedTabChanged?()
     }
   }
-  private(set) var editingTabID: TerminalTabID?
+  private(set) var editingTabID: TabID?
 
   /// Fires whenever `selectedTabId` changes. Set by `WorktreeTerminalState` so a
   /// selection change drives `refreshTabVisibility()` from one place.
@@ -39,18 +39,18 @@ final class TerminalTabManager {
     isBlockingScript: Bool = false,
     id: UUID? = nil,
     selecting: Bool = true
-  ) -> TerminalTabID {
-    let tabID: TerminalTabID
+  ) -> TabID {
+    let tabID: TabID
     if let id {
-      let candidate = TerminalTabID(rawValue: id)
+      let candidate = TabID(rawValue: id)
       if tabs.contains(where: { $0.id == candidate }) {
         Self.logger.warning("Duplicate tab ID \(id), generating a new one.")
-        tabID = TerminalTabID()
+        tabID = TabID()
       } else {
         tabID = candidate
       }
     } else {
-      tabID = TerminalTabID()
+      tabID = TabID()
     }
     if isTitleLocked, customTitle != nil {
       Self.logger.warning("Dropping the custom title of locked tab \(tabID.rawValue).")
@@ -81,12 +81,12 @@ final class TerminalTabManager {
     return tab.id
   }
 
-  func selectTab(_ id: TerminalTabID) {
+  func selectTab(_ id: TabID) {
     guard tabs.contains(where: { $0.id == id }) else { return }
     selectedTabId = id
   }
 
-  func updateTitle(_ id: TerminalTabID, title: String) {
+  func updateTitle(_ id: TabID, title: String) {
     guard let index = renamableTabIndex(id) else { return }
     // TUIs rewrite their title constantly; skip no-op writes so an unchanged
     // title doesn't re-render the tab bar on every report.
@@ -97,17 +97,17 @@ final class TerminalTabManager {
   /// Returns false when the tab is gone or its title is locked, so callers can
   /// skip persisting a rename that never applied.
   @discardableResult
-  func setCustomTitle(_ id: TerminalTabID, title: String) -> Bool {
+  func setCustomTitle(_ id: TabID, title: String) -> Bool {
     guard let index = renamableTabIndex(id) else { return false }
     tabs[index].customTitle = Self.normalizedCustomTitle(title)
     return true
   }
 
-  func canRename(_ id: TerminalTabID) -> Bool {
+  func canRename(_ id: TabID) -> Bool {
     renamableTabIndex(id) != nil
   }
 
-  private func renamableTabIndex(_ id: TerminalTabID) -> Int? {
+  private func renamableTabIndex(_ id: TabID) -> Int? {
     guard let index = tabs.firstIndex(where: { $0.id == id }), !tabs[index].isTitleLocked else {
       return nil
     }
@@ -127,20 +127,20 @@ final class TerminalTabManager {
     return trimmed.isEmpty ? nil : trimmed
   }
 
-  func isBlockingScript(_ id: TerminalTabID) -> Bool {
+  func isBlockingScript(_ id: TabID) -> Bool {
     tabs.first(where: { $0.id == id })?.isBlockingScript == true
   }
 
   /// Mark a blocking-script tab as completed. Title / icon / lock survive so
   /// the row reads as "this WAS an Archive Script run"; tint clears and the
   /// completed flag flips so views can show the freeze indicator.
-  func markBlockingScriptCompleted(_ id: TerminalTabID) {
+  func markBlockingScriptCompleted(_ id: TabID) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
     tabs[index].tintColor = nil
     tabs[index].isBlockingScriptCompleted = true
   }
 
-  func reorderTabs(_ orderedIds: [TerminalTabID]) {
+  func reorderTabs(_ orderedIds: [TabID]) {
     let existingIds = Set(tabs.map(\.id))
     let incomingIds = Set(orderedIds)
     guard existingIds == incomingIds else { return }
@@ -152,7 +152,7 @@ final class TerminalTabManager {
   /// `move_tab` contract. Leaves the selection untouched. Returns whether the
   /// order actually changed.
   @discardableResult
-  func moveTab(_ id: TerminalTabID, by amount: Int) -> Bool {
+  func moveTab(_ id: TabID, by amount: Int) -> Bool {
     guard amount != 0, tabs.count > 1,
       let current = tabs.firstIndex(where: { $0.id == id })
     else { return false }
@@ -168,7 +168,7 @@ final class TerminalTabManager {
     return true
   }
 
-  func closeTab(_ id: TerminalTabID) {
+  func closeTab(_ id: TabID) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
     tabs.remove(at: index)
     guard selectedTabId == id else { return }
@@ -181,12 +181,12 @@ final class TerminalTabManager {
     }
   }
 
-  func closeOthers(keeping id: TerminalTabID) {
+  func closeOthers(keeping id: TabID) {
     tabs = tabs.filter { $0.id == id }
     selectedTabId = tabs.first?.id
   }
 
-  func closeToRight(of id: TerminalTabID) {
+  func closeToRight(of id: TabID) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
     tabs = Array(tabs.prefix(index + 1))
     if let selectedTabId, !tabs.contains(where: { $0.id == selectedTabId }) {
@@ -194,7 +194,7 @@ final class TerminalTabManager {
     }
   }
 
-  func beginTabRename(_ id: TerminalTabID) {
+  func beginTabRename(_ id: TabID) {
     guard canRename(id) else { return }
     editingTabID = id
   }

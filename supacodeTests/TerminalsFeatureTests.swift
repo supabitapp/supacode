@@ -7,7 +7,7 @@ import Testing
 
 @MainActor
 struct TerminalsFeatureTests {
-  private static func layout(paneID: PaneID, tabID: TerminalTabID, contentID: ContentID) -> PaneLayout {
+  private static func layout(paneID: PaneID, tabID: TabID, contentID: ContentID) -> PaneLayout {
     PaneLayout(
       tree: SplitTree(view: paneID),
       panes: [
@@ -32,7 +32,7 @@ struct TerminalsFeatureTests {
 
   @Test func layoutsHydrationServesConsistentRecordsOnly() async {
     let paneID = PaneID()
-    let good = Self.layout(paneID: paneID, tabID: TerminalTabID(), contentID: ContentID())
+    let good = Self.layout(paneID: paneID, tabID: TabID(), contentID: ContentID())
     // A tree leaf with no matching pane fails the consistency gate.
     let bad = PaneLayout(tree: SplitTree(view: PaneID()), panes: [], focusedPaneID: nil)
     let file = LayoutsFile(worktrees: [
@@ -46,8 +46,8 @@ struct TerminalsFeatureTests {
   }
 
   @Test func layoutsHydrationNeverReplacesALiveLayout() async {
-    let live = Self.layout(paneID: PaneID(), tabID: TerminalTabID(), contentID: ContentID())
-    let persisted = Self.layout(paneID: PaneID(), tabID: TerminalTabID(), contentID: ContentID())
+    let live = Self.layout(paneID: PaneID(), tabID: TabID(), contentID: ContentID())
+    let persisted = Self.layout(paneID: PaneID(), tabID: TabID(), contentID: ContentID())
     let worktreeID = Worktree.ID("/tmp/repo")
     let store = TestStore(
       initialState: TerminalsFeature.State(layouts: [LayoutFeature.State(id: worktreeID, layout: live)])
@@ -58,7 +58,7 @@ struct TerminalsFeatureTests {
   }
 
   @Test func newerSchemaServesRecordsButMarksThemReadOnly() async {
-    let good = Self.layout(paneID: PaneID(), tabID: TerminalTabID(), contentID: ContentID())
+    let good = Self.layout(paneID: PaneID(), tabID: TabID(), contentID: ContentID())
     let file = LayoutsFile(
       schemaVersion: LayoutsFile.currentSchemaVersion + 1,
       worktrees: ["/tmp/good": LayoutRecord(layout: good)]
@@ -70,7 +70,7 @@ struct TerminalsFeatureTests {
     }
   }
   @Test func tabProjectionChangedInsertsNewTabThenForwards() async {
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     let surface = UUID()
     let agentSnapshot = AgentPresenceFeature.RowSnapshot(
       agents: [.init(agent: .claude, activity: .busy)],
@@ -103,7 +103,7 @@ struct TerminalsFeatureTests {
   }
 
   @Test func tabRemovedDropsElementAndRecordsForReplayProtection() async {
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     var initial = TerminalsFeature.State()
     initial.terminalTabs.append(
       TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repo")
@@ -119,7 +119,7 @@ struct TerminalsFeatureTests {
   }
 
   @Test func staleTabProjectionAfterRemoveDoesNotReinsertPhantomTab() async {
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     var initial = TerminalsFeature.State()
     initial.terminalTabs.append(
       TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repo")
@@ -156,9 +156,9 @@ struct TerminalsFeatureTests {
 
     // Remove `limit + 5` distinct tab IDs; only the most recent `limit` survive.
     let limit = TerminalsFeature.recentlyRemovedTabLimit
-    var allIDs: [TerminalTabID] = []
+    var allIDs: [TabID] = []
     for _ in 0..<(limit + 5) {
-      let id = TerminalTabID(rawValue: UUID())
+      let id = TabID(rawValue: UUID())
       allIDs.append(id)
       await store.send(.tabRemoved(worktreeID: "/tmp/repo", tabID: id)) {
         $0.recentlyRemovedTabIDs.append(
@@ -177,18 +177,18 @@ struct TerminalsFeatureTests {
   @Test func worktreeStateTornDownDrainsTabsAndFIFOForThatWorktree() async {
     // Two worktrees, two tabs each. Tearing down repoA should leave repoB's
     // FIFO + tab features intact.
-    let tabA1 = TerminalTabID(rawValue: UUID())
-    let tabA2 = TerminalTabID(rawValue: UUID())
-    let tabB1 = TerminalTabID(rawValue: UUID())
+    let tabA1 = TabID(rawValue: UUID())
+    let tabA2 = TabID(rawValue: UUID())
+    let tabB1 = TabID(rawValue: UUID())
     var initial = TerminalsFeature.State()
     initial.terminalTabs.append(TerminalTabFeature.State(id: tabA1, worktreeID: "/tmp/repoA"))
     initial.terminalTabs.append(TerminalTabFeature.State(id: tabA2, worktreeID: "/tmp/repoA"))
     initial.terminalTabs.append(TerminalTabFeature.State(id: tabB1, worktreeID: "/tmp/repoB"))
     initial.recentlyRemovedTabIDs = [
       TerminalsFeature.RecentlyRemovedTab(
-        worktreeID: "/tmp/repoA", tabID: TerminalTabID(rawValue: UUID())),
+        worktreeID: "/tmp/repoA", tabID: TabID(rawValue: UUID())),
       TerminalsFeature.RecentlyRemovedTab(
-        worktreeID: "/tmp/repoB", tabID: TerminalTabID(rawValue: UUID())),
+        worktreeID: "/tmp/repoB", tabID: TabID(rawValue: UUID())),
     ]
     let repoBRecord = initial.recentlyRemovedTabIDs[1]
     let store = TestStore(initialState: initial) { TerminalsFeature() }
@@ -204,7 +204,7 @@ struct TerminalsFeatureTests {
     // Simulates the snapshot-restore path: tab removed in worktree A, worktree
     // state torn down (FIFO drained for worktreeA), restore replays the same
     // persisted UUID. The reinserted projection must not be shadowed.
-    let tabID = TerminalTabID(rawValue: UUID())
+    let tabID = TabID(rawValue: UUID())
     var initial = TerminalsFeature.State()
     initial.terminalTabs.append(TerminalTabFeature.State(id: tabID, worktreeID: "/tmp/repoA"))
     let store = TestStore(initialState: initial) { TerminalsFeature() }
