@@ -331,8 +331,11 @@ struct TerminalContentBuilder {
         if phase == .rewake {
           effective.origin = .restored
           effective.inheritedFrom = nil
+        }
+        if effective.origin == .restored {
           // The first spawn already delivered the launch override; a reattach
-          // must not replay the command or its initial input.
+          // (same instance re-wake OR a rebuilt content after an unexpected
+          // close) must not replay the command or its initial input.
           seedState = TerminalContentState(
             workingDirectory: currentState.workingDirectory,
             agents: currentState.agents,

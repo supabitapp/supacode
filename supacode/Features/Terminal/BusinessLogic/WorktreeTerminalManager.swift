@@ -76,7 +76,10 @@ final class WorktreeTerminalManager {
   /// Per-worktree in-flight positive flush Tasks. A delete awaits the live one
   /// for its key so `.delete` always lands on the writer after the `.snapshot`,
   /// preventing a stale positive flush from resurrecting a pruned worktree.
-  @ObservationIgnored private var layoutFlushTasks: [Worktree.ID: Task<Void, Never>] = [:]
+  @ObservationIgnored private var layoutFlushTasks: [Worktree.ID: (generation: UInt64, task: Task<Void, Never>)] = [:]
+  /// Monotonic stamp for `layoutFlushTasks` so an older task's completion can
+  /// never erase a newer registration for the same key.
+  @ObservationIgnored private var layoutFlushGeneration: UInt64 = 0
   /// Sleeps the incremental-save debounce window; injected so tests drive it.
   @ObservationIgnored private let layoutDebounceSleep: @Sendable (Duration) async throws -> Void
   /// Debounce window before an incremental layout snapshot is flushed.
@@ -193,7 +196,7 @@ final class WorktreeTerminalManager {
   isolated deinit {
     for task in pendingIdleHookEvents.values { task.cancel() }
     for task in layoutDirtyTasks.values { task.cancel() }
-    for task in layoutFlushTasks.values { task.cancel() }
+    for entry in layoutFlushTasks.values { entry.task.cancel() }
     for observer in runtimeObservers {
       NotificationCenter.default.removeObserver(observer)
     }
@@ -589,9 +592,9 @@ final class WorktreeTerminalManager {
     for worktree: Worktree,
     runSetupScriptIfNew: () -> Bool = { false }
   ) -> WorktreeContentHost {
-    if layoutState(for: worktree.id) == nil {
-      sendTerminals(.attachLayout(worktreeID: worktree.id, titlePrefix: worktree.name))
-    }
+    // Unconditional: attach is idempotent and a hydrated layout still needs
+    // its minted-title prefix stamped.
+    sendTerminals(.attachLayout(worktreeID: worktree.id, titlePrefix: worktree.name))
     if let existing = hosts[worktree.id] {
       if runSetupScriptIfNew() {
         existing.enableSetupScriptIfNeeded()
@@ -683,8 +686,12 @@ final class WorktreeTerminalManager {
   /// worktree's layout value changes.
   func handleLayoutChanged(for worktreeID: Worktree.ID) {
     markLayoutDirty(worktreeID: worktreeID)
+    hosts[worktreeID]?.reconcileContentLifecycle()
+    // Zoom and selection changes flip which surfaces render; re-derive
+    // occlusion and focus so hidden panes stop drawing.
+    hosts[worktreeID]?.reassertSurfaceActivity()
     emitProjection(for: worktreeID)
-    hosts[worktreeID]?.reconcileDormantWatchers()
+    emitHasAnyTerminalSurfaceIfNeeded()
   }
 
   /// Consumes a spare decision for an unexpected-close content; the session
@@ -767,7 +774,16 @@ final class WorktreeTerminalManager {
     focusing: Bool = true
   ) {
     let host = host(for: worktree) { runSetupScriptIfNew }
-    guard let layout = layoutState(for: worktree.id)?.layout else { return }
+    // Mint upfront so a title-only request still has a rename target, keeping
+    // the documented initial-surface-equals-tab-ID invariant either way.
+    let mintedID = tabID ?? UUID()
+    guard let layout = layoutState(for: worktree.id)?.layout else {
+      // Drain a waiting CLI ack now instead of stranding it until the timeout.
+      emit(
+        .surfaceCreationFailed(
+          worktreeID: worktree.id, attemptedID: mintedID, message: "Could not create the tab."))
+      return
+    }
     let setupInput = consumeSetupScriptInput(for: worktree, host: host)
     let combinedInput = [setupInput, initialInput].compactMap { $0 }.joined()
     let launch: LaunchOverride? =
@@ -775,8 +791,8 @@ final class WorktreeTerminalManager {
     let inheritedFrom = host.focusedTab?.content.id
     let paneID = layout.focusedPaneID ?? layout.panes.first?.id ?? PaneID()
     let spec = NewTabSpec(
-      tabID: tabID.map(TabID.init(rawValue:)),
-      contentID: tabID.map(ContentID.init(rawValue:)),
+      tabID: TabID(rawValue: mintedID),
+      contentID: ContentID(rawValue: mintedID),
       title: "\(worktree.name) \(nextTabIndex(in: layout, prefix: worktree.name))",
       content: .terminal(TerminalContentState(workingDirectory: nil, launch: launch)),
       geometry: ContentRuntime.liveValue.spawnGeometry(near: inheritedFrom, fallback: inheritedFrom),
@@ -784,30 +800,27 @@ final class WorktreeTerminalManager {
       inheritedFrom: inheritedFrom
     )
     sendLayout(worktree.id, .newTab(inPane: paneID, spec: spec))
-    if let customTitle, let newTabID = spec.tabID {
-      sendLayout(worktree.id, .renameTab(id: newTabID, title: customTitle))
+    if let customTitle {
+      sendLayout(worktree.id, .renameTab(id: TabID(rawValue: mintedID), title: customTitle))
     }
-    let after = layoutState(for: worktree.id)?.layout
-    guard let tabID else {
-      // No addressed id to verify; a grown strip is the success signal.
-      if Self.tabCount(in: after) > Self.tabCount(in: layout) {
-        emit(.tabCreated(worktreeID: worktree.id))
-      }
-      return
-    }
-    guard after?.tab(containingContent: ContentID(rawValue: tabID)) != nil else {
+    // Tab-addressed, not content-addressed: an explicit id colliding with an
+    // EXISTING content would otherwise match the old tab and ack a creation
+    // that was refused.
+    let created =
+      layoutState(for: worktree.id)?.layout.panes
+        .first { $0.tabs[id: TabID(rawValue: mintedID)] != nil }?
+        .tabs[id: TabID(rawValue: mintedID)]?.content.id.rawValue == mintedID
+    guard created else {
       // Drain a waiting CLI ack now instead of stranding it until the timeout.
       emit(
         .surfaceCreationFailed(
-          worktreeID: worktree.id, attemptedID: tabID, message: "Could not create the tab."))
+          worktreeID: worktree.id, attemptedID: mintedID, message: "Could not create the tab."))
       return
     }
     emit(.tabCreated(worktreeID: worktree.id))
-    emit(.surfaceCreated(worktreeID: worktree.id, id: tabID))
-  }
-
-  private static func tabCount(in layout: PaneLayout?) -> Int {
-    layout?.panes.reduce(0) { $0 + $1.tabs.count } ?? 0
+    if tabID != nil {
+      emit(.surfaceCreated(worktreeID: worktree.id, id: mintedID))
+    }
   }
 
   /// The next "<prefix> N" suffix, scanning every strip like the tab manager did.
@@ -843,7 +856,12 @@ final class WorktreeTerminalManager {
   private func ensureInitialTab(in worktree: Worktree, runSetupScriptIfNew: Bool, focusing: Bool) {
     let host = host(for: worktree) { runSetupScriptIfNew }
     _ = host
-    guard layoutState(for: worktree.id)?.layout.panes.isEmpty != false else { return }
+    guard layoutState(for: worktree.id)?.layout.panes.isEmpty != false else {
+      // A hydrated layout already has its tabs; a waiting worktree-new ack
+      // still needs the signal or it strands until the watchdog.
+      emit(.tabCreated(worktreeID: worktree.id))
+      return
+    }
     createTabAsync(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, focusing: focusing)
   }
 
@@ -984,7 +1002,15 @@ final class WorktreeTerminalManager {
     guard let layout = layoutState(for: worktree.id)?.layout,
       let anchorPane = layout.pane(containingTab: owningTab),
       let anchorContent = anchorPane.tabs[id: owningTab]?.content.id
-    else { return }
+    else {
+      if let id {
+        emit(
+          .surfaceCreationFailed(
+            worktreeID: worktree.id, attemptedID: id,
+            message: "Could not create the split surface."))
+      }
+      return
+    }
     let resolvedInput = BlockingScriptRunner.makeCommandInput(script: input ?? "")
     let launch: LaunchOverride? = resolvedInput.map { LaunchOverride(initialInput: $0) }
     let spec = NewTabSpec(
@@ -1099,11 +1125,16 @@ final class WorktreeTerminalManager {
     let change: LayoutsIncrementalWriter.RecordChange =
       record.layout.panes.isEmpty ? .delete : .record(record)
     let writer = layoutsWriter
+    layoutFlushGeneration += 1
+    let generation = layoutFlushGeneration
     let task = Task { [weak self] in
       await writer.flush(records: [worktreeID.rawValue: change])
-      self?.layoutFlushTasks[worktreeID] = nil
+      // Generation-gated: an older task's completion must not erase a newer
+      // registration, or a delete could stop awaiting the in-flight record.
+      guard let self, self.layoutFlushTasks[worktreeID]?.generation == generation else { return }
+      self.layoutFlushTasks[worktreeID] = nil
     }
-    layoutFlushTasks[worktreeID] = task
+    layoutFlushTasks[worktreeID] = (generation, task)
   }
 
   /// Removes `worktreeID` from disk immediately, bypassing the debounce and
@@ -1113,14 +1144,17 @@ final class WorktreeTerminalManager {
   private func deleteLayoutSnapshot(worktreeID: Worktree.ID) {
     layoutDirtyTasks[worktreeID]?.cancel()
     layoutDirtyTasks[worktreeID] = nil
-    let inflightFlush = layoutFlushTasks[worktreeID]
+    let inflightFlush = layoutFlushTasks[worktreeID]?.task
     let writer = layoutsWriter
+    layoutFlushGeneration += 1
+    let generation = layoutFlushGeneration
     let task = Task { [weak self] in
       await inflightFlush?.value
       await writer.flush(records: [worktreeID.rawValue: .delete])
-      self?.layoutFlushTasks[worktreeID] = nil
+      guard let self, self.layoutFlushTasks[worktreeID]?.generation == generation else { return }
+      self.layoutFlushTasks[worktreeID] = nil
     }
-    layoutFlushTasks[worktreeID] = task
+    layoutFlushTasks[worktreeID] = (generation, task)
   }
 
   /// Cancels every queued incremental save. Called before the on-quit
@@ -1132,7 +1166,7 @@ final class WorktreeTerminalManager {
     // checkpoint in `applyAndWrite`, so it runs to completion. The writer's lock
     // plus the atomic temp+rename keep the on-quit write from tearing; the worst
     // case is a stale-but-valid key set on the next launch, never a corrupt file.
-    for task in layoutFlushTasks.values { task.cancel() }
+    for entry in layoutFlushTasks.values { entry.task.cancel() }
     layoutFlushTasks.removeAll()
   }
 

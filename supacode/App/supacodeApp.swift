@@ -225,29 +225,8 @@ struct SupacodeApp: App {
   /// survive for the next launch.
   @MainActor
   private static func hydrateLayouts(into store: StoreOf<AppFeature>) {
-    @Dependency(\.settingsFileStorage) var storage
-    let data: Data
-    do {
-      data = try storage.load(SupacodePaths.layoutsURL)
-    } catch {
-      if !LayoutsIncrementalWriter.isFileAbsent(error) {
-        SupaLogger("App").error("layouts.json unreadable at hydration: \(error)")
-      }
-      return
-    }
-    if let file = try? JSONDecoder().decode(LayoutsFile.self, from: data) {
-      store.send(.terminals(.layoutsHydrated(file)))
-      return
-    }
-    guard
-      let raw = try? JSONDecoder().decode(
-        [String: FailableDecodable<TerminalLayoutSnapshot>].self, from: data
-      )
-    else {
-      SupaLogger("App").error("layouts.json is neither v2 nor v1 at hydration; starting empty.")
-      return
-    }
-    store.send(.terminals(.layoutsHydrated(LayoutsMigrator.migrate(raw.compactMapValues(\.value)))))
+    guard case .file(let file) = LayoutsFile.readFromDisk() else { return }
+    store.send(.terminals(.layoutsHydrated(file)))
   }
 
   @MainActor

@@ -102,9 +102,11 @@ struct LayoutSurfaceConduit {
       guard let view, isLive(view) else { return }
       host.handleSurfaceColorChanged(surfaceID)
     }
-    view.bridge.onCloseRequest = { [weak view] needsConfirmation in
+    // The busyness report is dropped: the reducer's three-way confirm mode
+    // re-derives it, so an `.always` user still confirms an idle shell.
+    view.bridge.onCloseRequest = { [weak view] _ in
       guard let view, isLive(view) else { return }
-      handleCloseRequest(for: view, contentID: contentID, needsConfirmation: needsConfirmation)
+      handleCloseRequest(for: view, contentID: contentID)
     }
     view.onFocusChange = { [weak view] focused in
       guard let view, focused, isLive(view) else { return }
@@ -128,11 +130,7 @@ struct LayoutSurfaceConduit {
 
   /// The surface asked to close. Explicit user closes route through the
   /// layout's confirm-close flow; an unexpected zmx exit goes to the probe.
-  private func handleCloseRequest(
-    for view: GhosttySurfaceView,
-    contentID: ContentID,
-    needsConfirmation: Bool
-  ) {
+  private func handleCloseRequest(for view: GhosttySurfaceView, contentID: ContentID) {
     let surfaceID = contentID.rawValue
     // Programmatic destroys (deeplink / CLI) skip the alert outright, so the
     // close goes straight to the layout, never through the confirm mode.
@@ -152,7 +150,7 @@ struct LayoutSurfaceConduit {
     }
     // A completed blocking script's parked runner keeps reporting a
     // confirmation nothing live justifies; close it straight away.
-    if host.isFrozenBlockingScriptSurface(surfaceID) || !needsConfirmation {
+    if host.isFrozenBlockingScriptSurface(surfaceID) {
       guard let tabID = host.tabID(containing: surfaceID) else { return }
       host.sendLayoutAction(.closeTab(id: tabID))
       return

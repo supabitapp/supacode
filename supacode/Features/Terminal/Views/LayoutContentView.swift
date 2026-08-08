@@ -206,8 +206,16 @@ private struct PaneStripView: View {
         PaneTabStrip(pane: pane, isFocused: isFocused, store: store)
         Divider()
         if let contentID = pane.selectedTab?.content.id {
-          ContentHostView(contentID: contentID, runtime: runtime, epoch: store.renderEpoch)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+          // The epoch read keeps this branch re-evaluating on hibernate/wake;
+          // a visible content without a renderer (failed wake, vanished
+          // worktree) gets an explicit placeholder, never a silent blank.
+          let epoch = store.renderEpoch
+          if runtime.renderer(for: contentID) != nil {
+            ContentHostView(contentID: contentID, runtime: runtime, epoch: epoch)
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+          } else {
+            EmptyTerminalPaneView(message: "This terminal is unavailable.")
+          }
         } else {
           Color.clear
         }
@@ -261,7 +269,9 @@ private struct PaneTabButton: View {
       .buttonStyle(.plain)
       .help("Select this tab.")
       Button {
-        store.send(.closeTab(id: tab.id))
+        // Through the confirm gate: the three-way close-tab mode decides
+        // whether this needs an alert.
+        store.send(.contentRequestedClose(content: tab.content.id, scope: .tab))
       } label: {
         Image(systemName: "xmark")
           .imageScale(.small)

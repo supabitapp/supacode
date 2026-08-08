@@ -399,10 +399,20 @@ struct AppFeature {
             // Reap crash / force-quit orphans, then resurrect agent badges
             // from embedded records. Races with `.task` under `.merge`; the
             // `repositoriesChanged` handler drains layout-seeded surfaces if restore wins.
-            @SharedReader(.layouts) var layouts: LayoutsFile
-            let staged = AgentPresenceFeature.stageRestore(from: layouts)
-            await terminalClient.reapOrphanSessions(layouts.allKnownSurfaceIDs)
-            await send(.agentPresence(.restoreFromSnapshot(staged: staged)))
+            switch LayoutsFile.readFromDisk() {
+            case .file(let layouts):
+              let staged = AgentPresenceFeature.stageRestore(from: layouts)
+              await terminalClient.reapOrphanSessions(layouts.allKnownSurfaceIDs)
+              await send(.agentPresence(.restoreFromSnapshot(staged: staged)))
+            case .absent:
+              // A fresh start owns nothing; stray supa-* sessions are orphans.
+              await terminalClient.reapOrphanSessions([])
+            case .unreadable:
+              // Never destroy on no signal: an unreadable store must not
+              // masquerade as empty, or the sweep would kill every detached
+              // session. Skip this launch; the next successful read reaps.
+              break
+            }
           }
         )
 
@@ -507,6 +517,12 @@ struct AppFeature {
         return .merge(
           .run { _ in
             await terminalClient.send(.setSelectedWorktreeID(worktree.id))
+          },
+          .run { _ in
+            // A worktree selected for the first time (fresh install, empty
+            // migration) still needs its bootstrap tab; no-op when populated.
+            await terminalClient.send(
+              .ensureInitialTab(worktree, runSetupScriptIfNew: false, focusing: false))
           },
           .run { _ in
             await worktreeInfoWatcher.send(.setSelectedWorktreeID(worktree.id))
@@ -1691,6 +1707,10 @@ struct AppFeature {
             return ackWorktree == worktreeID && tabID == attemptedID
           case .surfaceSplit(let ackWorktree, let surfaceID):
             return ackWorktree == worktreeID && surfaceID == attemptedID
+          case .worktreeNew(_, let boundID):
+            // The initial-tab bootstrap failed; the worktree-new ack must not
+            // ride the watchdog.
+            return boundID == worktreeID
           default:
             return false
           }

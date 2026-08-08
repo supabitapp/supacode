@@ -28,6 +28,9 @@ nonisolated struct LayoutRecord: Equatable, Codable, Sendable {
     // `try?` so origin rot can never take the live layout down with it.
     origin =
       (try? container.decodeIfPresent(TerminalLayoutSnapshot.self, forKey: .origin)) ?? nil
+    if origin == nil, container.contains(.origin) {
+      migrationLogger.error("Dropped an unreadable migration origin; rollback tooling loses it.")
+    }
   }
 }
 
@@ -37,6 +40,9 @@ nonisolated struct LayoutsFile: Equatable, Codable, Sendable {
 
   var schemaVersion: Int
   var worktrees: [String: LayoutRecord]
+  /// Worktree entries the tolerant decode dropped; never encoded. A non-zero
+  /// count marks the value as lossy, so writers must not persist it back.
+  var undecodedWorktreeCount = 0
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion
@@ -57,13 +63,66 @@ nonisolated struct LayoutsFile: Equatable, Codable, Sendable {
     // A dropped entry loses its session references to the orphan reaper; the
     // loss must at least be diagnosable.
     let dropped = raw.keys.filter { worktrees[$0] == nil }
+    undecodedWorktreeCount = dropped.count
     if !dropped.isEmpty {
       migrationLogger.error("Dropped unreadable layout entries: \(dropped.sorted())")
     }
   }
+
+  func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(schemaVersion, forKey: .schemaVersion)
+    try container.encode(worktrees, forKey: .worktrees)
+  }
 }
 
 nonisolated extension LayoutsFile {
+  /// What a launch-time read of `layouts.json` found. `.absent` is a fresh
+  /// start; `.unreadable` means bytes exist but could not be decoded, so a
+  /// caller must never treat the store as empty (the orphan reaper would
+  /// sweep every detached session).
+  enum DiskState {
+    case file(LayoutsFile)
+    case absent
+    case unreadable
+  }
+
+  /// Reads and decodes the persisted layouts. A still-v1 file (a deferred
+  /// migration) migrates in memory so readers see the real records while the
+  /// on-disk bytes survive for the next launch's migrator.
+  static func readFromDisk(url: URL = SupacodePaths.layoutsURL) -> DiskState {
+    @Dependency(\.settingsFileStorage) var storage
+    let data: Data
+    do {
+      data = try storage.load(url)
+    } catch {
+      guard LayoutsIncrementalWriter.isFileAbsent(error) else {
+        migrationLogger.error("layouts.json unreadable: \(error)")
+        return .unreadable
+      }
+      return .absent
+    }
+    if let file = try? JSONDecoder().decode(LayoutsFile.self, from: data) {
+      return .file(file)
+    }
+    guard
+      let raw = try? JSONDecoder().decode(
+        [String: FailableDecodable<TerminalLayoutSnapshot>].self, from: data
+      )
+    else {
+      migrationLogger.error("layouts.json is neither v2 nor v1; treating as unreadable.")
+      return .unreadable
+    }
+    let legacy = raw.compactMapValues(\.value)
+    // Any JSON object "decodes" as v1 with every element dropped; a non-empty
+    // file whose entries all rotted must read as unknown, never as empty.
+    guard legacy.count == raw.count || !legacy.isEmpty else {
+      migrationLogger.error("layouts.json v1 decode dropped every entry; treating as unreadable.")
+      return .unreadable
+    }
+    return .file(LayoutsMigrator.migrate(legacy))
+  }
+
   /// Every session identity persisted anywhere in the file, including the
   /// write-once v1 origin, so the orphan reaper can never kill a session a
   /// dropped or not-yet-migrated record still owns.
@@ -323,6 +382,12 @@ nonisolated extension LayoutsMigrator {
     let dropped = raw.keys.filter { legacy[$0] == nil }
     if !dropped.isEmpty {
       migrationLogger.error("Migration drops unreadable v1 entries: \(dropped.sorted())")
+    }
+    // Any JSON object "decodes" as v1 with every element dropped; rewriting
+    // that as an empty v2 file would erase data migration cannot vouch for.
+    guard legacy.count == raw.count || !legacy.isEmpty else {
+      migrationLogger.error("Every v1 entry is unreadable; leaving layouts.json untouched.")
+      return
     }
     let backupURL = url.appendingPathExtension("pre-tabs-per-split.bak")
     if !fileExists(backupURL) {

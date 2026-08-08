@@ -64,6 +64,10 @@ final class WorktreeContentHost {
   @ObservationIgnored private var bypassCloseConfirmationSurfaceIDs: Set<UUID> = []
   @ObservationIgnored private let dormantSessionWatchers = ZmxSessionWatcherRegistry()
   @ObservationIgnored private var pendingRunningScriptsProjectionEmit = false
+  /// Layout-diff bookkeeping for `reconcileContentLifecycle`: the content set
+  /// and its dormant subset as of the last sweep.
+  @ObservationIgnored private var lastSweptContentIDs: Set<UUID> = []
+  @ObservationIgnored private var lastDormantContentIDs: Set<UUID> = []
   @ObservationIgnored var hibernationAgentsBySurface: (() -> [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]])?
 
   /// Tabs running (or having run) a blocking script; every mutation schedules
@@ -954,6 +958,36 @@ final class WorktreeContentHost {
 
   /// A live content is going away: cancel its OSC bookkeeping, notify presence
   /// teardown, and keep the notification inspector from dead-ending.
+  /// Reconciles per-content side effects after any layout change: closed
+  /// contents release their bookkeeping (never-woken ones included, so their
+  /// close still emits), closed blocking-script tabs release their tracking,
+  /// and dormancy transitions fire the hibernate / wake handlers.
+  func reconcileContentLifecycle() {
+    guard let layout = layout() else { return }
+    let current = Set(layout.allContentIDs.map(\.rawValue))
+    let removed = lastSweptContentIDs.subtracting(current)
+    lastSweptContentIDs = current
+    for surfaceID in removed {
+      cleanupSurfaceState(for: surfaceID)
+    }
+    // A closed script tab must release its tracking, or the script can never
+    // rerun and quit keeps confirming forever.
+    for tabID in blockingScripts.keys where tab(withID: tabID) == nil {
+      handleBlockingScriptTabClosed(tabID: tabID)
+    }
+    let dormant = Set(current.filter { isDormantSurface($0) })
+    let hibernated = dormant.subtracting(lastDormantContentIDs)
+    let woken = lastDormantContentIDs.subtracting(dormant).intersection(current)
+    lastDormantContentIDs = dormant
+    if !hibernated.isEmpty {
+      handleSurfacesHibernated(hibernated)
+    }
+    for surfaceID in woken {
+      handleSurfaceWoken(surfaceID)
+    }
+    reconcileDormantWatchers()
+  }
+
   func cleanupSurfaceState(for surfaceID: UUID) {
     let hadUnseen = hasUnseenNotification(forSurfaceID: surfaceID)
     discardSurfaceBookkeeping(for: surfaceID)

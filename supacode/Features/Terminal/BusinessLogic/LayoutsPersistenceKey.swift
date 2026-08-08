@@ -17,29 +17,16 @@ nonisolated struct LayoutsKey: SharedKey {
     context _: LoadContext<LayoutsFile>,
     continuation: LoadContinuation<LayoutsFile>
   ) {
-    @Dependency(\.settingsFileStorage) var storage
-    let data: Data
-    do {
-      data = try storage.load(SupacodePaths.layoutsURL)
-    } catch {
-      // File does not exist yet — expected on first run.
-      continuation.resumeReturningInitialValue()
-      return
-    }
-    if let file = try? JSONDecoder().decode(LayoutsFile.self, from: data) {
+    // Absent and unreadable both serve the empty initial value here: this
+    // reader only seeds sidebar badges. Destructive consumers (the orphan
+    // reaper) read `LayoutsFile.readFromDisk()` directly and skip on
+    // `.unreadable`.
+    switch LayoutsFile.readFromDisk() {
+    case .file(let file):
       continuation.resume(returning: file)
-      return
+    case .absent, .unreadable:
+      continuation.resumeReturningInitialValue()
     }
-    if let raw = try? JSONDecoder().decode(
-      [String: FailableDecodable<TerminalLayoutSnapshot>].self, from: data
-    ) {
-      continuation.resume(returning: LayoutsMigrator.migrate(raw.compactMapValues(\.value)))
-      return
-    }
-    Self.logger.warning(
-      "Failed to decode layouts from \(SupacodePaths.layoutsURL.path(percentEncoded: false))"
-    )
-    continuation.resumeReturningInitialValue()
   }
 
   func subscribe(

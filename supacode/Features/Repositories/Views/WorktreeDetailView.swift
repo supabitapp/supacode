@@ -282,7 +282,8 @@ struct WorktreeDetailView: View {
           worktree: selectedWorktree,
           manager: terminalManager,
           terminalsStore: store.scope(state: \.terminals, action: \.terminals),
-          runtime: ContentRuntime.liveValue
+          runtime: ContentRuntime.liveValue,
+          forceAutoFocus: shouldFocusTerminal
         )
         .id(selectedWorktree.id)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -370,8 +371,9 @@ struct WorktreeDetailView: View {
   /// no notification object survives to carry the surface ID.
   private func selectToolbarSurface(_ worktreeID: Worktree.ID, _ surfaceID: UUID) {
     store.send(.repositories(.selectWorktree(worktreeID)))
-    if let host = terminalManager.hostIfExists(for: worktreeID) {
-      _ = host.focusSurface(id: surfaceID)
+    if let host = terminalManager.hostIfExists(for: worktreeID),
+      !host.focusSurface(id: surfaceID) {
+      SupaLogger("Terminal").warning("Failed to focus surface \(surfaceID) for worktree \(worktreeID).")
     }
   }
 

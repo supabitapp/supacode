@@ -878,10 +878,10 @@ extension LayoutFeature {
     return .run { [contentRuntime, sessionKiller] send in
       let kill = Task { await sessionKiller.kill(contentID, worktreeID) }
       await kill.value
-      guard !Task.isCancelled else {
-        await contentRuntime.confirmKill(contentID)
-        return
-      }
+      // Confirm straight on the runtime: a layout detached mid-kill (prune)
+      // would drop the action below and leak the tombstone forever.
+      await contentRuntime.confirmKill(contentID)
+      guard !Task.isCancelled else { return }
       await send(.runtime(.killConfirmed(id: contentID)))
     }
   }
