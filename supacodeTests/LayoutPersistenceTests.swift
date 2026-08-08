@@ -191,6 +191,25 @@ struct LayoutPersistenceTests {
     #expect(decoded.workingDirectory == "/w")
   }
 
+  @Test func overlaysLiveAgentRecordsPerContent() {
+    let paneID = PaneID()
+    let tabID = TabID()
+    let contentID = ContentID()
+    let record = TerminalLayoutSnapshot.SurfaceAgentRecord(agent: "claude", pids: [123], activity: "busy")
+    let result = LayoutPersistence.record(
+      for: layout(paneID: paneID, tabID: tabID, contentID: contentID),
+      runtime: ContentRuntime(),
+      agentsBySurface: [contentID.rawValue: [record]]
+    )
+    guard case .terminal(let state) = result.layout.panes[id: paneID]?.tabs[id: tabID]?.content.state else {
+      Issue.record("Expected a terminal payload.")
+      return
+    }
+    #expect(state.agents == [record])
+    // The stored working directory survives the overlay.
+    #expect(state.workingDirectory == "/stored")
+  }
+
   @Test func keepsStoredSnapshotWhenContentIsHibernated() {
     let paneID = PaneID()
     let tabID = TabID()
