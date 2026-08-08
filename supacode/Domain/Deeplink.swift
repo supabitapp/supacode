@@ -38,7 +38,7 @@ enum Deeplink: Equatable, Sendable {
     /// stays dumb. `nil` means the query item was omitted and should be preserved.
     case appearance(title: String?, color: String?)
     case tab(tabID: UUID)
-    case tabNew(input: String?, id: UUID?, title: String? = nil)
+    case tabNew(input: String?, id: UUID?, title: String? = nil, pane: UUID? = nil)
     case tabRename(tabID: UUID, title: String)
     case tabDestroy(tabID: UUID)
     case surface(tabID: UUID, surfaceID: UUID, input: String?)

@@ -124,7 +124,7 @@ supacode worktree appearance [-w <id>] [--title <title>] [--color <value>]  # Re
 ```
 supacode tab list [-w <id>] [-f]                                     # List tab UUIDs in worktree (-f = focused only).
 supacode tab focus [-w <id>] [-t <id>]                               # Focus tab.
-supacode tab new [-w <id>] [-i <cmd>] [-n <uuid>] [--title <title>] [--background]  # Create tab (prints UUID to stdout).
+supacode tab new [-w <id>] [-i <cmd>] [-n <uuid>] [--title <title>] [-p <surface-id>] [--background]  # Create tab (prints UUID to stdout).
 supacode tab rename [-w <id>] [-t <id>] --title <title>              # Rename tab (empty title clears override; script tabs are locked).
 supacode tab close [-w <id>] [-t <id>] [--background]                # Close tab.
 ```

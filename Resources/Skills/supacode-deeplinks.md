@@ -64,7 +64,7 @@ supacode://worktree/<worktree_id>/appearance?title=<title>&color=<value>
 
 ```
 supacode://worktree/<worktree_id>/tab/<tab_id>                     # Focus a tab.
-supacode://worktree/<worktree_id>/tab/new?input=<cmd>&id=<uuid>&title=<title>   # Create a tab.
+supacode://worktree/<worktree_id>/tab/new?input=<cmd>&id=<uuid>&title=<title>&pane=<surface_id>   # Create a tab; pane= anchors it in the pane hosting that surface.
 supacode://worktree/<worktree_id>/tab/<tab_id>/rename?title=<title>             # Set the title override; empty clears.
 supacode://worktree/<worktree_id>/tab/<tab_id>/destroy                          # Close a tab.
 supacode://worktree/<worktree_id>/tab/<tab_id>/surface/<surface_id>?input=<cmd> # Focus a surface.

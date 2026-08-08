@@ -303,13 +303,14 @@ final class WorktreeTerminalManager {
   }
 
   // swiftlint:disable:next function_parameter_count
-  private func scheduleTabCreation(
+  private func scheduleTabCreation(  // swiftlint:disable:this function_parameter_count
     in worktree: Worktree,
     runSetupScriptIfNew: Bool,
     input: String?,
     tabID: UUID?,
     customTitle: String?,
-    focusing: Bool
+    focusing: Bool,
+    anchor: UUID? = nil
   ) {
     Task {
       createTabAsync(
@@ -318,7 +319,8 @@ final class WorktreeTerminalManager {
         initialInput: input,
         tabID: tabID,
         customTitle: customTitle,
-        focusing: focusing
+        focusing: focusing,
+        anchor: anchor
       )
     }
   }
@@ -326,16 +328,16 @@ final class WorktreeTerminalManager {
   // swiftlint:disable:next cyclomatic_complexity
   private func handleTabCommand(_ command: TerminalClient.Command) -> Bool {
     switch command {
-    case .createTab(let worktree, let runSetupScriptIfNew, let id, let title, let focusing):
+    case .createTab(let worktree, let runSetupScriptIfNew, let id, let title, let focusing, let anchor):
       scheduleTabCreation(
         in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, input: nil,
-        tabID: id, customTitle: title, focusing: focusing)
+        tabID: id, customTitle: title, focusing: focusing, anchor: anchor)
     case .createTabWithInput(
-      let worktree, let input, let runSetupScriptIfNew, let id, let title, let focusing
+      let worktree, let input, let runSetupScriptIfNew, let id, let title, let focusing, let anchor
     ):
       scheduleTabCreation(
         in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, input: input,
-        tabID: id, customTitle: title, focusing: focusing)
+        tabID: id, customTitle: title, focusing: focusing, anchor: anchor)
     case .ensureInitialTab(let worktree, let runSetupScriptIfNew, let focusing):
       ensureInitialTab(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, focusing: focusing)
     case .stopRunScript(let worktree, let focusing):
@@ -771,7 +773,8 @@ final class WorktreeTerminalManager {
     initialInput: String? = nil,
     tabID: UUID? = nil,
     customTitle: String? = nil,
-    focusing: Bool = true
+    focusing: Bool = true,
+    anchor: UUID? = nil
   ) {
     let host = host(for: worktree) { runSetupScriptIfNew }
     // Mint upfront so a title-only request still has a rename target, keeping
@@ -788,8 +791,11 @@ final class WorktreeTerminalManager {
     let combinedInput = [setupInput, initialInput].compactMap { $0 }.joined()
     let launch: LaunchOverride? =
       combinedInput.isEmpty ? nil : LaunchOverride(initialInput: combinedInput)
-    let inheritedFrom = host.focusedTab?.content.id
-    let paneID = layout.focusedPaneID ?? layout.panes.first?.id ?? PaneID()
+    // A pane-addressed create anchors on the surface's pane and inherits its
+    // config; otherwise the focused pane and surface anchor as before.
+    let anchorTab = anchor.flatMap { layout.tab(containingContent: ContentID(rawValue: $0)) }
+    let inheritedFrom = anchorTab?.tab.content.id ?? host.focusedTab?.content.id
+    let paneID = anchorTab?.pane.id ?? layout.focusedPaneID ?? layout.panes.first?.id ?? PaneID()
     let spec = NewTabSpec(
       tabID: TabID(rawValue: mintedID),
       contentID: ContentID(rawValue: mintedID),

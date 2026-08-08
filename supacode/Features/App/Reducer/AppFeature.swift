@@ -2427,12 +2427,25 @@ struct AppFeature {
       return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .selectTab(worktree, tabID: TabID(rawValue: tabID))
       }
-    case .tabNew(let input, let id, let title):
+    case .tabNew(let input, let id, let title, let pane):
       // A new tab has no override to clear, so a blank title would be dropped silently.
       if let title, TabItem.normalizedCustomTitle(title) == nil {
         deeplinkLogger.warning("Rejecting blank tab title in worktree \(worktreeID)")
         state.alert = blankTabTitleAlert(
           message: "The tab title is blank. Omit the title to keep the terminal title.")
+        return .none
+      }
+      // A pane anchor that resolves nothing must fail loudly, not fall back
+      // to a pane the caller didn't ask for.
+      if let pane, !terminalClient.surfaceExistsInWorktree(worktreeID, pane) {
+        deeplinkLogger.warning("Rejecting unknown pane surface \(pane) in worktree \(worktreeID)")
+        state.alert = AlertState {
+          TextState("Pane not found")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState("No surface \(pane.uuidString) exists in this worktree to anchor the new tab.")
+        }
         return .none
       }
       // Reject explicit IDs that collide with an existing or in-flight tab, so a
@@ -2452,7 +2465,9 @@ struct AppFeature {
       }
       guard let input, !input.isEmpty else {
         let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
-          .createTab(worktree, runSetupScriptIfNew: true, id: id, title: title, focusing: !background)
+          .createTab(
+            worktree, runSetupScriptIfNew: true, id: id, title: title, focusing: !background,
+            anchor: pane)
         }
         return awaitingCompletion(
           effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
@@ -2470,7 +2485,8 @@ struct AppFeature {
           runSetupScriptIfNew: false,
           id: id,
           title: title,
-          focusing: !background
+          focusing: !background,
+          anchor: pane
         )
       }
       return awaitingCompletion(

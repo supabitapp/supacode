@@ -212,6 +212,26 @@ struct DeeplinkClientTests {
     )
   }
 
+  @Test func worktreeTabNewWithPaneAnchor() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    let pane = UUID()
+    let url = URL(string: "supacode://worktree/\(encoded)/tab/new?pane=\(pane.uuidString)")!
+    #expect(
+      parse(url)
+        == .worktree(
+          id: "/tmp/repo/wt-1",
+          action: .tabNew(input: nil, id: nil, pane: pane)
+        )
+    )
+  }
+
+  @Test func worktreeTabNewWithMalformedPaneFailsTheParse() {
+    let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+    // A silent fallback would land the tab in a pane the caller never named.
+    let url = URL(string: "supacode://worktree/\(encoded)/tab/new?pane=not-a-uuid")!
+    #expect(parse(url) == nil)
+  }
+
   @Test func worktreeTabRename() {
     let encoded = "%2Ftmp%2Frepo%2Fwt-1"
     let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!

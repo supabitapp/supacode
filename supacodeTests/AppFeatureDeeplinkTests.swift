@@ -1916,7 +1916,7 @@ struct AppFeatureDeeplinkTests {
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .tabNew(input: nil, id: nil))))
     let hasCreateTab = sent.value.contains(where: {
-      if case .createTab(let target, _, _, _, _) = $0 { return target.id == worktree.id }
+      if case .createTab(let target, _, _, _, _, _) = $0 { return target.id == worktree.id }
       return false
     })
     #expect(hasCreateTab)

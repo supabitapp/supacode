@@ -86,8 +86,8 @@ struct DeeplinkReferenceView: View {
     ),
     .init(
       url: "supacode://worktree/<worktree_id>/tab/new",
-      description: "Create a new tab.",
-      params: "?input=<cmd>&id=<uuid>&title=<title>"
+      description: "Create a new tab; pane= anchors it in the pane hosting that surface.",
+      params: "?input=<cmd>&id=<uuid>&title=<title>&pane=<surface_id>"
     ),
     .init(
       url: "supacode://worktree/<worktree_id>/tab/<tab_id>/rename?title=<title>",

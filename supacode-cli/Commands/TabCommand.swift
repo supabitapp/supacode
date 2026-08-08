@@ -81,11 +81,19 @@ extension TabCommand {
     @Option(name: .long, help: "Persistent title for the new tab.")
     var title: String?
 
+    @Option(
+      name: [.customShort("p"), .customLong("pane")],
+      help: "Surface UUID whose pane receives the new tab. Defaults to the focused pane.")
+    var pane: String?
+
     @OptionGroup var backgroundOption: BackgroundOption
 
     @OptionGroup var timeoutOption: TimeoutOption
 
     func validate() throws {
+      if let pane, UUID(uuidString: pane) == nil {
+        throw ValidationError("--pane must be a surface UUID.")
+      }
       // A new tab has no override to clear, so a blank title would be dropped silently.
       guard let title, title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
       throw ValidationError("--title cannot be blank. Omit it to keep the terminal title.")
@@ -100,7 +108,8 @@ extension TabCommand {
             worktreeID: wID,
             input: input,
             id: resolvedID,
-            title: title
+            title: title,
+            pane: pane
           )),
         timeoutSeconds: timeoutOption.timeout
       )

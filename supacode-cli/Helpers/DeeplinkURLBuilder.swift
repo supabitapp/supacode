@@ -43,12 +43,13 @@ nonisolated enum DeeplinkURLBuilder {
     "supacode://worktree/\(worktreeID)/tab/\(tabID)"
   }
 
-  static func tabNew(worktreeID: String, input: String?, id: String?, title: String?) -> String {
+  static func tabNew(worktreeID: String, input: String?, id: String?, title: String?, pane: String?) -> String {
     var url = "supacode://worktree/\(worktreeID)/tab/new"
     var params: [String] = []
     if let input { params.append("input=\(percentEncodeQueryValue(input))") }
     if let id { params.append("id=\(id)") }
     if let title { params.append("title=\(percentEncodeQueryValue(title))") }
+    if let pane { params.append("pane=\(pane)") }
     if !params.isEmpty { url += "?\(params.joined(separator: "&"))" }
     return url
   }

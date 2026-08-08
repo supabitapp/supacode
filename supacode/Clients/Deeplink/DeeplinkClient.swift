@@ -221,7 +221,16 @@ private nonisolated enum DeeplinkParser {
       let input = queryItems.first(where: { $0.name == "input" })?.value
       let id = queryItems.first(where: { $0.name == "id" })?.value.flatMap(UUID.init(uuidString:))
       let title = queryItems.first(where: { $0.name == "title" })?.value
-      return .worktree(id: worktreeID, action: .tabNew(input: input, id: id, title: title))
+      // Panes have no public identity; a surface UUID addresses the pane
+      // that hosts it. A malformed value fails the parse rather than falling
+      // back to a pane the caller did not ask for.
+      let rawPane = queryItems.first(where: { $0.name == "pane" })?.value
+      let pane = rawPane.flatMap(UUID.init(uuidString:))
+      if rawPane != nil, pane == nil {
+        logger.warning("Invalid pane surface UUID: \(rawPane ?? "")")
+        return nil
+      }
+      return .worktree(id: worktreeID, action: .tabNew(input: input, id: id, title: title, pane: pane))
     }
 
     guard let tabUUID = UUID(uuidString: thirdSegment) else {

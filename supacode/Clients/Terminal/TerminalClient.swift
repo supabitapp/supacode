@@ -41,7 +41,8 @@ struct TerminalClient {
       runSetupScriptIfNew: Bool,
       id: UUID? = nil,
       title: String? = nil,
-      focusing: Bool = true
+      focusing: Bool = true,
+      anchor: UUID? = nil
     )
     case createTabWithInput(
       Worktree,
@@ -49,7 +50,8 @@ struct TerminalClient {
       runSetupScriptIfNew: Bool,
       id: UUID? = nil,
       title: String? = nil,
-      focusing: Bool = true
+      focusing: Bool = true,
+      anchor: UUID? = nil
     )
     case ensureInitialTab(Worktree, runSetupScriptIfNew: Bool, focusing: Bool)
     case stopRunScript(Worktree, focusing: Bool = true)
