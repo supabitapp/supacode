@@ -186,9 +186,11 @@ nonisolated struct TabItem: Equatable, Identifiable, Codable, Sendable {
   var icon: String?
   var tintColor: RepositoryColor?
   var content: ContentSnapshot
-  /// Live-only: a script tab owns its title and refuses renames. Blocking
-  /// tabs are never persisted, so this stays off the wire.
-  var isTitleLocked = false
+  /// Live-only: a locked (blocking-script) tab refuses renames and shows the
+  /// lock marker for its whole life. Blocking tabs are never persisted, so this
+  /// stays off the wire. The running vs parked distinction is the terminal's
+  /// read-only state, not this flag.
+  var isLocked = false
 
   private enum CodingKeys: String, CodingKey {
     case id
@@ -206,7 +208,7 @@ nonisolated struct TabItem: Equatable, Identifiable, Codable, Sendable {
     icon: String? = nil,
     tintColor: RepositoryColor? = nil,
     content: ContentSnapshot,
-    isTitleLocked: Bool = false
+    isLocked: Bool = false
   ) {
     self.id = id
     self.title = title
@@ -214,7 +216,7 @@ nonisolated struct TabItem: Equatable, Identifiable, Codable, Sendable {
     self.icon = icon
     self.tintColor = tintColor
     self.content = content
-    self.isTitleLocked = isTitleLocked
+    self.isLocked = isLocked
   }
 
   init(from decoder: any Decoder) throws {

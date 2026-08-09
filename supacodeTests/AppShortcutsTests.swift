@@ -548,7 +548,7 @@ struct PaneWindowShortcutTests {
     )!
   }
 
-  private static func tab(title: String = "Tab", isTitleLocked: Bool = false) -> TabItem {
+  private static func tab(title: String = "Tab", isLocked: Bool = false) -> TabItem {
     TabItem(
       id: TabID(),
       title: title,
@@ -556,7 +556,7 @@ struct PaneWindowShortcutTests {
         id: ContentID(),
         state: .terminal(TerminalContentState(workingDirectory: "/tmp/pane-window-shortcut"))
       ),
-      isTitleLocked: isTitleLocked
+      isLocked: isLocked
     )
   }
 
@@ -592,7 +592,7 @@ struct PaneWindowShortcutTests {
   }
 
   @Test func renameIsSwallowedForATitleLockedTab() {
-    let pane = Self.pane(tabs: [Self.tab(isTitleLocked: true)])
+    let pane = Self.pane(tabs: [Self.tab(isLocked: true)])
     let event = Self.keyEvent(keyCode: kVK_ANSI_R, modifiers: [.control, .shift])
     #expect(
       PaneWindowShortcut.intent(for: event, pane: pane, overrides: [:], isWorktreeSelected: true)

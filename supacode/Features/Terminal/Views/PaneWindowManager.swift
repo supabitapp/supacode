@@ -69,7 +69,7 @@ enum PaneWindowShortcut {
       return .closeTab(contentID)
     }
     if matched(AppShortcuts.renameTab) {
-      guard !event.isARepeat, let tab = pane.selectedTab, !tab.isTitleLocked else { return .ignore }
+      guard !event.isARepeat, let tab = pane.selectedTab, !tab.isLocked else { return .ignore }
       return .beginRename(tab.id)
     }
     for (index, shortcut) in AppShortcuts.tabSelection.enumerated() where matched(shortcut) {
@@ -576,7 +576,7 @@ private struct WindowedPaneRootView: View {
         }
         .focusedSceneAction(
           \.renameTabAction,
-          enabled: pane.selectedTab.map { !$0.isTitleLocked } ?? false,
+          enabled: pane.selectedTab.map { !$0.isLocked } ?? false,
           token: pane.selectedTabID
         ) {
           guard windowIsKey(), let tabID = pane.selectedTabID else { return }

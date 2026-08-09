@@ -108,7 +108,7 @@ struct LayoutPersistenceTests {
                   )
                 )
               ),
-              isTitleLocked: true
+              isLocked: true
             ),
           ],
           selectedTabID: scriptTab
@@ -259,7 +259,7 @@ struct LayoutPersistenceTests {
     let tabID = TabID()
     let contentID = ContentID()
     var stored = layout(paneID: paneID, tabID: tabID, contentID: contentID)
-    stored.panes[id: paneID]?.tabs[id: tabID]?.isTitleLocked = true
+    stored.panes[id: paneID]?.tabs[id: tabID]?.isLocked = true
     stored.panes[id: paneID]?.tabs[id: tabID]?.content = ContentSnapshot(
       id: contentID,
       state: .terminal(
@@ -272,7 +272,7 @@ struct LayoutPersistenceTests {
 
     let result = LayoutPersistence.record(for: stored, runtime: ContentRuntime())
     let tab = result.layout.panes[id: paneID]?.tabs[id: tabID]
-    #expect(tab?.isTitleLocked == false)
+    #expect(tab?.isLocked == false)
     guard case .terminal(let state) = tab?.content.state else {
       Issue.record("Expected a terminal payload.")
       return

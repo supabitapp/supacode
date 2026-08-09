@@ -122,14 +122,14 @@ struct WorktreeContentHostTests {
     let host = makeHost(layout: singleTabLayout(contentID: surfaceID), runtime: runtime)
 
     host.trackBlockingScript(kind: .archive, tabID: tabID, launchDirectory: nil)
-    #expect(content.terminalChrome.isLocked == false)
+    #expect(content.terminalChrome.isReadOnly == false)
 
     host.handleBlockingScriptCommandFinished(tabID: tabID, exitCode: 0)
-    #expect(content.terminalChrome.isLocked)
+    #expect(content.terminalChrome.isReadOnly)
 
     // Re-running the script unlocks the parked shell's replacement.
     host.trackBlockingScript(kind: .archive, tabID: tabID, launchDirectory: nil)
-    #expect(content.terminalChrome.isLocked == false)
+    #expect(content.terminalChrome.isReadOnly == false)
   }
 }
 

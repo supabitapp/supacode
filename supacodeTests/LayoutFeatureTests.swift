@@ -1193,7 +1193,7 @@ struct LayoutFeatureTests {
     let harness = await makeHarness()
     let paneID = harness.paneID
     var locked = harness.store.state.layout
-    locked.panes[id: paneID]?.tabs[id: harness.tabID]?.isTitleLocked = true
+    locked.panes[id: paneID]?.tabs[id: harness.tabID]?.isLocked = true
     let bundle = makeStore(layout: locked)
     await bundle.store.send(.beginTabRename(id: harness.tabID))
     #expect(bundle.store.state.editingTabID == nil)
@@ -1846,7 +1846,7 @@ struct LayoutFeatureTests {
       $0.layout.panes[id: paneID]?.tabs[id: harness.tabID]?.customTitle = "Custom"
     }
     var locked = harness.store.state.layout
-    locked.panes[id: paneID]?.tabs[id: harness.tabID]?.isTitleLocked = true
+    locked.panes[id: paneID]?.tabs[id: harness.tabID]?.isLocked = true
     let bundle = makeStore(layout: locked)
     await bundle.store.send(.renameTab(id: harness.tabID, title: "Rejected"))
     await bundle.store.send(.runtime(.titleChanged(id: harness.contentID, title: "Shell Report")))

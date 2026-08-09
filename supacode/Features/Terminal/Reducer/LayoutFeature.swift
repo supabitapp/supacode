@@ -13,7 +13,7 @@ nonisolated struct NewTabSpec: Equatable, Sendable {
   /// Tab chrome for producer-styled tabs (blocking scripts).
   let icon: String?
   let tintColor: RepositoryColor?
-  let isTitleLocked: Bool
+  let isLocked: Bool
   let content: ContentState
   let geometry: ContentGeometry
   let select: Bool
@@ -26,7 +26,7 @@ nonisolated struct NewTabSpec: Equatable, Sendable {
     title: String,
     icon: String? = nil,
     tintColor: RepositoryColor? = nil,
-    isTitleLocked: Bool = false,
+    isLocked: Bool = false,
     content: ContentState,
     geometry: ContentGeometry,
     select: Bool = true,
@@ -37,7 +37,7 @@ nonisolated struct NewTabSpec: Equatable, Sendable {
     self.title = title
     self.icon = icon
     self.tintColor = tintColor
-    self.isTitleLocked = isTitleLocked
+    self.isLocked = isLocked
     self.content = content
     self.geometry = geometry
     self.select = select
@@ -269,7 +269,7 @@ struct LayoutFeature {
       case .renameTab(let tabID, let title):
         return reduceRenameTab(&state, tabID: tabID, title: title)
       case .beginTabRename(let tabID):
-        guard let tab = state.layout.pane(containingTab: tabID)?.tabs[id: tabID], !tab.isTitleLocked else {
+        guard let tab = state.layout.pane(containingTab: tabID)?.tabs[id: tabID], !tab.isLocked else {
           return .none
         }
         state.editingTabID = tabID
@@ -382,7 +382,7 @@ extension LayoutFeature {
       icon: spec.icon,
       tintColor: spec.tintColor,
       content: ContentSnapshot(id: identity.contentID, state: spec.content),
-      isTitleLocked: spec.isTitleLocked
+      isLocked: spec.isLocked
     )
     // Insert after the selection;
     // background tabs append so a run of them keeps its order.
@@ -696,7 +696,7 @@ extension LayoutFeature {
   private func reduceRenameTab(_ state: inout State, tabID: TabID, title: String) -> Effect<Action> {
     guard var pane = state.layout.pane(containingTab: tabID) else { return .none }
     // A script tab owns its title.
-    guard pane.tabs[id: tabID]?.isTitleLocked != true else { return .none }
+    guard pane.tabs[id: tabID]?.isLocked != true else { return .none }
     // Empty rename clears the override on every commit path.
     pane.tabs[id: tabID]?.customTitle = TabItem.normalizedCustomTitle(title)
     state.layout.panes[id: pane.id] = pane
@@ -816,7 +816,7 @@ extension LayoutFeature {
       icon: spec.icon,
       tintColor: spec.tintColor,
       content: ContentSnapshot(id: identity.contentID, state: spec.content),
-      isTitleLocked: spec.isTitleLocked
+      isLocked: spec.isLocked
     )
     state.layout.panes.append(Pane(id: paneID, tabs: [tab], selectedTabID: tab.id))
     if spec.select {
@@ -1038,7 +1038,7 @@ extension LayoutFeature {
     case .titleChanged(let contentID, let title):
       guard let located = state.layout.tab(containingContent: contentID) else { break }
       // A script tab owns its title; shell reports must not overwrite it.
-      guard !located.tab.isTitleLocked else { break }
+      guard !located.tab.isLocked else { break }
       // TUIs rewrite their title constantly; skip no-op writes so an unchanged
       // title does not re-render the tab strip on every report.
       guard located.tab.title != title else { break }

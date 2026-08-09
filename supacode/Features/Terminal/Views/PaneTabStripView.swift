@@ -376,7 +376,9 @@ private struct PaneTabView: View {
     let chrome = runtime.content(for: tab.content.id)?.chrome
     let isDormant = runtime.renderer(for: tab.content.id) == nil
     let progressDisplay = chrome?.progress
-    let isLocked = chrome?.isLocked == true
+    // The tab owns its lock (a blocking script's whole life), so the marker
+    // shows while the script runs, not only once it parks.
+    let isLocked = tab.isLocked
     // The trailing slot is a layout sibling, so it takes only the width it
     // needs and gives the rest to the title.
     HStack(spacing: TerminalTabBarMetrics.contentSpacing) {
@@ -633,7 +635,7 @@ private struct PaneTabView: View {
 
   @ViewBuilder
   private var contextMenuItems: some View {
-    if !tab.isTitleLocked {
+    if !tab.isLocked {
       Button("Rename Tab") { beginRename() }
       Divider()
     }
@@ -658,7 +660,7 @@ private struct PaneTabView: View {
   }
 
   private func beginRename() {
-    guard !tab.isTitleLocked else { return }
+    guard !tab.isLocked else { return }
     store.send(.beginTabRename(id: tab.id))
   }
 }

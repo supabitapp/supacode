@@ -50,7 +50,7 @@ enum LayoutPersistence {
     // decoded round-trip and the writer's no-op gate can hold.
     for paneIndex in stripped.panes.indices {
       for tabIndex in stripped.panes[paneIndex].tabs.indices {
-        stripped.panes[paneIndex].tabs[tabIndex].isTitleLocked = false
+        stripped.panes[paneIndex].tabs[tabIndex].isLocked = false
         guard case .terminal(let state) = stripped.panes[paneIndex].tabs[tabIndex].content.state,
           state.launch != nil
         else { continue }

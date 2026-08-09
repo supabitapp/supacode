@@ -84,7 +84,7 @@ final class WorktreeContentHost {
   @ObservationIgnored private(set) var completedBlockingScriptTabs: Set<TabID> = [] {
     didSet {
       for tabID in oldValue.symmetricDifference(completedBlockingScriptTabs) {
-        terminalChrome(for: tabID)?.isLocked = completedBlockingScriptTabs.contains(tabID)
+        terminalChrome(for: tabID)?.isReadOnly = completedBlockingScriptTabs.contains(tabID)
       }
     }
   }

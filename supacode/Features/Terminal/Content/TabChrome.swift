@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Live, observable chrome a content contributes to its tab in the strip: an
 /// accessory view next to the icon slot, activity for the shimmer, progress
-/// for the stripe, and the read-only lock marker. Owned by the content so
+/// for the stripe, and read-only input state. Owned by the content so
 /// content-specific state never leaks into the layout reducer; the strip
 /// reads it as an observable leaf, bounding invalidation to one tab.
 @MainActor
@@ -13,9 +13,9 @@ protocol TabChrome: AnyObject {
   var isWorking: Bool { get }
   /// Drives the top-of-tab progress stripe.
   var progress: TerminalTabProgressDisplay? { get }
-  /// Shows the trailing lock marker (a completed blocking script's parked
-  /// shell).
-  var isLocked: Bool { get }
+  /// Whether the terminal refuses input (a completed blocking script's parked
+  /// shell). The tab's own `isLocked` drives the visible lock marker.
+  var isReadOnly: Bool { get }
 }
 
 /// Terminal chrome, written by the content host and the agent-presence
@@ -26,7 +26,7 @@ final class TerminalTabChrome: TabChrome {
   var agents: [AgentPresenceFeature.AgentInstance] = []
   var isWorking = false
   var progress: TerminalTabProgressDisplay?
-  var isLocked = false
+  var isReadOnly = false
 
   var accessory: AnyView? {
     guard !agents.isEmpty else { return nil }

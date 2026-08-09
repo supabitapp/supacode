@@ -159,7 +159,7 @@ final class TerminalContent: TabContent {
   // is the gate, NOT Ghostty's read-only bit, which a user can toggle on a
   // genuinely busy terminal.
   var isBusy: Bool {
-    guard let surfaceView, !terminalChrome.isLocked else { return false }
+    guard let surfaceView, !terminalChrome.isReadOnly else { return false }
     return surfaceView.needsCloseConfirmation
   }
 

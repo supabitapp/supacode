@@ -367,7 +367,7 @@ final class WorktreeTerminalManager {
       sendLayout(worktree.id, .beginTabRename(id: target))
     case .renameTab(let worktree, let tabID, let title):
       let tab = layoutState(for: worktree.id)?.layout.pane(containingTab: tabID)?.tabs[id: tabID]
-      let applied = tab != nil && tab?.isTitleLocked != true
+      let applied = tab != nil && tab?.isLocked != true
       if applied {
         sendLayout(worktree.id, .renameTab(id: tabID, title: title))
       }
@@ -1044,7 +1044,7 @@ final class WorktreeTerminalManager {
       title: kind.tabTitle,
       icon: kind.tabIcon,
       tintColor: kind.tabColor,
-      isTitleLocked: true,
+      isLocked: true,
       content: .terminal(
         TerminalContentState(
           workingDirectory: nil,
@@ -1538,7 +1538,7 @@ final class WorktreeTerminalManager {
   }
 
   func tabCanRename(worktreeID: Worktree.ID, tabID: TabID) -> Bool {
-    layoutState(for: worktreeID)?.layout.pane(containingTab: tabID)?.tabs[id: tabID]?.isTitleLocked == false
+    layoutState(for: worktreeID)?.layout.pane(containingTab: tabID)?.tabs[id: tabID]?.isLocked == false
   }
 
   func surfaceExists(worktreeID: Worktree.ID, tabID: TabID, surfaceID: UUID) -> Bool {
