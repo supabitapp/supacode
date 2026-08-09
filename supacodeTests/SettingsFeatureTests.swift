@@ -698,6 +698,48 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.shortcutOverrides[.newWorktree] == nil)
   }
 
+  @Test(.dependencies) func updateShortcutIgnoresNonCustomizableShortcut() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_K), modifiers: [.command])
+    await store.send(.updateShortcut(id: .closeTab, override: override))
+    #expect(settingsFile.global.shortcutOverrides[.closeTab] == nil)
+  }
+
+  @Test(.dependencies) func toggleShortcutEnabledIgnoresNonCustomizableShortcut() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    await store.send(.toggleShortcutEnabled(id: .closeTab, enabled: false))
+    #expect(settingsFile.global.shortcutOverrides[.closeTab] == nil)
+  }
+
+  @Test(.dependencies) func nonCustomizableGuardLeavesASeededOverrideUntouched() async {
+    // A stale persisted override must be preserved verbatim, not deleted.
+    let stale = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_K), modifiers: [.command])
+    var initialSettings = GlobalSettings.default
+    initialSettings.shortcutOverrides = [.closeTab: stale]
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.toggleShortcutEnabled(id: .closeTab, enabled: false))
+    await store.send(.updateShortcut(id: .closeTab, override: nil))
+    #expect(settingsFile.global.shortcutOverrides[.closeTab] == stale)
+  }
+
   @Test(.dependencies) func resetAllShortcutsClearsOverrides() async {
     let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_K), modifiers: [.command])
     var initialSettings = GlobalSettings.default

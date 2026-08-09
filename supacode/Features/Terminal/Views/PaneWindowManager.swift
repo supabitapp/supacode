@@ -1,6 +1,7 @@
 import AppKit
 import ComposableArchitecture
 import OrderedCollections
+import Sharing
 import SupacodeSettingsShared
 import SwiftUI
 
@@ -12,13 +13,92 @@ final class PaneWindow: NSWindow, WindowTintColorProviding {
   /// target it, whatever worktree is selected.
   var hostedWorktreeID: Worktree.ID?
   var hostedPaneID: PaneID?
-  /// Closes the pane's selected tab. The close-terminal chord routes here
-  /// even through the menu's Close Window fallback, so only the close button
-  /// exits window mode.
+  /// Closes the pane's selected tab; serves the menu's Close Window item so
+  /// only the red close button exits window mode.
   var closeSelectedTab: (() -> Void)?
   /// This pane's surface background, so the chrome never wears the selected
   /// worktree's color.
   var tintColor: (() -> NSColor?)?
+  /// Matches app shortcut chords before normal dispatch. The menu's
+  /// FocusedValue-gated items can lose their published actions while an
+  /// AppKit-owned window is key, so chords are handled here deterministically.
+  var performShortcut: ((NSEvent) -> Bool)?
+
+  override func sendEvent(_ event: NSEvent) {
+    if event.type == .keyDown, performShortcut?(event) == true { return }
+    super.sendEvent(event)
+  }
+
+}
+
+/// Pane-scoped chord resolution, pure so tests can drive it with synthesized
+/// events.
+enum PaneWindowShortcut {
+  enum Intent: Equatable {
+    case exitWindowMode
+    case newTab(ContentID)
+    case closeTab(ContentID)
+    case beginRename(TabID)
+    case selectTab(TabID)
+    case runScript
+    case stopRunScripts
+    /// Matched but not actionable; consumed so the chord cannot leak through.
+    case ignore
+  }
+
+  static func intent(
+    for event: NSEvent,
+    pane: Pane,
+    overrides: [AppShortcutID: AppShortcutOverride],
+    isWorktreeSelected: Bool
+  ) -> Intent? {
+    // Chords carry at least one of these; anything else is typing for the surface.
+    guard !event.modifierFlags.isDisjoint(with: [.command, .control, .option]) else { return nil }
+    func matched(_ shortcut: AppShortcut) -> Bool {
+      shortcut.effective(from: overrides)?.matches(event) == true
+    }
+    if matched(AppShortcuts.toggleWindowMode) {
+      return event.isARepeat ? .ignore : .exitWindowMode
+    }
+    if matched(AppShortcuts.newTerminalTab) {
+      guard !event.isARepeat, let contentID = pane.selectedTab?.content.id else { return .ignore }
+      return .newTab(contentID)
+    }
+    if matched(AppShortcuts.closeTab) {
+      guard !event.isARepeat, let contentID = pane.selectedTab?.content.id else { return .ignore }
+      return .closeTab(contentID)
+    }
+    if matched(AppShortcuts.renameTab) {
+      guard !event.isARepeat, let tab = pane.selectedTab, !tab.isTitleLocked else { return .ignore }
+      return .beginRename(tab.id)
+    }
+    for (index, shortcut) in AppShortcuts.tabSelection.enumerated() where matched(shortcut) {
+      guard !event.isARepeat, !pane.tabs.isEmpty else { return .ignore }
+      // Clamped to the strip, matching the main window's semantics.
+      return .selectTab(pane.tabs[min(index + 1, pane.tabs.count) - 1].id)
+    }
+    let isRunScript = matched(AppShortcuts.runScript)
+    let isStopRunScript = matched(AppShortcuts.stopRunScript)
+    if isRunScript || isStopRunScript {
+      // Run scripts act on the selected worktree; consuming (not falling
+      // through) keeps the chord off another worktree's script.
+      guard !event.isARepeat, isWorktreeSelected else { return .ignore }
+      return isRunScript ? .runScript : .stopRunScripts
+    }
+    // Splits, neighbor focus, zoom, and equalize are unavailable in a pane
+    // window; consume them so the menu cannot apply them to the selected
+    // worktree's layout instead.
+    let unavailable = [
+      AppShortcuts.splitRight, AppShortcuts.splitLeft, AppShortcuts.splitDown, AppShortcuts.splitUp,
+      AppShortcuts.focusSplitLeft, AppShortcuts.focusSplitRight,
+      AppShortcuts.focusSplitUp, AppShortcuts.focusSplitDown,
+      AppShortcuts.toggleSplitZoom, AppShortcuts.equalizeSplits,
+    ]
+    if unavailable.contains(where: matched) {
+      return .ignore
+    }
+    return nil
+  }
 }
 
 /// Owns the windowed-pane windows: one per pane in window mode, reconciled
@@ -38,6 +118,7 @@ final class PaneWindowManager {
   var ghosttyShortcuts: GhosttyShortcutManager?
   var commandKeyObserver: CommandKeyObserver?
 
+  @Shared(.settingsFile) private var settingsFile: SettingsFile
   private var controllers: [Key: PaneWindowController] = [:]
   private var cascadePoint = NSPoint.zero
   /// The most recent live, non-windowed focused pane per worktree; where
@@ -90,6 +171,7 @@ final class PaneWindowManager {
         continue
       }
       controllers[key] = controller
+      beginHeaderTracking(for: key)
       controller.showWindow(nil)
     }
   }
@@ -180,6 +262,68 @@ final class PaneWindowManager {
     terminalManager?.sendLayout(key.worktreeID, .focusPane(.pane(target)))
   }
 
+  /// Dispatches a key pane window's chords to pane-scoped actions. Returns
+  /// `true` when the event was consumed.
+  private func handleShortcut(_ event: NSEvent, worktreeID: Worktree.ID, paneID: PaneID) -> Bool {
+    guard let terminalManager else { return false }
+    // Plain typing never matches a chord; bail before touching the store.
+    guard !event.modifierFlags.isDisjoint(with: [.command, .control, .option]) else { return false }
+    guard let pane = terminalManager.layoutState(for: worktreeID)?.layout.panes[id: paneID] else {
+      // The window outlived its pane; consuming here would deaden every chord.
+      Self.logger.error("Pane window \(paneID.rawValue) has no pane in \(worktreeID); passing the chord through.")
+      return false
+    }
+    let isWorktreeSelected =
+      terminalManager.appStore?.withState { $0.repositories.selectedWorktreeID } == worktreeID
+    let intent = PaneWindowShortcut.intent(
+      for: event,
+      pane: pane,
+      overrides: settingsFile.global.shortcutOverrides,
+      isWorktreeSelected: isWorktreeSelected
+    )
+    guard let intent else { return false }
+    switch intent {
+    case .exitWindowMode:
+      terminalManager.sendLayout(worktreeID, .exitWindowMode(paneID: paneID))
+    case .newTab(let contentID):
+      terminalManager.sendLayout(worktreeID, .contentRequestedNewTab(content: contentID))
+    case .closeTab(let contentID):
+      terminalManager.sendLayout(worktreeID, .contentRequestedClose(content: contentID, scope: .tab))
+    case .beginRename(let tabID):
+      terminalManager.sendLayout(worktreeID, .beginTabRename(id: tabID))
+    case .selectTab(let tabID):
+      terminalManager.sendLayout(worktreeID, .wakeTab(id: tabID))
+      terminalManager.sendLayout(worktreeID, .selectTab(id: tabID))
+    case .runScript:
+      terminalManager.appStore?.send(.runScript)
+    case .stopRunScripts:
+      terminalManager.appStore?.send(.stopRunScripts)
+    case .ignore:
+      break
+    }
+    return true
+  }
+
+  /// Recomputes the window's header line under observation tracking and
+  /// re-arms on every change, so renames land without any store read in a
+  /// view body.
+  private func beginHeaderTracking(for key: Key) {
+    guard let model = controllers[key]?.headerModel, let store = terminalManager?.appStore else { return }
+    let title = withObservationTracking {
+      Self.headerInfo(for: key.worktreeID, in: store.repositories)
+    } onChange: { [weak self] in
+      Task { @MainActor [weak self] in
+        // Same-model check: a torn-down and reopened window would otherwise
+        // fork a second tracking loop for the same key.
+        guard let self, self.controllers[key]?.headerModel === model else { return }
+        self.beginHeaderTracking(for: key)
+      }
+    }
+    if model.title != title {
+      model.title = title
+    }
+  }
+
   /// The header's "repository / worktree" line, mirroring the notification
   /// pane's section titles.
   private static func headerInfo(for worktreeID: Worktree.ID, in repositories: RepositoriesFeature.State) -> String {
@@ -240,11 +384,15 @@ final class PaneWindowManager {
       else { return nil }
       return terminalManager.surfaceBackground(forContent: contentID)
     }
+    window.performShortcut = { [weak self] event in
+      self?.handleShortcut(event, worktreeID: worktreeID, paneID: paneID) ?? false
+    }
     window.minSize = NSSize(width: 320, height: 240)
     window.title = terminalManager.layoutState(for: worktreeID)?.layout.panes[id: paneID]
       .flatMap(WindowedPaneRootView.title(for:)) ?? "Terminal"
     window.center()
     cascadePoint = window.cascadeTopLeft(from: cascadePoint)
+    let headerModel = PaneWindowHeaderModel()
     let root = WindowedPaneRootView(
       store: layoutStore,
       paneID: paneID,
@@ -255,18 +403,18 @@ final class PaneWindowManager {
       commandKeyObserver: commandKeyObserver,
       windowIsKey: { [weak window] in window?.isKeyWindow == true },
       updateWindowTitle: { [weak window] title in window?.title = title },
-      headerInfo: { [weak terminalManager] in
-        terminalManager?.appStore?.withState { state in
-          Self.headerInfo(for: worktreeID, in: state.repositories)
-        } ?? ""
-      }
+      header: headerModel
     )
-    let hostingView = NSHostingView(rootView: root)
+    let hostingView = PaneWindowHostingView(rootView: root)
     // Full-size content: the header row occupies the titlebar band itself.
     hostingView.safeAreaRegions = []
+    // Let the window own its size; the hosting view would otherwise drive
+    // the window frame from the content's reported bounds.
+    hostingView.sizingOptions = []
     window.contentView = hostingView
     return PaneWindowController(
       window: window,
+      headerModel: headerModel,
       onCloseRequested: { [weak terminalManager] in
         terminalManager?.sendLayout(worktreeID, .exitWindowMode(paneID: paneID))
       },
@@ -280,21 +428,32 @@ final class PaneWindowManager {
   }
 }
 
+/// The header line a pane window renders; the manager rewrites it under
+/// observation tracking so renames land without store reads in a view body.
+@MainActor
+@Observable
+final class PaneWindowHeaderModel {
+  var title = ""
+}
+
 /// A pane window's controller: the close button exits window mode through the
 /// reducer, and key, occlusion, and miniaturization changes re-derive surface
 /// activity.
 @MainActor
 private final class PaneWindowController: NSWindowController, NSWindowDelegate {
+  let headerModel: PaneWindowHeaderModel
   private let onCloseRequested: () -> Void
   private let onKeyChanged: (Bool) -> Void
   private let onActivityChanged: () -> Void
 
   init(
     window: NSWindow,
+    headerModel: PaneWindowHeaderModel,
     onCloseRequested: @escaping () -> Void,
     onKeyChanged: @escaping (Bool) -> Void,
     onActivityChanged: @escaping () -> Void
   ) {
+    self.headerModel = headerModel
     self.onCloseRequested = onCloseRequested
     self.onKeyChanged = onKeyChanged
     self.onActivityChanged = onActivityChanged
@@ -334,12 +493,29 @@ private final class PaneWindowController: NSWindowController, NSWindowDelegate {
 
   func tearDown() {
     window?.delegate = nil
-    close()
     // Release the content tree, not just the window: a retained NSHostingView
     // keeps its focused values and shortcuts registered app-wide, shadowing
     // the live windows' publications.
     window?.contentView = nil
+    // The window object survives `close()`; disarm its callbacks so a stray
+    // event cannot dispatch actions for a pane the manager already dropped.
+    if let paneWindow = window as? PaneWindow {
+      paneWindow.performShortcut = nil
+      paneWindow.closeSelectedTab = nil
+      paneWindow.tintColor = nil
+    }
+    close()
   }
+}
+
+/// Even with empty `sizingOptions`, `NSHostingView` re-applies its content's
+/// ideal size to the window from its window-did-layout hook, and a
+/// full-size-content window's ideal tracks the whole frame, so every layout
+/// pass grows the window by one titlebar height. Shadowing the hook's
+/// selector lands the notification in a no-op; the window's frame is the
+/// user's.
+private final class PaneWindowHostingView: NSHostingView<WindowedPaneRootView> {
+  @objc private func windowDidLayout() {}
 }
 
 /// The window's root: the pane strip and content in `.windowed` context, gone
@@ -358,8 +534,8 @@ private struct WindowedPaneRootView: View {
   /// rather than act while another window is key.
   let windowIsKey: () -> Bool
   let updateWindowTitle: (String) -> Void
-  /// Resolves the header's repository and worktree line at render time.
-  let headerInfo: () -> String
+  /// The manager-maintained repository and worktree line.
+  let header: PaneWindowHeaderModel
 
   var body: some View {
     // Re-read config-derived colors on every Ghostty config reload.
@@ -367,7 +543,7 @@ private struct WindowedPaneRootView: View {
     Group {
       if let pane = store.layout.panes[id: paneID], store.windowedPaneIDs.contains(paneID) {
         VStack(spacing: 0) {
-          PaneWindowHeaderView(title: headerInfo())
+          PaneWindowHeaderView(title: header.title)
           PaneStripView(
             pane: pane,
             windowedPaneIDs: [],
@@ -517,9 +693,9 @@ private struct PaneWindowHeaderView: View {
       .foregroundStyle(.secondary)
       .lineLimit(1)
       .frame(maxWidth: .infinity)
-      // Clear the traffic lights on the leading edge.
+      // Symmetric inset clears the traffic lights and keeps the line centered.
       .padding(.horizontal, 80)
-      .frame(height: 28)
+      .frame(minHeight: 28)
       .allowsHitTesting(false)
       .accessibilityHidden(true)
   }

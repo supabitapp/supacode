@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import CustomDump
+import IdentifiedCollections
 import SwiftUI
 import Testing
 
@@ -74,12 +75,13 @@ struct AppShortcutsTests {
     #expect(AppShortcuts.worktreeSwitcher.effective(from: overrides) == nil)
   }
 
-  @Test func matchesIsAlwaysFalseForSpecialKeyShortcuts() {
-    // Shortcuts built from a bare key equivalent (⌘⌫, ⌘⏎, ...) carry no key code, so
-    // `matches` reports false rather than guessing. Pinned so a future caller does not
-    // read the silent no-match as a bug.
+  @Test func matchesResolvesSpecialKeyShortcutsThroughTheFixedTable() {
+    // Shortcuts built from a bare key equivalent (⌘⌫, ⌘⏎, ...) carry no key
+    // code; the fixed special-key table supplies it so pane windows can match
+    // arrow and return chords.
     let event = Self.keyEvent(keyCode: kVK_Delete, modifiers: .command)
-    #expect(AppShortcuts.archiveWorktree.matches(event) == false)
+    #expect(AppShortcuts.archiveWorktree.matches(event))
+    #expect(AppShortcuts.archiveWorktree.matches(Self.keyEvent(keyCode: kVK_ANSI_P, modifiers: .command)) == false)
   }
 
   @Test func matchesFollowsRebindOntoAKeypadKey() {
@@ -153,84 +155,31 @@ struct AppShortcutsTests {
     expectNoDifference(displays[3], "⌘4")
   }
 
-  @Test func tabSelectionGhosttyKeybindArgumentsMatchExpected() {
-    expectNoDifference(
-      AppShortcuts.tabSelectionGhosttyKeybindArguments(from: [:]),
-      [
-        "--keybind=ctrl+1=goto_tab:1",
-        "--keybind=ctrl+digit_1=goto_tab:1",
-        "--keybind=ctrl+2=goto_tab:2",
-        "--keybind=ctrl+digit_2=goto_tab:2",
-        "--keybind=ctrl+3=goto_tab:3",
-        "--keybind=ctrl+digit_3=goto_tab:3",
-        "--keybind=ctrl+4=goto_tab:4",
-        "--keybind=ctrl+digit_4=goto_tab:4",
-        "--keybind=ctrl+5=goto_tab:5",
-        "--keybind=ctrl+digit_5=goto_tab:5",
-        "--keybind=ctrl+6=goto_tab:6",
-        "--keybind=ctrl+digit_6=goto_tab:6",
-        "--keybind=ctrl+7=goto_tab:7",
-        "--keybind=ctrl+digit_7=goto_tab:7",
-        "--keybind=ctrl+8=goto_tab:8",
-        "--keybind=ctrl+digit_8=goto_tab:8",
-        "--keybind=ctrl+9=goto_tab:9",
-        "--keybind=ctrl+digit_9=goto_tab:9",
-      ]
-    )
-  }
-
-  @Test func ghosttyCLIArgumentsKeepWorktreeUnbindsAndTabBinds() {
-    let arguments = AppShortcuts.ghosttyCLIKeybindArguments
+  @Test func ghosttyKeybindConfigLinesUnbindWorktreeSelection() {
+    let lines = AppShortcuts.ghosttyKeybindConfigLines(from: [:])
 
     for shortcut in AppShortcuts.worktreeSelection {
-      #expect(arguments.contains(shortcut.ghosttyUnbindArgument))
-    }
-
-    for argument in AppShortcuts.tabSelectionGhosttyKeybindArguments(from: [:]) {
-      #expect(arguments.contains(argument))
-    }
-
-    for argument in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].map({ "--keybind=ctrl+digit_\($0)=unbind" }) {
-      #expect(arguments.contains(argument) == false)
+      guard let line = shortcut.ghosttyUnbindConfigLine else {
+        Issue.record("\(shortcut.displayName) has no unbind line")
+        continue
+      }
+      #expect(lines.contains(line))
     }
   }
 
-  // MARK: - Tab selection honors overrides.
-
-  @Test func tabSelectionOmitsDisabledWorktreeSelection() {
-    let arguments = AppShortcuts.tabSelectionGhosttyKeybindArguments(
-      from: [.selectWorktree(6): .disabled]
-    )
-    // The disabled slot contributes no goto_tab binding, so ⌃6 reaches the terminal.
-    #expect(arguments.contains("--keybind=ctrl+6=goto_tab:6") == false)
-    #expect(arguments.contains("--keybind=ctrl+digit_6=goto_tab:6") == false)
-    // Other slots are unaffected.
-    #expect(arguments.contains("--keybind=ctrl+5=goto_tab:5"))
+  @Test func ghosttyKeybindConfigLinesReleaseDisabledWorktreeChordToTerminal() {
+    let lines = AppShortcuts.ghosttyKeybindConfigLines(from: [.selectWorktree(6): .disabled])
+    // No unbind remains, so a user-configured ⌃6 terminal binding keeps working.
+    #expect(lines.contains { $0.hasPrefix("keybind = ctrl+6=") } == false)
+    #expect(lines.contains { $0 == AppShortcuts.selectWorktree6.ghosttyUnbindConfigLine } == false)
   }
 
-  @Test func tabSelectionFollowsRemappedWorktreeSelection() {
+  @Test func ghosttyKeybindConfigLinesMoveRemappedWorktreeChord() {
     let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_J), modifiers: [.command])
-    let arguments = AppShortcuts.tabSelectionGhosttyKeybindArguments(
-      from: [.selectWorktree(1): override]
-    )
-    // The goto_tab binding moves to the remapped chord; the default ⌃1 is released.
-    #expect(arguments.contains("--keybind=super+j=goto_tab:1"))
-    #expect(arguments.contains("--keybind=ctrl+1=goto_tab:1") == false)
-    #expect(arguments.contains("--keybind=ctrl+digit_1=goto_tab:1") == false)
-  }
-
-  @Test func ghosttyCLIArgumentsReleaseDisabledWorktreeChordToTerminal() {
-    let arguments = AppShortcuts.ghosttyCLIKeybindArguments(from: [.selectWorktree(6): .disabled])
-    // Neither a goto_tab binding nor an unbind remains, so ⌃6 is delivered to the terminal.
-    #expect(arguments.contains { $0.hasPrefix("--keybind=ctrl+6=") } == false)
-    #expect(arguments.contains(AppShortcuts.selectWorktree6.ghosttyUnbindArgument) == false)
-  }
-
-  @Test func ghosttyCLIArgumentsMoveRemappedWorktreeChord() {
-    let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_J), modifiers: [.command])
-    let arguments = AppShortcuts.ghosttyCLIKeybindArguments(from: [.selectWorktree(1): override])
-    #expect(arguments.contains("--keybind=super+j=goto_tab:1"))
-    #expect(arguments.contains { $0.hasPrefix("--keybind=ctrl+1=") } == false)
+    let lines = AppShortcuts.ghosttyKeybindConfigLines(from: [.selectWorktree(1): override])
+    // The remapped chord is claimed from the terminal; the default ⌃1 is released.
+    #expect(lines.contains("keybind = super+j=unbind"))
+    #expect(lines.contains { $0.hasPrefix("keybind = ctrl+1=") } == false)
   }
 
   // MARK: - Shortcut identity.
@@ -261,9 +210,10 @@ struct AppShortcutsTests {
   }
 
   @Test func toggleWindowModeShortcutUnbindsInGhostty() {
-    #expect(AppShortcuts.toggleWindowMode.ghosttyUnbindArgument == "--keybind=shift+super+m=unbind")
+    #expect(AppShortcuts.toggleWindowMode.ghosttyUnbindConfigLine == "keybind = shift+super+m=unbind")
     #expect(
-      AppShortcuts.ghosttyCLIKeybindArguments.contains(AppShortcuts.toggleWindowMode.ghosttyUnbindArgument)
+      AppShortcuts.ghosttyKeybindConfigLines(from: [:])
+        .contains { $0 == AppShortcuts.toggleWindowMode.ghosttyUnbindConfigLine }
     )
   }
 
@@ -288,8 +238,23 @@ struct AppShortcutsTests {
   }
 
   @Test func renameTabShortcutUnbindsInGhostty() {
-    #expect(AppShortcuts.renameTab.ghosttyUnbindArgument == "--keybind=ctrl+shift+r=unbind")
-    #expect(AppShortcuts.ghosttyCLIKeybindArguments.contains(AppShortcuts.renameTab.ghosttyUnbindArgument))
+    #expect(AppShortcuts.renameTab.ghosttyUnbindConfigLine == "keybind = ctrl+shift+r=unbind")
+    #expect(
+      AppShortcuts.ghosttyKeybindConfigLines(from: [:])
+        .contains { $0 == AppShortcuts.renameTab.ghosttyUnbindConfigLine }
+    )
+  }
+
+  // MARK: - Non-customizable shortcuts.
+
+  @Test func closeTabIsNotCustomizable() {
+    #expect(AppShortcuts.closeTab.isCustomizable == false)
+  }
+
+  @Test func effectiveIgnoresOverridesForNonCustomizableShortcut() {
+    let rebound = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_K), modifiers: [.command])
+    #expect(AppShortcuts.closeTab.effective(from: [.closeTab: rebound])?.display == "⌘W")
+    #expect(AppShortcuts.closeTab.effective(from: [.closeTab: .disabled])?.display == "⌘W")
   }
 
   // MARK: - Effective shortcut resolution.
@@ -308,15 +273,15 @@ struct AppShortcutsTests {
     #expect(result?.display == "⌘⇧R")
   }
 
-  @Test func ghosttyCLIArgumentsWithOverrides() {
+  @Test func ghosttyKeybindConfigLinesWithOverrides() {
     let override = AppShortcutOverride(
       keyCode: UInt16(kVK_ANSI_K),
       modifiers: [.command]
     )
-    let args = AppShortcuts.ghosttyCLIKeybindArguments(from: [.newWorktree: override])
+    let lines = AppShortcuts.ghosttyKeybindConfigLines(from: [.newWorktree: override])
     // The override should produce an unbind for super+k instead of super+n.
-    #expect(args.contains("--keybind=super+k=unbind"))
-    #expect(!args.contains("--keybind=super+n=unbind"))
+    #expect(lines.contains("keybind = super+k=unbind"))
+    #expect(!lines.contains("keybind = super+n=unbind"))
   }
 
   // MARK: - Groups.
@@ -414,21 +379,20 @@ struct AppShortcutsTests {
     )
   }
 
-  // MARK: - Ghostty unbind argument format.
+  // MARK: - Ghostty unbind config line format.
 
-  @Test func ghosttyUnbindArgument() {
-    let shortcut = AppShortcuts.openSettings
-    #expect(shortcut.ghosttyUnbindArgument.hasPrefix("--keybind="))
-    #expect(shortcut.ghosttyUnbindArgument.hasSuffix("=unbind"))
+  @Test func ghosttyUnbindConfigLine() {
+    let line = AppShortcuts.openSettings.ghosttyUnbindConfigLine
+    #expect(line?.hasPrefix("keybind = ") == true)
+    #expect(line?.hasSuffix("=unbind") == true)
   }
 
-  // MARK: - CLI arguments with disabled overrides.
+  // MARK: - Config lines with disabled overrides.
 
-  @Test func ghosttyCLIArgumentsExcludeDisabledShortcuts() {
-    let args = AppShortcuts.ghosttyCLIKeybindArguments(from: [.newWorktree: .disabled])
+  @Test func ghosttyKeybindConfigLinesExcludeDisabledShortcuts() {
+    let lines = AppShortcuts.ghosttyKeybindConfigLines(from: [.newWorktree: .disabled])
     // A disabled shortcut should not appear in the unbind list.
-    let defaultUnbind = AppShortcuts.newWorktree.ghosttyUnbindArgument
-    #expect(!args.contains(defaultUnbind))
+    #expect(lines.contains { $0 == AppShortcuts.newWorktree.ghosttyUnbindConfigLine } == false)
   }
 
   // MARK: - Category display names.
@@ -436,7 +400,7 @@ struct AppShortcutsTests {
   @Test func categoryDisplayNames() {
     expectNoDifference(
       AppShortcutCategory.allCases.map(\.displayName),
-      ["General", "Sidebar", "Worktrees", "Worktree Selection", "Tab Selection", "Layout", "Actions"]
+      ["General", "Sidebar", "Worktrees", "Worktree Selection", "Layout", "Tab Selection", "Actions"]
     )
   }
 
@@ -490,12 +454,220 @@ struct AppShortcutsTests {
   }
 
   @Test func inspectorShortcutsUnbindInGhostty() {
-    #expect(AppShortcuts.togglePullRequestInspector.ghosttyUnbindArgument == "--keybind=alt+super+g=unbind")
-    #expect(AppShortcuts.toggleFilesInspector.ghosttyUnbindArgument == "--keybind=alt+super+f=unbind")
-    #expect(AppShortcuts.toggleNotificationsInspector.ghosttyUnbindArgument == "--keybind=alt+super+n=unbind")
-    let arguments = AppShortcuts.ghosttyCLIKeybindArguments
-    #expect(arguments.contains("--keybind=alt+super+g=unbind"))
-    #expect(arguments.contains("--keybind=alt+super+f=unbind"))
-    #expect(arguments.contains("--keybind=alt+super+n=unbind"))
+    #expect(AppShortcuts.togglePullRequestInspector.ghosttyUnbindConfigLine == "keybind = alt+super+g=unbind")
+    #expect(AppShortcuts.toggleFilesInspector.ghosttyUnbindConfigLine == "keybind = alt+super+f=unbind")
+    #expect(AppShortcuts.toggleNotificationsInspector.ghosttyUnbindConfigLine == "keybind = alt+super+n=unbind")
+    let lines = AppShortcuts.ghosttyKeybindConfigLines(from: [:])
+    #expect(lines.contains("keybind = alt+super+g=unbind"))
+    #expect(lines.contains("keybind = alt+super+f=unbind"))
+    #expect(lines.contains("keybind = alt+super+n=unbind"))
+  }
+
+  // MARK: - Ghostty keybind grammar.
+
+  @Test func everyDefaultShortcutProducesAParsableGhosttyKeybind() {
+    for line in AppShortcuts.ghosttyKeybindConfigLines(from: [:]) {
+      #expect(line.hasPrefix("keybind = "), "\(line) is not a keybind line")
+      #expect(line.hasSuffix("=unbind"), "\(line) is not an unbind")
+      #expect(!line.contains("0x"), "\(line) carries an unresolvable key name")
+      #expect(!line.dropFirst("keybind = ".count).contains(" "), "\(line) has an unparsable chord")
+    }
+  }
+
+  @Test func enabledEqualizeSplitsEmitsAnUnbindLine() {
+    // The chord's key name is layout-resolved (`=` lives on ⇧0 on some
+    // layouts), so assert presence rather than a literal spelling.
+    guard let override = AppShortcuts.equalizeSplits.enabledOverride else {
+      Issue.record("equalizeSplits has no enabled override")
+      return
+    }
+    let overrides: [AppShortcutID: AppShortcutOverride] = [.equalizeSplits: override]
+    let expected = AppShortcuts.equalizeSplits.effective(from: overrides)?.ghosttyUnbindConfigLine
+    #expect(expected != nil)
+    #expect(AppShortcuts.ghosttyKeybindConfigLines(from: overrides).contains { $0 == expected })
+  }
+
+  // MARK: - Reserved chords.
+
+  @Test func appKitReservedStringsIncludeTheHardcodedCloseChord() {
+    #expect(AppShortcutOverride.appKitReservedDisplayStrings == ["⌘Q", "⌘H", "⌘M", "⌘W"])
+  }
+
+  @Test func rebindingOntoCloseTabChordIsFlaggedAsAConflict() {
+    let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_W), modifiers: [.command])
+    let warnings = AppShortcuts.conflictWarnings(from: [.runScript: override])
+    #expect(warnings[.runScript]?.contains("Close Tab") == true)
+    #expect(warnings[.closeTab]?.contains("Run Script") == true)
+  }
+
+  @Test func defaultShortcutChordsAreUnique() {
+    let displays = AppShortcuts.all.compactMap { $0.effective(from: [:])?.display }
+    #expect(Set(displays).count == displays.count)
+  }
+
+  // MARK: - Disabled-by-default round trip.
+
+  @Test func everyDisabledByDefaultShortcutCanBeTurnedBackOn() {
+    for shortcut in AppShortcuts.all where !shortcut.isEnabledByDefault {
+      guard let override = AppShortcuts.defaultEnabledOverride(for: shortcut.id) else {
+        Issue.record("\(shortcut.displayName) cannot be re-enabled from settings")
+        continue
+      }
+      #expect(shortcut.effective(from: [shortcut.id: override]) != nil)
+    }
+  }
+
+  // MARK: - Non-customizable unbind stability.
+
+  @Test func closeTabStaysEffectiveAndUnboundUnderOverrides() {
+    #expect(AppShortcuts.closeTab.effective(from: [.closeTab: .disabled]) != nil)
+    let lines = AppShortcuts.ghosttyKeybindConfigLines(from: [.closeTab: .disabled])
+    #expect(lines.contains("keybind = super+w=unbind"))
+  }
+
+}
+
+@MainActor
+struct PaneWindowShortcutTests {
+  private static func keyEvent(
+    keyCode: Int,
+    modifiers: NSEvent.ModifierFlags,
+    isARepeat: Bool = false
+  ) -> NSEvent {
+    NSEvent.keyEvent(
+      with: .keyDown,
+      location: .zero,
+      modifierFlags: modifiers,
+      timestamp: 0,
+      windowNumber: 0,
+      context: nil,
+      characters: "x",
+      charactersIgnoringModifiers: "x",
+      isARepeat: isARepeat,
+      keyCode: UInt16(keyCode)
+    )!
+  }
+
+  private static func tab(title: String = "Tab", isTitleLocked: Bool = false) -> TabItem {
+    TabItem(
+      id: TabID(),
+      title: title,
+      content: ContentSnapshot(
+        id: ContentID(),
+        state: .terminal(TerminalContentState(workingDirectory: "/tmp/pane-window-shortcut"))
+      ),
+      isTitleLocked: isTitleLocked
+    )
+  }
+
+  private static func pane(tabs: [TabItem]) -> Pane {
+    Pane(id: PaneID(), tabs: IdentifiedArray(uniqueElements: tabs), selectedTabID: tabs.first?.id)
+  }
+
+  @Test func plainTypingNeverResolvesAnIntent() {
+    let pane = Self.pane(tabs: [Self.tab()])
+    let typing = Self.keyEvent(keyCode: kVK_ANSI_W, modifiers: [])
+    #expect(
+      PaneWindowShortcut.intent(for: typing, pane: pane, overrides: [:], isWorktreeSelected: true) == nil
+    )
+  }
+
+  @Test func closeTabChordResolvesToTheSelectedTabsContent() {
+    let tab = Self.tab()
+    let pane = Self.pane(tabs: [tab])
+    let event = Self.keyEvent(keyCode: kVK_ANSI_W, modifiers: .command)
+    #expect(
+      PaneWindowShortcut.intent(for: event, pane: pane, overrides: [:], isWorktreeSelected: true)
+        == .closeTab(tab.content.id)
+    )
+  }
+
+  @Test func repeatedChordsAreSwallowedNotReapplied() {
+    let pane = Self.pane(tabs: [Self.tab()])
+    let repeated = Self.keyEvent(keyCode: kVK_ANSI_W, modifiers: .command, isARepeat: true)
+    #expect(
+      PaneWindowShortcut.intent(for: repeated, pane: pane, overrides: [:], isWorktreeSelected: true)
+        == .ignore
+    )
+  }
+
+  @Test func renameIsSwallowedForATitleLockedTab() {
+    let pane = Self.pane(tabs: [Self.tab(isTitleLocked: true)])
+    let event = Self.keyEvent(keyCode: kVK_ANSI_R, modifiers: [.control, .shift])
+    #expect(
+      PaneWindowShortcut.intent(for: event, pane: pane, overrides: [:], isWorktreeSelected: true)
+        == .ignore
+    )
+  }
+
+  @Test func outOfRangeTabChordClampsToTheLastTab() {
+    let tabs = [Self.tab(title: "One"), Self.tab(title: "Two"), Self.tab(title: "Three")]
+    let pane = Self.pane(tabs: tabs)
+    let event = Self.keyEvent(keyCode: kVK_ANSI_9, modifiers: .command)
+    #expect(
+      PaneWindowShortcut.intent(for: event, pane: pane, overrides: [:], isWorktreeSelected: true)
+        == .selectTab(tabs[2].id)
+    )
+  }
+
+  @Test func tabChordSelectsTheNthTabOfThisPane() {
+    let tabs = [Self.tab(title: "One"), Self.tab(title: "Two")]
+    let pane = Self.pane(tabs: tabs)
+    let event = Self.keyEvent(keyCode: kVK_ANSI_2, modifiers: .command)
+    #expect(
+      PaneWindowShortcut.intent(for: event, pane: pane, overrides: [:], isWorktreeSelected: true)
+        == .selectTab(tabs[1].id)
+    )
+  }
+
+  @Test func runScriptIsSwallowedWhenThePanesWorktreeIsNotSelected() {
+    let pane = Self.pane(tabs: [Self.tab()])
+    let event = Self.keyEvent(keyCode: kVK_ANSI_R, modifiers: .command)
+    #expect(
+      PaneWindowShortcut.intent(for: event, pane: pane, overrides: [:], isWorktreeSelected: false)
+        == .ignore
+    )
+    #expect(
+      PaneWindowShortcut.intent(for: event, pane: pane, overrides: [:], isWorktreeSelected: true)
+        == .runScript
+    )
+  }
+
+  @Test func toggleWindowModeResolvesEvenForAnEmptyPane() {
+    let pane = Self.pane(tabs: [])
+    let event = Self.keyEvent(keyCode: kVK_ANSI_M, modifiers: [.command, .shift])
+    #expect(
+      PaneWindowShortcut.intent(for: event, pane: pane, overrides: [:], isWorktreeSelected: true)
+        == .exitWindowMode
+    )
+  }
+
+  @Test func disabledShortcutNeverResolves() {
+    let pane = Self.pane(tabs: [Self.tab()])
+    let event = Self.keyEvent(keyCode: kVK_ANSI_M, modifiers: [.command, .shift])
+    #expect(
+      PaneWindowShortcut.intent(
+        for: event,
+        pane: pane,
+        overrides: [.toggleWindowMode: .disabled],
+        isWorktreeSelected: true
+      ) == nil
+    )
+  }
+
+  @Test func unavailableLayoutChordsAreConsumedNotForwarded() {
+    // A split chord leaking to the menu would split the selected worktree's
+    // layout while the user is working in a pane window.
+    let pane = Self.pane(tabs: [Self.tab()])
+    let split = Self.keyEvent(keyCode: kVK_ANSI_D, modifiers: .command)
+    #expect(
+      PaneWindowShortcut.intent(for: split, pane: pane, overrides: [:], isWorktreeSelected: true)
+        == .ignore
+    )
+    let zoom = Self.keyEvent(keyCode: kVK_Return, modifiers: [.command, .shift])
+    #expect(
+      PaneWindowShortcut.intent(for: zoom, pane: pane, overrides: [:], isWorktreeSelected: true)
+        == .ignore
+    )
   }
 }

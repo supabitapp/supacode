@@ -1,5 +1,7 @@
+import AppKit
 import Carbon.HIToolbox
 import SwiftUI
+import Synchronization
 
 // Persisted override for an app shortcut binding.
 public nonisolated struct AppShortcutOverride: Codable, Equatable, Hashable, Sendable {
@@ -89,10 +91,8 @@ extension AppShortcutOverride {
 
 extension AppShortcutOverride {
   // Well-known macOS app conventions always reserved by AppKit (not in the symbolic hotkeys plist).
-  // ⌘W is deliberately absent: the Close Tab layout shortcut owns it, and
-  // the Close Window menu item falls back to it only while Close Tab is
-  // unavailable.
-  public static let appKitReservedDisplayStrings: Set<String> = ["⌘Q", "⌘H", "⌘M"]
+  // ⌘W included: it is hardcoded to Close Tab, so the recorder must refuse it.
+  public static let appKitReservedDisplayStrings: Set<String> = ["⌘Q", "⌘H", "⌘M", "⌘W"]
 
   // Reads macOS system symbolic hotkeys at runtime and returns their display strings,
   // combined with well-known AppKit reserved shortcuts.
@@ -291,9 +291,45 @@ extension AppShortcutOverride {
     return nil
   }
 
+  // Uncached resolution walks 4 modifier states x 47 key codes through
+  // UCKeyTranslate; per-event matching would be a TIS storm without this.
+  private static let reverseKeyCodeCache = Mutex<[Character: UInt16?]>([:])
+
+  private static let reverseKeyCodeCacheInvalidator: NSObjectProtocol =
+    NotificationCenter.default.addObserver(
+      forName: NSTextInputContext.keyboardSelectionDidChangeNotification,
+      object: nil,
+      queue: nil
+    ) { _ in
+      reverseKeyCodeCache.withLock { $0.removeAll() }
+    }
+
   public static func keyCode(forDisplayedKeyEquivalent character: Character) -> UInt16? {
-    keyCode(forDisplayedKeyEquivalent: character) { code, modifierState in
+    _ = reverseKeyCodeCacheInvalidator
+    if let cached = reverseKeyCodeCache.withLock({ $0[character] }) {
+      return cached
+    }
+    let resolved = keyCode(forDisplayedKeyEquivalent: character) { code, modifierState in
       currentLayoutCharacter(for: code, modifierState: modifierState)
+    }
+    reverseKeyCodeCache.withLock { $0[character] = resolved }
+    return resolved
+  }
+
+  // Key codes for the special-key equivalents, which no layout scan can
+  // resolve; lets `matches` cover arrow, return, and escape chords.
+  public static func specialKeyCode(for keyEquivalent: KeyEquivalent) -> UInt16? {
+    switch keyEquivalent {
+    case .leftArrow: UInt16(kVK_LeftArrow)
+    case .rightArrow: UInt16(kVK_RightArrow)
+    case .upArrow: UInt16(kVK_UpArrow)
+    case .downArrow: UInt16(kVK_DownArrow)
+    case .return: UInt16(kVK_Return)
+    case .escape: UInt16(kVK_Escape)
+    case .delete: UInt16(kVK_Delete)
+    case .tab: UInt16(kVK_Tab)
+    case .space: UInt16(kVK_Space)
+    default: nil
     }
   }
 

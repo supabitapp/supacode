@@ -8,9 +8,9 @@ struct WindowCommands: Commands {
   @FocusedValue(\.terminateAllTerminalSessionsAction) private var terminateAllTerminalSessionsAction
 
   var body: some Commands {
+    // Close Tab is non-customizable, so it always resolves and always owns ⌘W.
     let closeTab = AppShortcuts.closeTab.effective(from: settingsFile.global.shortcutOverrides)
-    let closeTabEnabled = closeTabAction?.isEnabled == true && closeTab != nil
-    let isCloseTabOverlapping = closeTab?.display == "⌘W"
+    let closeTabEnabled = closeTabAction?.isEnabled == true
     CommandGroup(replacing: .saveItem) {
       Button("Close Tab", systemImage: "xmark") {
         closeTabAction?()
@@ -25,15 +25,15 @@ struct WindowCommands: Commands {
       .disabled(terminateAllTerminalSessionsAction?.isEnabled != true)
 
       Button("Close Window") {
-        // In a pane window the chord falls back here when the focused values
-        // do not propagate; it must still close the tab, never the window.
+        // Menu clicks land here from a pane window too; close the tab, never
+        // the window (the chord itself is consumed by the pane window).
         if let paneWindow = NSApp.keyWindow as? PaneWindow, let closeTab = paneWindow.closeSelectedTab {
           closeTab()
           return
         }
         NSApplication.shared.keyWindow?.performClose(nil)
       }
-      .keyboardShortcut(!isCloseTabOverlapping || !closeTabEnabled ? .init("w") : nil)
+      .keyboardShortcut(closeTabEnabled ? nil : .init("w"))
     }
   }
 }

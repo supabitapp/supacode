@@ -17,17 +17,11 @@ import SupacodeSettingsShared
 import SwiftUI
 
 private enum GhosttyCLI {
+  // Bare executable only: this argv is inert on macOS (Ghostty reads CLI args
+  // from `NSProcessInfo`), so keybinds ship via the bundled config file.
   static let argv: [UnsafeMutablePointer<CChar>?] = {
-    @Shared(.settingsFile) var settingsFile
-    let overrides = settingsFile.global.shortcutOverrides
-    var args: [UnsafeMutablePointer<CChar>?] = []
     let executable = CommandLine.arguments.first ?? "supacode"
-    args.append(strdup(executable))
-    for keybindArgument in AppShortcuts.ghosttyCLIKeybindArguments(from: overrides) {
-      args.append(strdup(keybindArgument))
-    }
-    args.append(nil)
-    return args
+    return [strdup(executable), nil]
   }()
 }
 

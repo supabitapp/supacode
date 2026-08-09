@@ -629,6 +629,8 @@ public struct SettingsFeature {
         return clearedFailure ? .send(.refreshAgentIntegrationStates) : .none
 
       case .updateShortcut(let id, let override):
+        // A non-customizable shortcut ignores overrides; refuse to persist one.
+        guard AppShortcuts.all.first(where: { $0.id == id })?.isCustomizable != false else { return .none }
         if let override {
           state.shortcutOverrides[id] = override
         } else {
@@ -637,6 +639,8 @@ public struct SettingsFeature {
         return persist(state)
 
       case .toggleShortcutEnabled(let id, let enabled):
+        // A non-customizable shortcut is always enabled; refuse to persist a toggle.
+        guard AppShortcuts.all.first(where: { $0.id == id })?.isCustomizable != false else { return .none }
         if enabled {
           // A real binding just flips its enabled flag. A sentinel (or no override)
           // carries no binding, so restore the default: a disabled-by-default

@@ -200,13 +200,14 @@ final class GhosttyRuntime {
       Self.logger.warning("Cannot reload app config: Ghostty app instance is nil.")
       return
     }
-    isBackgroundOpaque = false
     var target = ghostty_target_s()
     target.tag = GHOSTTY_TARGET_APP
     guard let loaded = Self.loadConfig() else {
       Self.logger.warning("Failed to reload app config.")
       return
     }
+    // Reset only once the reload is certain, so a failed load stays a no-op.
+    isBackgroundOpaque = false
     userBackgroundOpacity = loaded.userBackgroundOpacity
     applyConfig(loaded.config, target: target, app: app)
     ghostty_config_free(loaded.config)
@@ -538,7 +539,10 @@ final class GhosttyRuntime {
   private static func loadConfig() -> (config: ghostty_config_t, userBackgroundOpacity: Double)? {
     @Shared(.settingsFile) var settingsFile
     let themeSyncEnabled = settingsFile.global.terminalThemeSyncEnabled
-    guard let config = ghostty_config_new() else { return nil }
+    guard let config = ghostty_config_new() else {
+      logger.error("ghostty_config_new returned nil; config load aborted.")
+      return nil
+    }
     ghostty_config_load_default_files(config)
     ghostty_config_load_recursive_files(config)
     ghostty_config_load_cli_args(config)
@@ -554,8 +558,9 @@ final class GhosttyRuntime {
     }
     // Last-write-wins: overrides must follow theme so the bundled padding wins.
     loadBundledTheme(into: config, enabled: themeSyncEnabled)
-    loadBundledOverrides(into: config)
+    loadBundledOverrides(into: config, shortcutOverrides: settingsFile.global.shortcutOverrides)
     ghostty_config_finalize(config)
+    logDiagnostics(of: config)
     return (config, userOpacity)
   }
 
@@ -610,17 +615,40 @@ final class GhosttyRuntime {
     return candidates.lazy.compactMap { $0 as? String }.first { !$0.isEmpty }
   }
 
-  private static func loadBundledOverrides(into config: ghostty_config_t) {
+  private static func loadBundledOverrides(
+    into config: ghostty_config_t,
+    shortcutOverrides: [AppShortcutID: AppShortcutOverride]
+  ) {
     let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("supacode-defaults.conf")
-    let contents = [bundledOverridesString, terminalProgramOverrides(version: appVersion)]
-      .joined(separator: "\n")
+    let contents = [
+      bundledOverridesString,
+      terminalProgramOverrides(version: appVersion),
+      AppShortcuts.ghosttyKeybindConfigLines(from: shortcutOverrides).joined(separator: "\n"),
+    ]
+    .filter { !$0.isEmpty }
+    .joined(separator: "\n")
     do {
       try contents.write(to: tempURL, atomically: true, encoding: .utf8)
     } catch {
-      logger.warning("Failed to write bundled defaults: \(error.localizedDescription)")
+      // Losing this file leaves every app chord bound inside Ghostty, not
+      // just the cosmetic overrides.
+      logger.error(
+        "Bundled overrides not delivered; the terminal keeps the app's chords: \(error.localizedDescription)")
       return
     }
     tempURL.path.withCString { ghostty_config_load_file(config, $0) }
+  }
+
+  /// Surfaces parse rejections that Ghostty otherwise records silently; a
+  /// dropped `keybind` line leaves that chord bound in the terminal.
+  private static func logDiagnostics(of config: ghostty_config_t) {
+    let count = ghostty_config_diagnostics_count(config)
+    guard count > 0 else { return }
+    for index in 0..<count {
+      let diagnostic = ghostty_config_get_diagnostic(config, index)
+      guard let message = diagnostic.message else { continue }
+      logger.error("Ghostty config diagnostic: \(String(cString: message))")
+    }
   }
 
   /// Loads the bundled Supacode light/dark theme plus its opacity and blur. No-op when sync is disabled.

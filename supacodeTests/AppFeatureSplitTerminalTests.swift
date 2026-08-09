@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import DependenciesTestSupport
 import Foundation
+import SupacodeSettingsShared
 import Testing
 
 @testable import SupacodeSettingsFeature
@@ -18,6 +19,36 @@ struct AppFeatureSplitTerminalTests {
   )
   func ghosttyBindingMapsToActionSuffix(direction: TerminalSplitMenuDirection, expected: String) {
     #expect(direction.ghosttyBinding == expected)
+  }
+
+  @Test(
+    arguments: [
+      (TerminalSplitMenuDirection.right, "goto_split:right"),
+      (.left, "goto_split:left"),
+      // Ghostty's goto_split argument names differ from new_split's here.
+      (.down, "goto_split:bottom"),
+      (.up, "goto_split:top"),
+    ]
+  )
+  func gotoSplitBindingMapsToActionSuffix(direction: TerminalSplitMenuDirection, expected: String) {
+    #expect(direction.gotoSplitBinding == expected)
+  }
+
+  @Test(
+    arguments: [
+      (TerminalSplitMenuDirection.right, AppShortcutID.splitRight, AppShortcutID.focusSplitRight),
+      (.left, .splitLeft, .focusSplitLeft),
+      (.down, .splitDown, .focusSplitDown),
+      (.up, .splitUp, .focusSplitUp),
+    ]
+  )
+  func directionMapsToItsLayoutShortcuts(
+    direction: TerminalSplitMenuDirection,
+    split: AppShortcutID,
+    focus: AppShortcutID
+  ) {
+    #expect(direction.appShortcut.id == split)
+    #expect(direction.focusAppShortcut.id == focus)
   }
 
   @Test(.dependencies, arguments: TerminalSplitMenuDirection.allCases)
@@ -160,6 +191,60 @@ struct AppFeatureSplitTerminalTests {
     }
 
     await store.send(.toggleWindowModeForFocusedPane)
+    await store.finish()
+  }
+
+  @Test(.dependencies) func focusSplitWithoutSelectionIsNoop() async {
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: RepositoriesFeature.State(),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in
+        Issue.record("terminalClient.send should not be called without a selected worktree")
+      }
+    }
+
+    await store.send(.focusSplit(.left))
+    await store.finish()
+  }
+
+  @Test(.dependencies) func toggleSplitZoomWithoutSelectionIsNoop() async {
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: RepositoriesFeature.State(),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in
+        Issue.record("terminalClient.send should not be called without a selected worktree")
+      }
+    }
+
+    await store.send(.toggleSplitZoom)
+    await store.finish()
+  }
+
+  @Test(.dependencies) func equalizeSplitsWithoutSelectionIsNoop() async {
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: RepositoriesFeature.State(),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in
+        Issue.record("terminalClient.send should not be called without a selected worktree")
+      }
+    }
+
+    await store.send(.equalizeSplits)
     await store.finish()
   }
 
