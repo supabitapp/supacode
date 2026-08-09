@@ -96,6 +96,40 @@ struct SplitTreeTests {
     #expect(decoded == tree)
   }
 
+  @Test func parentSplitInfoReportsAxisAndSide() throws {
+    let leafA = IDLeaf(id: 1)
+    let leafB = IDLeaf(id: 2)
+    let tree = try SplitTree(view: leafA).inserting(view: leafB, at: leafA, direction: .right)
+    #expect(tree.parentSplitInfo(ofLeaf: leafA)?.axis == .horizontal)
+    #expect(tree.parentSplitInfo(ofLeaf: leafA)?.isLeadingChild == true)
+    #expect(tree.parentSplitInfo(ofLeaf: leafB)?.isLeadingChild == false)
+    // The root leaf shares no divider.
+    #expect(SplitTree(view: leafA).parentSplitInfo(ofLeaf: leafA) == nil)
+  }
+
+  @Test func insertingSpanningParentWrapsTheImmediateParentSplit() throws {
+    let leafA = IDLeaf(id: 1)
+    let leafB = IDLeaf(id: 2)
+    let leafC = IDLeaf(id: 3)
+    // A | B is a horizontal split; spanning C upward over A's divider must wrap
+    // the whole H(A,B) in a vertical split: V(C, H(A,B)).
+    let tree = try SplitTree(view: leafA).inserting(view: leafB, at: leafA, direction: .right)
+    let spanned = try tree.insertingSpanningParent(view: leafC, ofLeaf: leafA, direction: .top)
+    guard case .split(let outer) = spanned.root else {
+      Issue.record("expected a spanning outer split, got \(String(describing: spanned.root))")
+      return
+    }
+    #expect(outer.direction == .vertical)
+    #expect(outer.left == .leaf(view: leafC))
+    guard case .split(let inner) = outer.right else {
+      Issue.record("expected the wrapped H(A,B) split")
+      return
+    }
+    #expect(inner.direction == .horizontal)
+    #expect(inner.left == .leaf(view: leafA))
+    #expect(inner.right == .leaf(view: leafB))
+  }
+
   @Test func codableRoundTripsZoomedNodePath() throws {
     let tree = try SplitTree(view: IDLeaf(id: 1))
       .inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .right)

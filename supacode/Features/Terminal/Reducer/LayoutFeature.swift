@@ -178,6 +178,9 @@ struct LayoutFeature {
     /// the new pane; a background CLI move passes `false` to leave focus put.
     case moveTabToSplit(
       id: TabID, anchor: PaneID, direction: SplitTree<PaneID>.NewDirection, select: Bool = true)
+    /// Moves a tab into a new pane spanning both panes that share `anchor`'s
+    /// divider (its immediate parent split), from a divider-adjacent drop.
+    case moveTabToSpanningSplit(id: TabID, anchor: PaneID, direction: SplitTree<PaneID>.NewDirection)
     /// Detaches a pane into its own window; the layout keeps its leaf as a
     /// placeholder.
     case enterWindowMode(paneID: PaneID)
@@ -224,7 +227,7 @@ struct LayoutFeature {
     case .resizePane, .runtime(.titleChanged), .beginTabRename, .endTabRename:
       return true
     case .newTab, .splitPane, .closeTab, .closePane, .selectTab, .renameTab, .focusPane,
-      .moveTab, .moveTabToSplit, .enterWindowMode, .exitWindowMode,
+      .moveTab, .moveTabToSplit, .moveTabToSpanningSplit, .enterWindowMode, .exitWindowMode,
       .equalizePanes, .toggleZoom, .hibernateTab, .wakeTab, .runtime(.killConfirmed),
       .contentRequestedClose, .contentRequestedNewTab, .contentRequestedSplit,
       .contentRequestedFocus, .contentRequestedFocusSplit, .contentRequestedToggleZoom,
@@ -281,6 +284,9 @@ struct LayoutFeature {
       case .moveTabToSplit(let tabID, let anchorID, let direction, let select):
         return reduceMoveTabToSplit(
           &state, tabID: tabID, anchorID: anchorID, direction: direction, select: select)
+      case .moveTabToSpanningSplit(let tabID, let anchorID, let direction):
+        return reduceMoveTabToSpanningSplit(
+          &state, tabID: tabID, anchorID: anchorID, direction: direction)
       case .enterWindowMode(let paneID):
         return reduceEnterWindowMode(&state, paneID: paneID)
       case .exitWindowMode(let paneID):
@@ -645,6 +651,35 @@ extension LayoutFeature {
     // source selection, and collapses the source when it empties.
     state.layout.panes.append(Pane(id: paneID))
     return reduceMoveTab(&state, tabID: tabID, targetPaneID: paneID, index: 0, focusing: select)
+  }
+
+  /// Moves a tab into a new pane spanning both panes that share the anchor's
+  /// divider: wraps the anchor's parent split rather than the anchor alone.
+  private func reduceMoveTabToSpanningSplit(
+    _ state: inout State,
+    tabID: TabID,
+    anchorID: PaneID,
+    direction: SplitTree<PaneID>.NewDirection
+  ) -> Effect<Action> {
+    guard let source = state.layout.pane(containingTab: tabID) else { return .none }
+    guard state.layout.panes[id: anchorID] != nil else {
+      Self.logger.warning("moveTabToSpanningSplit at unknown anchor \(anchorID.rawValue)")
+      return .none
+    }
+    // A windowed anchor renders a placeholder; nothing can drop on it.
+    guard !state.windowedPaneIDs.contains(anchorID) else { return .none }
+    // Splitting off a pane's only tab recreates the same layout.
+    guard source.id != anchorID || source.tabs.count > 1 else { return .none }
+    let paneID = PaneID(rawValue: uuid())
+    do {
+      state.layout.tree = try state.layout.tree.insertingSpanningParent(
+        view: paneID, ofLeaf: anchorID, direction: direction)
+    } catch {
+      Self.logger.error("moveTabToSpanningSplit insert failed at \(anchorID.rawValue): \(error)")
+      return .none
+    }
+    state.layout.panes.append(Pane(id: paneID))
+    return reduceMoveTab(&state, tabID: tabID, targetPaneID: paneID, index: 0)
   }
 
   private func reduceSelectTab(_ state: inout State, tabID: TabID) -> Effect<Action> {

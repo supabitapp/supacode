@@ -114,6 +114,50 @@ nonisolated struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
     )
   }
 
+  /// The immediate parent split's axis and whether `leaf` is its leading
+  /// (left / top) child, for placing divider-adjacent full-span drop targets.
+  /// Nil for the root leaf, which shares no divider.
+  func parentSplitInfo(ofLeaf leaf: Leaf) -> (axis: Direction, isLeadingChild: Bool)? {
+    guard let root, let path = root.path(to: .leaf(view: leaf)), let last = path.path.last else {
+      return nil
+    }
+    let parentPath = Path(path: Array(path.path.dropLast()))
+    guard let parent = root.node(at: parentPath), case .split(let split) = parent else { return nil }
+    return (split.direction, last == .left)
+  }
+
+  /// Wraps the immediate parent split of `anchor` in a new split, so the new
+  /// leaf spans both panes sharing that divider. `direction` is perpendicular
+  /// to the parent split's axis (top / down over a side-by-side split, left /
+  /// right over a stacked one).
+  func insertingSpanningParent(
+    view: Leaf, ofLeaf anchor: Leaf, direction: NewDirection, ratio: Double = 0.5
+  ) throws -> Self {
+    guard let root else { throw SplitError.viewNotFound }
+    guard root.node(view: view) == nil else { throw SplitError.duplicateLeaf }
+    guard let path = root.path(to: .leaf(view: anchor)), !path.path.isEmpty else {
+      throw SplitError.viewNotFound
+    }
+    let parentPath = Path(path: Array(path.path.dropLast()))
+    guard let parentNode = root.node(at: parentPath) else { throw SplitError.viewNotFound }
+    let splitDirection: Direction
+    let newViewOnLeft: Bool
+    switch direction {
+    case .left: splitDirection = .horizontal; newViewOnLeft = true
+    case .right: splitDirection = .horizontal; newViewOnLeft = false
+    case .top: splitDirection = .vertical; newViewOnLeft = true
+    case .down: splitDirection = .vertical; newViewOnLeft = false
+    }
+    let newLeaf: Node = .leaf(view: view)
+    let wrapped: Node = .split(
+      .init(
+        direction: splitDirection,
+        ratio: ratio,
+        left: newViewOnLeft ? newLeaf : parentNode,
+        right: newViewOnLeft ? parentNode : newLeaf))
+    return .init(root: try root.replacingNode(at: parentPath, with: wrapped), zoomed: zoomed)
+  }
+
   func removing(_ target: Node) -> Self {
     guard let root else { return self }
     if root == target {

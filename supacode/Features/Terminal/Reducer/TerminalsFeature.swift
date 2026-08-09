@@ -77,7 +77,7 @@ struct TerminalsFeature {
     case .resizePane, .runtime(.titleChanged), .beginTabRename, .endTabRename:
       return false
     case .newTab, .splitPane, .closeTab, .closePane, .selectTab, .renameTab, .focusPane,
-      .moveTab, .moveTabToSplit, .enterWindowMode, .exitWindowMode,
+      .moveTab, .moveTabToSplit, .moveTabToSpanningSplit, .enterWindowMode, .exitWindowMode,
       .equalizePanes, .toggleZoom, .hibernateTab, .wakeTab, .runtime(.killConfirmed),
       .contentRequestedClose, .contentRequestedNewTab, .contentRequestedSplit,
       .contentRequestedFocus, .contentRequestedFocusSplit, .contentRequestedToggleZoom,

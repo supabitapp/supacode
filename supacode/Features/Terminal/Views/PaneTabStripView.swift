@@ -20,6 +20,14 @@ nonisolated struct PaneTabDragPayload: Codable, Sendable, Transferable {
   }
 }
 
+/// Tracks the tab an in-flight drag started from so a pane's drop zones can
+/// gray out targets the drop would refuse. `.dropDestination`'s `isTargeted`
+/// closure has no access to the payload, so the source is captured here at drag
+/// start (the drag preview's `onAppear`) and shared across one worktree's panes.
+@MainActor @Observable final class PaneTabDragModel {
+  var sourceTabID: TabID?
+}
+
 /// One pane's tab strip: fixed-width tabs, dividers, overflow fades, and the
 /// trailing accessories, with no background so the window tint shows through.
 struct PaneTabStrip: View {
@@ -31,6 +39,8 @@ struct PaneTabStrip: View {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let surfaceState: (UUID) -> WorktreeSurfaceState?
+  /// Shared drag source, nil in a pane window; drives the split-zone graying.
+  var dragModel: PaneTabDragModel?
 
   @Environment(\.controlActiveState) private var controlActiveState
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -57,7 +67,7 @@ struct PaneTabStrip: View {
     .clipped()
     .dropDestination(for: PaneTabDragPayload.self) { items, _ in
       // A drop on the strip body (past the tabs) appends to this pane.
-      PaneTabDrag.performDrop(items, into: pane, at: pane.tabs.count, store: store)
+      PaneTabDrag.performDrop(items, into: pane, at: pane.tabs.count, store: store, dragModel: dragModel)
     } isTargeted: {
       isAppendDropTargeted = $0
     }
@@ -130,7 +140,8 @@ struct PaneTabStrip: View {
           fixedWidth: effectiveTabWidth,
           store: store,
           runtime: runtime,
-          surfaceState: surfaceState
+          surfaceState: surfaceState,
+          dragModel: dragModel
         )
         .id(tab.id)
         if index < pane.tabs.count - 1 {
@@ -208,8 +219,10 @@ enum PaneTabDrag {
     _ items: [PaneTabDragPayload],
     into pane: Pane,
     at index: Int,
-    store: StoreOf<LayoutFeature>
+    store: StoreOf<LayoutFeature>,
+    dragModel: PaneTabDragModel? = nil
   ) -> Bool {
+    dragModel?.sourceTabID = nil
     guard let raw = items.first else { return false }
     let tabID = TabID(rawValue: raw.tabID)
     guard let sourcePane = store.layout.pane(containingTab: tabID) else { return false }
@@ -232,8 +245,10 @@ enum PaneTabDrag {
     _ items: [PaneTabDragPayload],
     anchor pane: Pane,
     direction: SplitTree<PaneID>.NewDirection,
-    store: StoreOf<LayoutFeature>
+    store: StoreOf<LayoutFeature>,
+    dragModel: PaneTabDragModel? = nil
   ) -> Bool {
+    dragModel?.sourceTabID = nil
     guard let raw = items.first else { return false }
     let tabID = TabID(rawValue: raw.tabID)
     guard let sourcePane = store.layout.pane(containingTab: tabID) else { return false }
@@ -241,6 +256,40 @@ enum PaneTabDrag {
     guard sourcePane.id != pane.id || sourcePane.tabs.count > 1 else { return false }
     store.send(.moveTabToSplit(id: tabID, anchor: pane.id, direction: direction))
     return true
+  }
+
+  /// A drop near a shared divider: the tab moves into a new pane spanning both
+  /// panes that share it (the anchor's parent split).
+  @MainActor
+  static func performSpanningSplitDrop(
+    _ items: [PaneTabDragPayload],
+    anchor pane: Pane,
+    direction: SplitTree<PaneID>.NewDirection,
+    store: StoreOf<LayoutFeature>,
+    dragModel: PaneTabDragModel? = nil
+  ) -> Bool {
+    dragModel?.sourceTabID = nil
+    guard let raw = items.first else { return false }
+    let tabID = TabID(rawValue: raw.tabID)
+    guard let sourcePane = store.layout.pane(containingTab: tabID) else { return false }
+    guard sourcePane.id != pane.id || sourcePane.tabs.count > 1 else { return false }
+    store.send(.moveTabToSpanningSplit(id: tabID, anchor: pane.id, direction: direction))
+    return true
+  }
+
+  /// Whether a split drop of the dragged tab onto `pane`'s edge would take.
+  /// A pane's only tab dropped on its own edge is refused; an unknown source
+  /// (another window) can't be proven invalid, so it stays highlightable.
+  @MainActor
+  static func canSplitDrop(
+    sourceTabID: TabID?,
+    anchor pane: Pane,
+    store: StoreOf<LayoutFeature>
+  ) -> Bool {
+    guard let sourceTabID, let sourcePane = store.layout.pane(containingTab: sourceTabID) else {
+      return true
+    }
+    return sourcePane.id != pane.id || sourcePane.tabs.count > 1
   }
 }
 
@@ -254,6 +303,20 @@ private struct PaneTabDropIndicator: View {
         height: TerminalTabBarMetrics.dropIndicatorHeight
       )
       .allowsHitTesting(false)
+  }
+}
+
+/// The floating preview shown under the cursor while a tab is dragged.
+private struct PaneTabDragPreview: View {
+  let title: String
+
+  var body: some View {
+    Text(title)
+      .font(.callout)
+      .lineLimit(1)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 5)
+      .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
   }
 }
 
@@ -271,6 +334,7 @@ private struct PaneTabView: View {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let surfaceState: (UUID) -> WorktreeSurfaceState?
+  var dragModel: PaneTabDragModel?
 
   @State private var isHovering = false
   @State private var isPressing = false
@@ -363,7 +427,12 @@ private struct PaneTabView: View {
       .accessibilityLabel(displayTitle)
       .accessibilityValue(progressDisplay?.accessibilityValue ?? "")
       .allowsHitTesting(!isEditing)
-      .draggable(PaneTabDragPayload(tabID: tab.id.rawValue))
+      .draggable(PaneTabDragPayload(tabID: tab.id.rawValue)) {
+        // The preview appears at drag start; capturing the source here lets the
+        // pane split zones gray out drops this tab can't take.
+        PaneTabDragPreview(title: displayTitle)
+          .onAppear { dragModel?.sourceTabID = tab.id }
+      }
     }
     .overlay {
       if isEditing {
@@ -447,7 +516,7 @@ private struct PaneTabView: View {
     }
     .dropDestination(for: PaneTabDragPayload.self) { items, _ in
       guard let index = pane.tabs.index(id: tab.id) else { return false }
-      return PaneTabDrag.performDrop(items, into: pane, at: index, store: store)
+      return PaneTabDrag.performDrop(items, into: pane, at: index, store: store, dragModel: dragModel)
     } isTargeted: {
       isDropTargeted = $0
     }

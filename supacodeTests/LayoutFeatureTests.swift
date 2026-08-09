@@ -629,6 +629,24 @@ struct LayoutFeatureTests {
     #expect(harness.store.state.layout.isConsistent)
   }
 
+  @Test func spanningMoveWrapsBothPanesInANewSplit() async {
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    _ = await splitPane(harness, anchor: harness.paneID)
+    harness.store.exhaustivity = .off
+    // A divider-adjacent drop spans both panes: the whole parent split is
+    // wrapped in a new perpendicular split, so a third pane appears above it.
+    await harness.store.send(
+      .moveTabToSpanningSplit(id: second.tabID, anchor: harness.paneID, direction: .top))
+    #expect(harness.store.state.layout.panes.count == 3)
+    if case .split(let outer) = harness.store.state.layout.tree.root {
+      #expect(outer.direction == .vertical)
+    } else {
+      Issue.record("expected a spanning vertical root split")
+    }
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
   @Test func movingABackgroundTabKeepsSourceSelection() async {
     let harness = await makeHarness()
     let second = await addTab(harness, title: "Two")
