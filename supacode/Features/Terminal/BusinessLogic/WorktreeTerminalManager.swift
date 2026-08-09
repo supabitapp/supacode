@@ -1229,7 +1229,8 @@ final class WorktreeTerminalManager {
 
   private func focusPane(in worktree: Worktree, paneToken: UUID) {
     guard let paneID = resolvePane(paneToken, in: worktree.id),
-      let pane = layoutState(for: worktree.id)?.layout.panes[id: paneID]
+      let state = layoutState(for: worktree.id),
+      let pane = state.layout.panes[id: paneID]
     else {
       terminalLogger.warning("focusPane: pane token \(paneToken) not found in worktree \(worktree.id).")
       return
@@ -1238,6 +1239,11 @@ final class WorktreeTerminalManager {
       sendLayout(worktree.id, .wakeTab(id: selectedTab))
     }
     sendLayout(worktree.id, .focusPane(.pane(paneID)))
+    // A windowed pane lives in its own window; bring it forward and make it key,
+    // or the CLI / deeplink reports success while the pane stays hidden.
+    if state.windowedPaneIDs.contains(paneID) {
+      paneWindows.orderFront(worktreeID: worktree.id, paneID: paneID)
+    }
   }
 
   private func closePane(in worktree: Worktree, paneToken: UUID) {

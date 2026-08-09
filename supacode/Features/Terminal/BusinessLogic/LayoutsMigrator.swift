@@ -137,10 +137,11 @@ nonisolated extension LayoutsFile {
       return .unreadable
     }
     let legacy = raw.compactMapValues(\.value)
-    // Any JSON object "decodes" as v1 with every element dropped; a non-empty
-    // file whose entries all rotted must read as unknown, never as empty.
-    guard legacy.count == raw.count || !legacy.isEmpty else {
-      migrationLogger.error("layouts.json v1 decode dropped every entry; treating as unreadable.")
+    // Any dropped v1 entry leaves its detached sessions unreferenced; an
+    // authoritative read would let the reaper sweep them, so a partial decode
+    // reads as unknown (never as empty), mirroring the v2 lossy path.
+    guard legacy.count == raw.count else {
+      migrationLogger.error("layouts.json v1 decode dropped an entry; treating as unreadable.")
       return .unreadable
     }
     return .file(LayoutsMigrator.migrate(legacy))
@@ -406,10 +407,11 @@ nonisolated extension LayoutsMigrator {
     if !dropped.isEmpty {
       migrationLogger.error("Migration drops unreadable v1 entries: \(dropped.sorted())")
     }
-    // Any JSON object "decodes" as v1 with every element dropped; rewriting
-    // that as an empty v2 file would erase data migration cannot vouch for.
-    guard legacy.count == raw.count || !legacy.isEmpty else {
-      migrationLogger.error("Every v1 entry is unreadable; leaving layouts.json untouched.")
+    // Defer whenever any v1 entry fails to decode: migrating the readable ones
+    // would drop the rotten record's session references and let the launch
+    // reaper kill them. The untouched file retries on the next launch.
+    guard legacy.count == raw.count else {
+      migrationLogger.error("\(dropped.count) v1 entrie(s) unreadable; deferring migration.")
       return
     }
     let backupURL = url.appendingPathExtension("pre-tabs-per-split.bak")

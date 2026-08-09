@@ -529,7 +529,7 @@ struct LayoutsMigratorTests {
     #expect(migrated.worktrees.isEmpty)
   }
 
-  @Test func rottenV1EntryDropsThatEntryNotTheMigration() throws {
+  @Test func rottenV1EntryDefersTheMigration() throws {
     let surfaceID = UUID()
     let snapshot = TerminalLayoutSnapshot(
       tabs: [Self.tab(id: surfaceID, layout: Self.leaf(surfaceID))],
@@ -541,10 +541,28 @@ struct LayoutsMigratorTests {
     envelope["bad"] = ["title": "missing everything else"]
     let data = try JSONSerialization.data(withJSONObject: envelope)
     let files = LockIsolated([Self.layoutsURL: data])
-    Self.runMigration(files: files)
-    let migrated = try JSONDecoder().decode(LayoutsFile.self, from: #require(files.value[Self.layoutsURL]))
-    #expect(migrated.schemaVersion == LayoutsFile.currentSchemaVersion)
-    #expect(migrated.worktrees.count == 1)
-    #expect(migrated.worktrees["good"]?.layout.isConsistent == true)
+    let saves = Self.runMigration(files: files)
+    // A partial v1 decode must not migrate: rewriting the readable entries would
+    // drop the rotten record's sessions to the reaper. The file is left for a
+    // retry, and reads as unreadable meanwhile.
+    #expect(saves.value.isEmpty)
+    #expect(files.value[Self.layoutsURL] == data)
+  }
+
+  @Test func partialV1ReadsAsUnreadable() throws {
+    let surfaceID = UUID()
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [Self.tab(id: surfaceID, layout: Self.leaf(surfaceID))],
+      selectedTabIndex: 0
+    )
+    var envelope = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(["good": snapshot])) as? [String: Any]
+    )
+    envelope["bad"] = ["title": "missing everything else"]
+    let json = try #require(String(bytes: JSONSerialization.data(withJSONObject: envelope), encoding: .utf8))
+    guard case .unreadable = Self.readState(seededWith: json) else {
+      Issue.record("Expected .unreadable for a partial v1 decode.")
+      return
+    }
   }
 }
