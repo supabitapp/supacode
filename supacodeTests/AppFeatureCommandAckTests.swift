@@ -252,7 +252,7 @@ struct AppFeatureCommandAckTests {
     // The id exists as content in a different worktree; the global runtime keys
     // by id, so reusing it here must be refused even though this worktree is clean.
     let store = makeStore(worktree: worktree, tabExists: false) {
-      $0.terminalClient.contentExistsAnywhere = { _ in true }
+      $0.terminalClient.idExistsAnywhere = { _ in true }
     }
     let (readFD, writeFD) = makePipe()
     defer { close(readFD) }

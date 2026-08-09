@@ -2555,12 +2555,12 @@ struct AppFeature {
         }
         return .none
       }
-      // Reject explicit IDs colliding with a tab here, a content in any worktree
-      // (the runtime keys by id), or an in-flight creation, so a duplicate id
-      // can't have one creation resolve the other's ack.
+      // Reject explicit IDs colliding with a tab or content id in any worktree
+      // (the runtime and hibernation key globally), or an in-flight creation, so
+      // a duplicate id can't have one creation resolve the other's ack.
       if let id,
         terminalClient.tabExists(worktreeID, TabID(rawValue: id))
-          || terminalClient.contentExistsAnywhere(id)
+          || terminalClient.idExistsAnywhere(id)
           || Self.hasPendingCreationAck(id: id, state: state)
       {
         state.alert = AlertState {
@@ -2669,12 +2669,12 @@ struct AppFeature {
       guard validateSurface(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, state: &state) else {
         return .none
       }
-      // Reject explicit IDs colliding with a surface here, a content in any
-      // worktree (the runtime keys by id), or an in-flight split, so a duplicate
-      // id can't have one split resolve the other's ack.
+      // Reject explicit IDs colliding with a tab or content id in any worktree
+      // (the runtime and hibernation key globally), or an in-flight split, so a
+      // duplicate id can't have one split resolve the other's ack.
       if let id,
         terminalClient.surfaceExistsInWorktree(worktreeID, id)
-          || terminalClient.contentExistsAnywhere(id)
+          || terminalClient.idExistsAnywhere(id)
           || Self.hasPendingCreationAck(id: id, state: state)
       {
         state.alert = AlertState {
@@ -2752,12 +2752,12 @@ struct AppFeature {
       }
     case .paneSplit(let token, let direction, let input, let id):
       guard validatePane(worktreeID: worktreeID, token: token, state: &state) else { return .none }
-      // Reject explicit IDs colliding with a surface here, a content in any
-      // worktree (the runtime keys by id), or an in-flight split, so a duplicate
-      // id can't have one split resolve the other's ack.
+      // Reject explicit IDs colliding with a tab or content id in any worktree
+      // (the runtime and hibernation key globally), or an in-flight split, so a
+      // duplicate id can't have one split resolve the other's ack.
       if let id,
         terminalClient.surfaceExistsInWorktree(worktreeID, id)
-          || terminalClient.contentExistsAnywhere(id)
+          || terminalClient.idExistsAnywhere(id)
           || Self.hasPendingCreationAck(id: id, state: state)
       {
         state.alert = AlertState {

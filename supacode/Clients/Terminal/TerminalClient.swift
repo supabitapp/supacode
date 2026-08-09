@@ -9,9 +9,10 @@ struct TerminalClient {
   var tabCanRename: @MainActor @Sendable (Worktree.ID, TabID) -> Bool
   var surfaceExists: @MainActor @Sendable (Worktree.ID, TabID, UUID) -> Bool
   var surfaceExistsInWorktree: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
-  /// Whether a content UUID exists in any loaded worktree. The global content
-  /// runtime keys by id, so an explicit id must be unique across worktrees.
-  var contentExistsAnywhere: @MainActor @Sendable (UUID) -> Bool
+  /// Whether a UUID is already a tab or content id in any loaded worktree. The
+  /// runtime keys content globally and hibernation keys tabs globally, so an
+  /// explicit id must be unique across worktrees in both id spaces.
+  var idExistsAnywhere: @MainActor @Sendable (UUID) -> Bool
   /// Whether a CLI / deeplink pane token (a pane, tab, or content id) resolves
   /// to a pane in the worktree.
   var paneExists: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
@@ -165,7 +166,7 @@ extension TerminalClient: DependencyKey {
     tabCanRename: { _, _ in fatalError("TerminalClient.tabCanRename not configured") },
     surfaceExists: { _, _, _ in fatalError("TerminalClient.surfaceExists not configured") },
     surfaceExistsInWorktree: { _, _ in fatalError("TerminalClient.surfaceExistsInWorktree not configured") },
-    contentExistsAnywhere: { _ in fatalError("TerminalClient.contentExistsAnywhere not configured") },
+    idExistsAnywhere: { _ in fatalError("TerminalClient.idExistsAnywhere not configured") },
     paneExists: { _, _ in fatalError("TerminalClient.paneExists not configured") },
     canMoveTabToNewSplit: { _, _ in fatalError("TerminalClient.canMoveTabToNewSplit not configured") },
     tabID: { _, _ in fatalError("TerminalClient.tabID not configured") },
@@ -189,7 +190,7 @@ extension TerminalClient: DependencyKey {
     surfaceExistsInWorktree: unimplemented("TerminalClient.surfaceExistsInWorktree", placeholder: true),
     // Benign default: the collision gate runs on every explicit-id creation, so
     // tests that don't exercise cross-worktree collisions need not override it.
-    contentExistsAnywhere: { _ in false },
+    idExistsAnywhere: { _ in false },
     paneExists: unimplemented("TerminalClient.paneExists", placeholder: true),
     canMoveTabToNewSplit: unimplemented("TerminalClient.canMoveTabToNewSplit", placeholder: true),
     tabID: unimplemented("TerminalClient.tabID", placeholder: nil),

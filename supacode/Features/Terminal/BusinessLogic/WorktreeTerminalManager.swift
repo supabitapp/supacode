@@ -1558,15 +1558,18 @@ final class WorktreeTerminalManager {
     layoutState(for: worktreeID)?.layout.tab(containingContent: ContentID(rawValue: surfaceID)) != nil
   }
 
-  /// Whether a content UUID exists in any loaded worktree. The global content
-  /// runtime keys by id, so the same explicit id in two worktrees would conflate
-  /// their sessions; the creation gate rejects that across worktrees.
-  func contentExistsAnywhere(_ id: UUID) -> Bool {
+  /// Whether a UUID is already used as a tab or content id in any loaded
+  /// worktree. The runtime keys content globally and hibernation keys tabs
+  /// globally, so an explicit id must be unique across worktrees in both id
+  /// spaces; the creation gate rejects a collision in either.
+  func idExistsAnywhere(_ id: UUID) -> Bool {
     guard let store = appStore else { return false }
     let contentID = ContentID(rawValue: id)
+    let tabID = TabID(rawValue: id)
     return store.withState { state in
-      for layout in state.terminals.layouts where layout.layout.tab(containingContent: contentID) != nil {
-        return true
+      for layout in state.terminals.layouts {
+        if layout.layout.tab(containingContent: contentID) != nil { return true }
+        if layout.layout.pane(containingTab: tabID) != nil { return true }
       }
       return false
     }
