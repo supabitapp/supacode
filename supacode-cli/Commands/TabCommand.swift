@@ -32,7 +32,7 @@ extension TabCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
       let items = try QueryDispatcher.query(
         resource: "tabs",
         params: ["worktreeID": wID],
@@ -58,8 +58,8 @@ extension TabCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
-      let tID = try resolveFocusedTabID(tab, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let tID = try IDResolvers.resolveFocusedTabID(tab, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
       try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.tabFocus(worktreeID: wID, tabID: tID),
         timeoutSeconds: timeoutOption.timeout
@@ -95,14 +95,14 @@ extension TabCommand {
       if let pane, UUID(uuidString: pane) == nil {
         throw ValidationError("--pane must be a pane, tab, or content UUID.")
       }
-      try validateNewID(newID)
+      try IDResolvers.validateNewID(newID)
       // A new tab has no override to clear, so a blank title would be dropped silently.
       guard let title, title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
       throw ValidationError("--title cannot be blank. Omit it to keep the terminal title.")
     }
 
     func run() throws {
-      let wID = try resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
       let resolvedID = newID ?? UUID().uuidString
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
@@ -134,8 +134,8 @@ extension TabCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
-      let tID = try resolveFocusedTabID(tab, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let tID = try IDResolvers.resolveFocusedTabID(tab, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
       try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.tabRename(worktreeID: wID, tabID: tID, title: title),
         timeoutSeconds: timeoutOption.timeout
@@ -160,8 +160,8 @@ extension TabCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
-      let tID = try resolveFocusedTabID(tab, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let tID = try IDResolvers.resolveFocusedTabID(tab, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.tabMove(worktreeID: wID, tabID: tID, direction: direction.rawValue)),
@@ -184,8 +184,8 @@ extension TabCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
-      let tID = try resolveFocusedTabID(tab, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let tID = try IDResolvers.resolveFocusedTabID(tab, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.tabClose(worktreeID: wID, tabID: tID)),

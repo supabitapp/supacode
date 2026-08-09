@@ -33,7 +33,7 @@ extension PaneCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
       let items = try QueryDispatcher.query(
         resource: "panes",
         params: ["worktreeID": wID],
@@ -74,7 +74,7 @@ extension PaneCommand {
     }
 
     func run() throws {
-      let wID = try resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
       let url: String
       if let direction {
         url = DeeplinkURLBuilder.paneFocusDirection(worktreeID: wID, direction: direction.rawValue)
@@ -111,12 +111,12 @@ extension PaneCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func validate() throws {
-      try validateNewID(newID)
+      try IDResolvers.validateNewID(newID)
     }
 
     func run() throws {
-      let wID = try resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
-      let token = try resolveFocusedPaneToken(pane, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let token = try IDResolvers.resolveFocusedPaneToken(pane, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
       let resolvedID = newID ?? UUID().uuidString
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
@@ -147,8 +147,8 @@ extension PaneCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
-      let token = try resolveFocusedPaneToken(pane, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let token = try IDResolvers.resolveFocusedPaneToken(pane, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.paneClose(worktreeID: wID, paneToken: token)),
@@ -171,8 +171,8 @@ extension PaneCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
-      let token = try resolveFocusedPaneToken(pane, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let token = try IDResolvers.resolveFocusedPaneToken(pane, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
       try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.paneZoom(worktreeID: wID, paneToken: token),
         timeoutSeconds: timeoutOption.timeout
@@ -189,7 +189,7 @@ extension PaneCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
       try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.paneEqualize(worktreeID: wID),
         timeoutSeconds: timeoutOption.timeout
@@ -211,8 +211,8 @@ extension PaneCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
-      let token = try resolveFocusedPaneToken(pane, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let token = try IDResolvers.resolveFocusedPaneToken(pane, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
       try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.paneWindow(worktreeID: wID, paneToken: token),
         timeoutSeconds: timeoutOption.timeout

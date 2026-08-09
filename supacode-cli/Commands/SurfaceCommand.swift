@@ -40,8 +40,8 @@ extension SurfaceCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveWorktreeID(worktree)
-      let tID = try resolveTabID(tab)
+      let wID = try IDResolvers.resolveWorktreeID(worktree)
+      let tID = try IDResolvers.resolveTabID(tab)
       let items = try QueryDispatcher.query(
         resource: "surfaces",
         params: ["worktreeID": wID, "tabID": tID],
@@ -73,9 +73,9 @@ extension SurfaceCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveWorktreeID(worktree)
-      let tID = try resolveTabID(tab)
-      let sID = try resolveSurfaceID(surface)
+      let wID = try IDResolvers.resolveWorktreeID(worktree)
+      let tID = try IDResolvers.resolveTabID(tab)
+      let sID = try IDResolvers.resolveSurfaceID(surface)
       try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.surfaceFocus(worktreeID: wID, tabID: tID, surfaceID: sID, input: input),
         timeoutSeconds: timeoutOption.timeout
@@ -109,9 +109,9 @@ extension SurfaceCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveWorktreeID(worktree)
-      let tID = try resolveTabID(tab)
-      let sID = try resolveSurfaceID(surface)
+      let wID = try IDResolvers.resolveWorktreeID(worktree)
+      let tID = try IDResolvers.resolveTabID(tab)
+      let sID = try IDResolvers.resolveSurfaceID(surface)
       let resolvedID = newID ?? UUID().uuidString
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
@@ -144,9 +144,9 @@ extension SurfaceCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveWorktreeID(worktree)
-      let tID = try resolveTabID(tab)
-      let sID = try resolveSurfaceID(surface)
+      let wID = try IDResolvers.resolveWorktreeID(worktree)
+      let tID = try IDResolvers.resolveTabID(tab)
+      let sID = try IDResolvers.resolveSurfaceID(surface)
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.surfaceClose(worktreeID: wID, tabID: tID, surfaceID: sID)),
