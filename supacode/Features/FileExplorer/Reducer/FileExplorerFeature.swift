@@ -629,6 +629,9 @@ struct FileExplorerFeature {
       guard worktreeID == state.activeWorktreeID else { return .none }
       return gitStatusEffect(state)
     case .failure(let error):
+      // Drop a stale failure from a worktree the user already left; it must not
+      // alert over the now-active inspector.
+      guard worktreeID == state.activeWorktreeID else { return .none }
       state.alert = Self.operationFailureAlert(error)
       return .none
     }

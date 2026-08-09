@@ -1272,6 +1272,32 @@ struct FileExplorerFeatureTests {
     await store.send(.contextChanged(nil, isVisible: false))
   }
 
+  @Test func staleGitFailureFromAnotherWorktreeDoesNotAlert() async {
+    let worktreeA = Self.worktree(path: "/tmp/wt-a")
+    let store = TestStore(initialState: FileExplorerFeature.State()) {
+      FileExplorerFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.fileExplorerClient.list = { _, _ in Self.listing([("a.txt", isDirectory: false)]) }
+      $0.gitClient.fileStatus = { _ in Self.gitSnapshot([]) }
+    }
+    store.exhaustivity = .off
+    await store.send(.contextChanged(FileExplorerFeature.Context(worktree: worktreeA), isVisible: true))
+    await store.skipReceivedActions()
+
+    let error = GitOperationError(path: "a.txt", kind: .failed)
+    // A failure from a worktree the user already left must not alert over the
+    // now-active inspector.
+    await store.send(.gitOperationCompleted(worktreeID: Worktree.ID("/tmp/wt-b"), .failure(error)))
+    #expect(store.state.alert == nil)
+
+    // The active worktree's failure still alerts.
+    await store.send(.gitOperationCompleted(worktreeID: worktreeA.id, .failure(error)))
+    #expect(store.state.alert != nil)
+
+    await store.send(.contextChanged(nil, isVisible: false))
+  }
+
   @Test func movingFilesWithoutCollisionTransfersThenRefreshes() async {
     let worktree = Self.worktree(path: "/tmp/wt-a")
     let listing = Self.listing([("a.txt", isDirectory: false)])
