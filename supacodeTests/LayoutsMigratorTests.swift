@@ -293,6 +293,50 @@ struct LayoutsMigratorTests {
     #expect(decoded.worktrees["good"] != nil)
   }
 
+  @Test func lossyV2DecodeReadsAsUnreadableSoTheReaperNeverSweeps() {
+    // A dropped entry leaves `allKnownSurfaceIDs` incomplete; a `.file` read
+    // would let the orphan reaper kill sessions the dropped record still owns.
+    let json = """
+      {"schemaVersion":2,"worktrees":{
+        "good":{"layout":{"panes":[],"tree":{}}},
+        "bad":{"layout":"not an object"}}}
+      """
+    let state = Self.readState(seededWith: json)
+    guard case .unreadable = state else {
+      Issue.record("Expected .unreadable for a lossy v2 decode, got \(state).")
+      return
+    }
+  }
+
+  @Test func cleanV2DecodeReadsAsFile() {
+    let json = """
+      {"schemaVersion":2,"worktrees":{"good":{"layout":{"panes":[],"tree":{}}}}}
+      """
+    let state = Self.readState(seededWith: json)
+    guard case .file(let file) = state else {
+      Issue.record("Expected .file for a clean v2 decode, got \(state).")
+      return
+    }
+    #expect(file.worktrees.count == 1)
+    #expect(file.undecodedWorktreeCount == 0)
+  }
+
+  /// Reads `readFromDisk` against an in-memory file seeded with `json`.
+  nonisolated private static func readState(seededWith json: String) -> LayoutsFile.DiskState {
+    let files = LockIsolated<[URL: Data]>([layoutsURL: Data(json.utf8)])
+    return withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { target in
+          guard let data = files.value[target] else { throw CocoaError(.fileReadNoSuchFile) }
+          return data
+        },
+        save: { _, _ in }
+      )
+    } operation: {
+      LayoutsFile.readFromDisk(url: layoutsURL)
+    }
+  }
+
   // MARK: - File migration runner.
 
   nonisolated private static let layoutsURL = URL(

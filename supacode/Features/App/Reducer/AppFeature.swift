@@ -519,6 +519,12 @@ struct AppFeature {
         state.repositories.$sidebar.withLock { sidebar in
           sidebar.focusedWorktreeID = lastFocusedWorktreeID
         }
+        // A freshly created worktree emits `selectedWorktreeChanged` before
+        // `worktreeCreated`, so this bootstrap can create the tab first; carry
+        // the same setup-script intent or the later, setup-aware call finds the
+        // tab already made and `enableSetupScriptIfNeeded` refuses to re-arm it.
+        let runSetupScriptIfNew =
+          state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
         return .merge(
           .run { _ in
             await terminalClient.send(.setSelectedWorktreeID(worktree.id))
@@ -527,7 +533,7 @@ struct AppFeature {
             // A worktree selected for the first time (fresh install, empty
             // migration) still needs its bootstrap tab; no-op when populated.
             await terminalClient.send(
-              .ensureInitialTab(worktree, runSetupScriptIfNew: false, focusing: false))
+              .ensureInitialTab(worktree, runSetupScriptIfNew: runSetupScriptIfNew, focusing: false))
           },
           .run { _ in
             await worktreeInfoWatcher.send(.setSelectedWorktreeID(worktree.id))

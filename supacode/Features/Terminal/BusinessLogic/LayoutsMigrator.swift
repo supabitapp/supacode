@@ -103,6 +103,16 @@ nonisolated extension LayoutsFile {
       return .absent
     }
     if let file = try? JSONDecoder().decode(LayoutsFile.self, from: data) {
+      // A tolerant decode that dropped entries leaves `allKnownSurfaceIDs`
+      // incomplete; the orphan reaper would then kill sessions the dropped
+      // records still own. Treat a partial read as unreadable, mirroring the
+      // writer's refusal to persist a lossy value.
+      guard file.undecodedWorktreeCount == 0 else {
+        migrationLogger.error(
+          "layouts.json dropped \(file.undecodedWorktreeCount) entrie(s); treating as unreadable."
+        )
+        return .unreadable
+      }
       return .file(file)
     }
     guard

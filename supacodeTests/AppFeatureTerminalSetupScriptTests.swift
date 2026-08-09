@@ -2,6 +2,7 @@ import ComposableArchitecture
 import DependenciesTestSupport
 import Foundation
 import IdentifiedCollections
+import SupacodeSettingsShared
 import Testing
 
 @testable import SupacodeSettingsFeature
@@ -174,6 +175,71 @@ struct AppFeatureTerminalSetupScriptTests {
       sent.value == [
         .ensureInitialTab(worktree, runSetupScriptIfNew: false, focusing: false)
       ]
+    )
+  }
+
+  @Test(.dependencies) func selectedWorktreeChangedCarriesSetupScriptFlagForPendingWorktree() async {
+    // A freshly created worktree emits `selectedWorktreeChanged` before
+    // `worktreeCreated`, so this bootstrap must carry the setup-script intent
+    // or the later, setup-aware call finds the tab already made.
+    let worktree = makeWorktree()
+    let repositoriesState = makeRepositoriesState(
+      worktree: worktree,
+      pendingSetupScript: true,
+      selected: true
+    )
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let storage = SettingsTestStorage()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+      $0.worktreeInfoWatcher.send = { _ in }
+      $0.settingsFileStorage = storage.storage
+      $0.settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-settings-\(UUID().uuidString).json")
+    }
+    store.exhaustivity = .off
+
+    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree))))
+    await store.finish()
+    #expect(
+      sent.value.contains(.ensureInitialTab(worktree, runSetupScriptIfNew: true, focusing: false))
+    )
+  }
+
+  @Test(.dependencies) func selectedWorktreeChangedOmitsSetupScriptFlagForIdleWorktree() async {
+    let worktree = makeWorktree()
+    let repositoriesState = makeRepositoriesState(
+      worktree: worktree,
+      pendingSetupScript: false,
+      selected: true
+    )
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let storage = SettingsTestStorage()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+      $0.worktreeInfoWatcher.send = { _ in }
+      $0.settingsFileStorage = storage.storage
+      $0.settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-settings-\(UUID().uuidString).json")
+    }
+    store.exhaustivity = .off
+
+    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree))))
+    await store.finish()
+    #expect(
+      sent.value.contains(.ensureInitialTab(worktree, runSetupScriptIfNew: false, focusing: false))
     )
   }
 
