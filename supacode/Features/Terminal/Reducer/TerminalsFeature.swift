@@ -131,14 +131,27 @@ struct TerminalsFeature {
 
       case .layoutsHydrated(let file):
         state.layoutsAreReadOnly = file.schemaVersion > LayoutsFile.currentSchemaVersion
+        // The runtime keys globally by content id and hibernation by tab id, so
+        // seed from what is already hydrated and refuse any record that reuses an
+        // id from another worktree (possible in pre-creation-gate layouts).
+        var seenContentIDs = Set(state.layouts.flatMap { $0.layout.allContentIDs })
+        var seenTabIDs = Set(state.layouts.flatMap { $0.layout.panes.flatMap(\.tabs.ids) })
         for (key, record) in file.worktrees.sorted(by: { $0.key < $1.key }) {
           guard record.layout.isConsistent else {
             Self.logger.error("Dropping inconsistent persisted layout for \(key)")
             continue
           }
+          let contentIDs = record.layout.allContentIDs
+          let tabIDs = record.layout.panes.flatMap(\.tabs.ids)
+          guard seenContentIDs.isDisjoint(with: contentIDs), seenTabIDs.isDisjoint(with: tabIDs) else {
+            Self.logger.error("Dropping persisted layout for \(key): an id collides with another worktree")
+            continue
+          }
           let worktreeID = Worktree.ID(key)
           guard state.layouts[id: worktreeID] == nil else { continue }
           state.layouts.append(LayoutFeature.State(id: worktreeID, layout: record.layout))
+          seenContentIDs.formUnion(contentIDs)
+          seenTabIDs.formUnion(tabIDs)
         }
         // Hydration can land after the first selection; re-diff so the
         // restored hidden tabs arm and the visible selection wakes.

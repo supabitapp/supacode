@@ -439,6 +439,22 @@ struct TerminalsFeatureTests {
     }
   }
 
+  @Test func layoutsHydrationDropsCrossWorktreeIDCollisions() async {
+    let sharedContentID = ContentID()
+    let first = Self.layout(paneID: PaneID(), tabID: TabID(), contentID: sharedContentID)
+    // The second worktree reuses the same content id (pre-gate data); it would
+    // collide in the globally keyed runtime, so only the first key hydrates.
+    let second = Self.layout(paneID: PaneID(), tabID: TabID(), contentID: sharedContentID)
+    let file = LayoutsFile(worktrees: [
+      "/tmp/a": LayoutRecord(layout: first),
+      "/tmp/b": LayoutRecord(layout: second),
+    ])
+    let store = TestStore(initialState: TerminalsFeature.State()) { TerminalsFeature() }
+    await store.send(.layoutsHydrated(file)) {
+      $0.layouts = [LayoutFeature.State(id: Worktree.ID("/tmp/a"), layout: first)]
+    }
+  }
+
   @Test func layoutsHydrationNeverReplacesALiveLayout() async {
     let live = Self.layout(paneID: PaneID(), tabID: TabID(), contentID: ContentID())
     let persisted = Self.layout(paneID: PaneID(), tabID: TabID(), contentID: ContentID())
