@@ -12,6 +12,12 @@ final class ContentRuntime {
   /// Tombstones for contents whose async kill is still in flight; a tombstoned
   /// ID cannot be re-provisioned until `confirmKill` clears it.
   private(set) var pendingKill: Set<ContentID> = []
+  /// Monotonic per-content render-host generation. Structural rebuilds create
+  /// a new host container before the old one is dismantled; only the newest
+  /// claimant may mount, so a stale container can never steal the renderer
+  /// into a dying hierarchy.
+  private var renderHostGenerations: [ContentID: UInt64] = [:]
+  private var nextRenderHostGeneration: UInt64 = 0
 
   nonisolated init() {}
 
@@ -53,7 +59,10 @@ final class ContentRuntime {
 
   /// Unregisters and tears the content down; when `tombstone` is true the ID
   /// is blocked from re-provisioning until the caller's async kill lands and
-  /// `confirmKill` clears it.
+  /// `confirmKill` clears it. Claims deliberately survive removal: the
+  /// reattach flow re-provisions the same content under its existing host,
+  /// whose claim must stay current, and a stale entry can never block a
+  /// fresh host, which claims on creation.
   func remove(_ id: ContentID, tombstone: Bool) {
     contents[id]?.tearDown()
     contents[id] = nil
@@ -61,9 +70,23 @@ final class ContentRuntime {
     pendingKill.insert(id)
   }
 
-  /// Clears a tombstone once the async kill completed.
+  /// Clears a tombstone once the async kill completed; the ID is provably
+  /// dead here, so its render-host claim goes with it.
   func confirmKill(_ id: ContentID) {
     pendingKill.remove(id)
+    renderHostGenerations.removeValue(forKey: id)
+  }
+
+  /// Registers a new render host for the content and returns its claim token.
+  func claimRenderHost(for id: ContentID) -> UInt64 {
+    nextRenderHostGeneration += 1
+    renderHostGenerations[id] = nextRenderHostGeneration
+    return nextRenderHostGeneration
+  }
+
+  /// Whether the claim token still names the content's current render host.
+  func isCurrentRenderHost(_ generation: UInt64, for id: ContentID) -> Bool {
+    renderHostGenerations[id] == generation
   }
 }
 

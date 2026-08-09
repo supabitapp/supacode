@@ -79,7 +79,8 @@ public struct AppearanceSettingsView: View {
       Section {
         Picker(selection: $store.confirmCloseTab) {
           ForEach(ConfirmCloseTabMode.allCases, id: \.self) { mode in
-            Text(mode.label).tag(mode)
+            DefaultTaggedLabel(label: mode.label, isDefault: mode == GlobalSettings.default.confirmCloseTab)
+              .tag(mode)
           }
         } label: {
           Text("Confirm before closing tabs")
@@ -87,7 +88,8 @@ public struct AppearanceSettingsView: View {
         }
         Picker(selection: $store.confirmQuitMode) {
           ForEach(ConfirmQuitMode.allCases, id: \.self) { mode in
-            Text(mode.label).tag(mode)
+            DefaultTaggedLabel(label: mode.label, isDefault: mode == GlobalSettings.default.confirmQuitMode)
+              .tag(mode)
           }
         } label: {
           Text("Confirm before quitting app")
@@ -125,7 +127,7 @@ public struct AppearanceSettingsView: View {
         Picker(
           selection: defaultEditorID
         ) {
-          Text("Automatic")
+          DefaultTaggedLabel(label: "Auto", isDefault: true)
             .tag(OpenWorktreeAction.automaticSettingsID)
           ForEach(openActionOptions) { action in
             Text(action.labelTitle)

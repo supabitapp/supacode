@@ -150,6 +150,66 @@ struct AppFeatureSettingsChangedTests {
     await store.finish()
   }
 
+  @Test(.dependencies) func agentPresenceDeltaWritesTheContentsTabChrome() async {
+    let surfaceID = UUID()
+    let runtime = ContentRuntime()
+    let content = ChromeTabContent(id: ContentID(rawValue: surfaceID))
+    #expect(runtime.provision(content, at: .fallback))
+    var appState = AppFeature.State(
+      repositories: RepositoriesFeature.State(),
+      settings: SettingsFeature.State()
+    )
+    appState.agentPresence.bySurface[surfaceID] = [.claude]
+    appState.agentPresence.records[
+      AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    ] = AgentPresenceFeature.PresenceRecord(activity: .busy, pids: [42])
+    let clock = TestClock()
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.contentRuntime = runtime
+      $0.terminalClient.saveLayoutsWithAgents = { _ in }
+      $0.terminalClient.send = { _ in }
+    }
+
+    await store.send(.agentPresence(.delegate(.surfacesChanged([surfaceID]))))
+    await clock.advance(by: .seconds(1))
+    await store.finish()
+    #expect(content.terminalChrome.agents == [.init(agent: .claude, activity: .busy)])
+    #expect(content.terminalChrome.isWorking)
+  }
+
+  @Test(.dependencies) func agentPresenceDeltaClearsTheChromeWhenTheLastAgentLeaves() async {
+    let surfaceID = UUID()
+    let runtime = ContentRuntime()
+    let content = ChromeTabContent(id: ContentID(rawValue: surfaceID))
+    #expect(runtime.provision(content, at: .fallback))
+    // Stale badge from an earlier snapshot; the empty delta must clear it.
+    content.terminalChrome.agents = [.init(agent: .claude, activity: .busy)]
+    content.terminalChrome.isWorking = true
+    let clock = TestClock()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: RepositoriesFeature.State(),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.contentRuntime = runtime
+      $0.terminalClient.saveLayoutsWithAgents = { _ in }
+      $0.terminalClient.send = { _ in }
+    }
+
+    await store.send(.agentPresence(.delegate(.surfacesChanged([surfaceID]))))
+    await clock.advance(by: .seconds(1))
+    await store.finish()
+    #expect(content.terminalChrome.agents.isEmpty)
+    #expect(!content.terminalChrome.isWorking)
+  }
+
   @Test(.dependencies) func togglingHibernationFlagFansOutToTerminalClient() async {
     let sentEnabled = LockIsolated<[Bool]>([])
     var appState = AppFeature.State(

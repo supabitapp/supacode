@@ -348,6 +348,7 @@ struct AppFeature {
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
   @Dependency(AppLifecycleClient.self) private var appLifecycleClient
+  @Dependency(ContentRuntime.self) private var contentRuntime
   @Dependency(DeeplinkClient.self) private var deeplinkClient
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
   @Dependency(WorkspaceClient.self) private var workspaceClient
@@ -1749,10 +1750,24 @@ struct AppFeature {
         // The manager already detached the layout; nothing app-level remains.
         return .none
 
-      case .terminalEvent(.tabProgressDisplayChanged(let worktreeID, let tabID, let display)):
-        return .send(
-          .terminals(.layouts(.element(id: worktreeID, action: .tabProgressChanged(id: tabID, display: display))))
-        )
+      case .terminals(.layouts(.element(let worktreeID, .wakeTab(let tabID)))):
+        // A woken content is a fresh instance whose chrome missed any presence
+        // fan-out that ran while the tab was unprovisioned (restored layouts);
+        // replay the current snapshot. Effect-deferred: the core reducer runs
+        // before the terminals scope, so the wake has not provisioned yet.
+        guard
+          let contentID = state.terminals.layouts[id: worktreeID]?.layout
+            .pane(containingTab: tabID)?.tabs[id: tabID]?.content.id
+        else { return .none }
+        let presence = state.agentPresence
+        return .run { @MainActor _ in
+          @Shared(.settingsFile) var settingsFile: SettingsFile
+          writeAgentChrome(
+            for: [contentID.rawValue],
+            presence: presence,
+            badgesEnabled: settingsFile.global.agentPresenceBadgesEnabled
+          )
+        }
 
       case .terminals:
         return .none
@@ -1932,29 +1947,27 @@ struct AppFeature {
         )
       )
     }
-    // Per-tab badge fan-out: each affected content re-projects its snapshot;
-    // the element send bounds invalidation to that worktree's strips.
-    for layout in state.terminals.layouts {
-      for pane in layout.layout.panes {
-        for tab in pane.tabs where tabSurfaceIDs.contains(tab.content.id.rawValue) {
-          let snapshot = presence.rowSnapshot(
-            across: [tab.content.id.rawValue], badgesEnabled: badgesEnabled)
-          effects.append(
-            .send(
-              .terminals(
-                .layouts(
-                  .element(
-                    id: layout.id,
-                    action: .agentPresenceChanged(content: tab.content.id, snapshot: snapshot)
-                  )
-                )
-              )
-            )
-          )
-        }
-      }
-    }
+    // Per-tab badge fan-out: write each affected content's chrome directly.
+    // Chrome is content-owned and observable, so the strips re-render per tab
+    // without routing terminal state through the layout reducer.
+    writeAgentChrome(for: tabSurfaceIDs, presence: presence, badgesEnabled: badgesEnabled)
     return .merge(effects)
+  }
+
+  private func writeAgentChrome(
+    for surfaceIDs: some Sequence<UUID>,
+    presence: AgentPresenceFeature.State,
+    badgesEnabled: Bool
+  ) {
+    for surfaceID in surfaceIDs {
+      guard
+        let chrome = contentRuntime.content(for: ContentID(rawValue: surfaceID))?.chrome
+          as? TerminalTabChrome
+      else { continue }
+      let snapshot = presence.rowSnapshot(across: [surfaceID], badgesEnabled: badgesEnabled)
+      chrome.agents = snapshot.agents
+      chrome.isWorking = snapshot.isWorking
+    }
   }
 
   // MARK: - Open worktree.

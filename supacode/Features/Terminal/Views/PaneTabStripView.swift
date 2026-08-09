@@ -267,10 +267,12 @@ private struct PaneTabView: View {
 
   var body: some View {
     let _ = store.renderEpoch
-    let badge = store.agentBadges[tab.content.id]
+    // Content-owned observable chrome: reads register per-tab observation, so
+    // an agent storm or progress tick re-renders only this tab.
+    let chrome = runtime.content(for: tab.content.id)?.chrome
     let isDormant = runtime.renderer(for: tab.content.id) == nil
-    let progressDisplay = store.tabProgress[tab.id]
-    let isLocked = store.scriptLockedTabs.contains(tab.id)
+    let progressDisplay = chrome?.progress
+    let isLocked = chrome?.isLocked == true
     // The trailing slot is a layout sibling, so it takes only the width it
     // needs and gives the rest to the title.
     HStack(spacing: TerminalTabBarMetrics.contentSpacing) {
@@ -278,8 +280,8 @@ private struct PaneTabView: View {
         tab: tab,
         isSelected: isSelected,
         isDormant: isDormant,
-        agents: badge?.agents ?? [],
-        isShimmering: isShimmering(badge: badge, progressDisplay: progressDisplay)
+        accessory: chrome?.accessory,
+        isShimmering: isShimmering(chrome: chrome, progressDisplay: progressDisplay)
       )
       .allowsHitTesting(false)
       // The select button already carries the tab's label, so this would
@@ -473,10 +475,10 @@ private struct PaneTabView: View {
   /// Progress and blocking-script activity shimmer like agent work; workspace
   /// lifecycle work is represented on the focused pane's selected tab only.
   private func isShimmering(
-    badge: AgentPresenceFeature.RowSnapshot?,
+    chrome: (any TabChrome)?,
     progressDisplay: TerminalTabProgressDisplay?
   ) -> Bool {
-    badge?.isWorking == true
+    chrome?.isWorking == true
       || progressDisplay != nil
       || (isSelected && isFocusedPane && isLifecycleBusy)
   }
@@ -566,12 +568,13 @@ private struct PaneTabView: View {
   }
 }
 
-/// The tab's leading content: dormant marker, agent badge, icon, and title.
+/// The tab's leading content: dormant marker, content accessory, icon, and
+/// title.
 private struct PaneTabLabelView: View {
   let tab: TabItem
   let isSelected: Bool
   let isDormant: Bool
-  let agents: [AgentPresenceFeature.AgentInstance]
+  let accessory: AnyView?
   let isShimmering: Bool
 
   var body: some View {
@@ -589,9 +592,8 @@ private struct PaneTabLabelView: View {
           .accessibilityLabel("Hibernated tab")
           .help("Hibernated to save resources. Select to reconnect.")
       }
-      if !agents.isEmpty {
-        PaneTabAgentBadgeContent(agents: agents)
-          .equatable()
+      if let accessory {
+        accessory
       }
       if let icon = tab.icon {
         Image(systemName: icon)
@@ -630,15 +632,6 @@ private struct PaneTabTitleLabel: View, Equatable {
       .lineLimit(1)
       .foregroundStyle(TerminalTabBarColors.activeText)
       .shimmer(isActive: isShimmering)
-  }
-}
-
-private struct PaneTabAgentBadgeContent: View, Equatable {
-  let agents: [AgentPresenceFeature.AgentInstance]
-
-  var body: some View {
-    AgentAvatarGroupView(instances: agents, size: 14)
-      .padding(.trailing, 2)
   }
 }
 

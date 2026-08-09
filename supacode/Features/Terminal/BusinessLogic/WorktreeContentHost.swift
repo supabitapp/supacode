@@ -36,8 +36,6 @@ final class WorktreeContentHost {
   @ObservationIgnored var onSurfacesHibernated: ((Set<UUID>) -> Void)?
   @ObservationIgnored var onDormancyChanged: (() -> Void)?
   @ObservationIgnored var onAgentHookEvent: ((AgentHookEvent) -> Void)?
-  @ObservationIgnored var onTabProgressDisplayChanged: ((TabID, TerminalTabProgressDisplay?) -> Void)?
-  @ObservationIgnored var onScriptLocksChanged: ((Set<TabID>) -> Void)?
 
   var socketPath: String?
   var notificationsEnabled = true
@@ -82,8 +80,9 @@ final class WorktreeContentHost {
   /// count as busy nor confirm on close.
   @ObservationIgnored private(set) var completedBlockingScriptTabs: Set<TabID> = [] {
     didSet {
-      guard oldValue != completedBlockingScriptTabs else { return }
-      onScriptLocksChanged?(completedBlockingScriptTabs)
+      for tabID in oldValue.symmetricDifference(completedBlockingScriptTabs) {
+        terminalChrome(for: tabID)?.isLocked = completedBlockingScriptTabs.contains(tabID)
+      }
     }
   }
   @ObservationIgnored private var pendingSetupScript: Bool
@@ -513,11 +512,13 @@ final class WorktreeContentHost {
     let display = computeTabProgressDisplay(for: tabID)
     guard lastTabProgressDisplays[tabID] != display else { return }
     lastTabProgressDisplays[tabID] = display
-    onTabProgressDisplayChanged?(tabID, display)
+    terminalChrome(for: tabID)?.progress = display
   }
 
-  func currentTabProgressDisplays() -> [TabID: TerminalTabProgressDisplay?] {
-    lastTabProgressDisplays
+  /// The tab's content-owned strip chrome, nil for non-terminal contents.
+  private func terminalChrome(for tabID: TabID) -> TerminalTabChrome? {
+    guard let contentID = tab(withID: tabID)?.content.id else { return nil }
+    return runtime.content(for: contentID)?.chrome as? TerminalTabChrome
   }
 
   func emitTaskStatusIfChanged() {

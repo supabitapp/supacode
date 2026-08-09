@@ -1,3 +1,4 @@
+import AppKit
 import Dependencies
 import DependenciesTestSupport
 import Foundation
@@ -45,10 +46,10 @@ struct WorktreeContentHostTests {
     )
   }
 
-  private func makeHost(layout: PaneLayout?) -> WorktreeContentHost {
+  private func makeHost(layout: PaneLayout?, runtime: ContentRuntime = ContentRuntime()) -> WorktreeContentHost {
     let host = WorktreeContentHost(
       worktree: makeWorktree(),
-      runtime: ContentRuntime(),
+      runtime: runtime,
       clock: ContinuousClock(),
       runSetupScript: false
     )
@@ -110,5 +111,58 @@ struct WorktreeContentHostTests {
 
     #expect(host.surfaceStates[surfaceID]?.unseenNotificationCount == 1)
     #expect(host.hasUnseenNotification)
+  }
+
+  @Test(.dependencies) func blockingScriptCompletionLocksTheTabChrome() {
+    let surfaceID = UUID()
+    let tabID = TabID(rawValue: surfaceID)
+    let runtime = ContentRuntime()
+    let content = ChromeTabContent(id: ContentID(rawValue: surfaceID))
+    #expect(runtime.provision(content, at: .fallback))
+    let host = makeHost(layout: singleTabLayout(contentID: surfaceID), runtime: runtime)
+
+    host.trackBlockingScript(kind: .archive, tabID: tabID, launchDirectory: nil)
+    #expect(content.terminalChrome.isLocked == false)
+
+    host.handleBlockingScriptCommandFinished(tabID: tabID, exitCode: 0)
+    #expect(content.terminalChrome.isLocked)
+
+    // Re-running the script unlocks the parked shell's replacement.
+    host.trackBlockingScript(kind: .archive, tabID: tabID, launchDirectory: nil)
+    #expect(content.terminalChrome.isLocked == false)
+  }
+}
+
+/// Pins the render-host claim invariants the steal-proof mount depends on.
+@MainActor
+struct WorktreeContentRuntimeRenderHostTests {
+  @Test func aNewerClaimInvalidatesTheOlderOne() {
+    let runtime = ContentRuntime()
+    let contentID = ContentID()
+    let first = runtime.claimRenderHost(for: contentID)
+    #expect(runtime.isCurrentRenderHost(first, for: contentID))
+    let second = runtime.claimRenderHost(for: contentID)
+    #expect(!runtime.isCurrentRenderHost(first, for: contentID))
+    #expect(runtime.isCurrentRenderHost(second, for: contentID))
+  }
+
+  @Test func aClaimSurvivesRemovalForTheReattachFlow() {
+    let runtime = ContentRuntime()
+    let content = ChromeTabContent(id: ContentID())
+    #expect(runtime.provision(content, at: .fallback))
+    let claim = runtime.claimRenderHost(for: content.id)
+    // Reattach removes and re-provisions the same ID under the live host.
+    runtime.remove(content.id, tombstone: false)
+    #expect(runtime.isCurrentRenderHost(claim, for: content.id))
+  }
+
+  @Test func confirmKillReleasesTheClaim() {
+    let runtime = ContentRuntime()
+    let content = ChromeTabContent(id: ContentID())
+    #expect(runtime.provision(content, at: .fallback))
+    let claim = runtime.claimRenderHost(for: content.id)
+    runtime.remove(content.id, tombstone: true)
+    runtime.confirmKill(content.id)
+    #expect(!runtime.isCurrentRenderHost(claim, for: content.id))
   }
 }

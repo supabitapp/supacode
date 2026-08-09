@@ -118,18 +118,9 @@ struct LayoutFeature {
     /// Bumped whenever a content's renderer identity changes without a layout
     /// change (hibernate, wake), so hosts remount. Never persisted.
     var renderEpoch: UInt64 = 0
-    /// Per-content agent badge snapshots, fanned in from agent presence so a
-    /// storm invalidates only this worktree's strips. Never persisted.
-    var agentBadges: [ContentID: AgentPresenceFeature.RowSnapshot] = [:]
     /// The tab whose strip shows the inline rename field; owned here so the
     /// menu command reaches it and it survives structural rebuilds.
     var editingTabID: TabID?
-    /// Bucketed per-tab progress, fanned in from the host so strips render
-    /// without reading surface state per tick. Never persisted.
-    var tabProgress: [TabID: TerminalTabProgressDisplay] = [:]
-    /// Tabs whose blocking script completed; their strips show the lock
-    /// marker. Never persisted.
-    var scriptLockedTabs: Set<TabID> = []
     @Presents var alert: AlertState<Action.Alert>?
   }
 
@@ -175,10 +166,6 @@ struct LayoutFeature {
     case beginTabRename(id: TabID)
     /// Closes the inline rename field without renaming.
     case endTabRename
-    /// The host's deduped progress display moved for a tab; nil clears.
-    case tabProgressChanged(id: TabID, display: TerminalTabProgressDisplay?)
-    /// The set of completed blocking-script tabs moved.
-    case scriptLocksChanged(Set<TabID>)
     case focusPane(FocusTarget)
     case moveTab(id: TabID, toPane: PaneID, index: Int)
     case resizePane(node: SplitTree<PaneID>.Node, ratio: Double)
@@ -206,8 +193,6 @@ struct LayoutFeature {
     /// A content asked to reorder its tab by `amount` strip positions,
     /// wrapping at the ends.
     case contentRequestedMoveTab(content: ContentID, amount: Int)
-    /// Agent presence moved for a content; refreshes its tab badge.
-    case agentPresenceChanged(content: ContentID, snapshot: AgentPresenceFeature.RowSnapshot)
     case alert(PresentationAction<Alert>)
 
     nonisolated enum Alert: Equatable, Sendable {
@@ -221,8 +206,7 @@ struct LayoutFeature {
   // structure; exempt them from the per-action layout walk.
   private static func isExemptFromConsistencyCheck(_ action: Action) -> Bool {
     switch action {
-    case .resizePane, .runtime(.titleChanged), .agentPresenceChanged, .tabProgressChanged,
-      .beginTabRename, .endTabRename, .scriptLocksChanged:
+    case .resizePane, .runtime(.titleChanged), .beginTabRename, .endTabRename:
       return true
     case .newTab, .splitPane, .closeTab, .closePane, .selectTab, .renameTab, .focusPane,
       .moveTab, .equalizePanes, .toggleZoom, .hibernateTab, .wakeTab, .runtime(.killConfirmed),
@@ -274,13 +258,6 @@ struct LayoutFeature {
       case .endTabRename:
         state.editingTabID = nil
         return .none
-      case .tabProgressChanged(let tabID, let display):
-        guard state.layout.pane(containingTab: tabID) != nil else { return .none }
-        state.tabProgress[tabID] = display
-        return .none
-      case .scriptLocksChanged(let tabIDs):
-        state.scriptLockedTabs = tabIDs
-        return .none
       case .focusPane(let target):
         return reduceFocusPane(&state, target: target)
       case .moveTab(let tabID, let targetPaneID, let index):
@@ -321,14 +298,6 @@ struct LayoutFeature {
         return reduceContentRequestedGotoTab(&state, contentID: contentID, target: target)
       case .contentRequestedMoveTab(let contentID, let amount):
         return reduceContentRequestedMoveTab(&state, contentID: contentID, amount: amount)
-      case .agentPresenceChanged(let contentID, let snapshot):
-        if snapshot == AgentPresenceFeature.RowSnapshot() {
-          state.agentBadges.removeValue(forKey: contentID)
-        } else {
-          state.agentBadges[contentID] = snapshot
-        }
-        return .none
-
       case .alert(.presented(.confirmClose(let tabIDs))):
         return closeTabs(&state, tabIDs: tabIDs)
       case .alert:
@@ -555,7 +524,6 @@ extension LayoutFeature {
       return .none
     }
     let reaping = reap(pane.tabs[index].content.id, worktree: state.id)
-    state.agentBadges.removeValue(forKey: pane.tabs[index].content.id)
     releaseTabBookkeeping(&state, tabID: tabID)
     pane.tabs.remove(at: index)
     guard !pane.tabs.isEmpty else {
@@ -793,7 +761,6 @@ extension LayoutFeature {
     // Merged: one hung kill must not queue the siblings behind it.
     let reaping = Effect<Action>.merge(pane.tabs.map { reap($0.content.id, worktree: state.id) })
     for tab in pane.tabs {
-      state.agentBadges.removeValue(forKey: tab.content.id)
       releaseTabBookkeeping(&state, tabID: tab.id)
     }
     collapse(&state, paneID: paneID)
@@ -819,8 +786,6 @@ extension LayoutFeature {
     if state.editingTabID == tabID {
       state.editingTabID = nil
     }
-    state.tabProgress.removeValue(forKey: tabID)
-    state.scriptLockedTabs.remove(tabID)
   }
 
   /// Removes a pane's leaf and the pane, retargeting focus to the neighbor

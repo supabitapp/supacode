@@ -330,14 +330,39 @@ private struct ContentHostView: NSViewRepresentable {
   /// wake so `updateNSView` re-runs even when the layout value is unchanged.
   let epoch: UInt64
 
+  /// This host's claim on the content it last mounted. Structural rebuilds
+  /// briefly overlap old and new hosts for the same content; the claim keeps
+  /// a stale host's late update from stealing the renderer back into the
+  /// dying hierarchy, which left survivor panes permanently blank.
+  final class Coordinator {
+    var claimedContentID: ContentID?
+    var claim: UInt64 = 0
+  }
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator()
+  }
+
   func makeNSView(context: Context) -> NSView {
     let container = NSView()
+    claim(context.coordinator)
     mount(into: container)
     return container
   }
 
   func updateNSView(_ container: NSView, context: Context) {
+    // Retargeting to another content (tab switch) re-claims; the same content
+    // only mounts while this host still holds the newest claim.
+    if context.coordinator.claimedContentID != contentID {
+      claim(context.coordinator)
+    }
+    guard runtime.isCurrentRenderHost(context.coordinator.claim, for: contentID) else { return }
     mount(into: container)
+  }
+
+  private func claim(_ coordinator: Coordinator) {
+    coordinator.claimedContentID = contentID
+    coordinator.claim = runtime.claimRenderHost(for: contentID)
   }
 
   private func mount(into container: NSView) {

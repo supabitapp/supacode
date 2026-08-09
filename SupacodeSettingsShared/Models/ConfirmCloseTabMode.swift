@@ -10,7 +10,7 @@ public nonisolated enum ConfirmCloseTabMode: String, Codable, CaseIterable, Send
 
   public var label: String {
     switch self {
-    case .busy: "When Busy"
+    case .busy: "Busy"
     case .always: "Always"
     case .never: "Never"
     }

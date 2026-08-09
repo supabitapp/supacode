@@ -83,6 +83,7 @@ let sharedTestSupportSources: [Path] = [
   "supacodeTests/SettingsTestStorage.swift",
   "supacodeTests/ShellInvocationTestSupport.swift",
   "supacodeTests/SidebarConsistency.swift",
+  "supacodeTests/TabContentTestSupport.swift",
   "supacodeTests/WorktreeTestSupport.swift",
   "supacodeTests/WritableKeyPath+Sendable.swift",
 ]

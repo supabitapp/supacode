@@ -114,9 +114,6 @@ struct TerminalClient {
     case tabRenamed(worktreeID: Worktree.ID, tabID: TabID, applied: Bool)
     /// The worktree's terminal state was torn down (prune path).
     case worktreeStateTornDown(worktreeID: Worktree.ID)
-    /// A tab's stripe-progress display flipped.
-    case tabProgressDisplayChanged(
-      worktreeID: Worktree.ID, tabID: TabID, display: TerminalTabProgressDisplay?)
     /// Forwarded from the terminal manager when surfaces close (single or bulk).
     /// `AppFeature` translates this into `agentPresence(.surfaceClosed/surfacesClosed)`.
     /// `worktreeID` scopes the CLI close ack so a duplicate id elsewhere can't cross-resolve.

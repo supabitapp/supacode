@@ -23,6 +23,8 @@ protocol TabContent: AnyObject {
   /// Releases the renderer and its live resources immediately on discard, so
   /// teardown runs at a deterministic point instead of a later dealloc.
   func tearDown()
+  /// Live, observable chrome for the tab strip; nil renders a bare tab.
+  var chrome: (any TabChrome)? { get }
   /// The current persistable state, including restoration data.
   func snapshot() -> ContentSnapshot
 }
@@ -35,6 +37,8 @@ extension TabContent {
   var isHibernatable: Bool { false }
   // Renderless content has nothing to release.
   func tearDown() {}
+  // Chrome is opt-in per content kind.
+  var chrome: (any TabChrome)? { nil }
 }
 
 /// Where in the layout a content is being created; a runtime hint for the
@@ -108,6 +112,10 @@ final class InertTabContent: TabContent {
 final class TerminalContent: TabContent {
   let id: ContentID
   let kind: ContentKind = .terminal
+  /// Instance-owned so badges, progress, and locks survive hibernation.
+  let terminalChrome = TerminalTabChrome()
+
+  var chrome: (any TabChrome)? { terminalChrome }
 
   /// Which spawn a `makeSurface` call is; one-shot inheritance (source cwd,
   /// font, split context) applies to the first only, never a re-wake.
@@ -146,7 +154,14 @@ final class TerminalContent: TabContent {
   var renderer: NSView? { surfaceView }
 
   // Hibernated terminals have no live surface, so nothing is interruptible.
-  var isBusy: Bool { surfaceView?.needsCloseConfirmation ?? false }
+  // A locked tab (completed blocking script) parks its runner alive, so
+  // Ghostty keeps reporting confirm-quit for work nothing can lose; the lock
+  // is the gate, NOT Ghostty's read-only bit, which a user can toggle on a
+  // genuinely busy terminal.
+  var isBusy: Bool {
+    guard let surfaceView, !terminalChrome.isLocked else { return false }
+    return surfaceView.needsCloseConfirmation
+  }
 
   // Only a zmx-backed live surface can drop its renderer and reattach.
   var isHibernatable: Bool { surfaceView != nil && usesZmx }

@@ -25,6 +25,9 @@ final class WorktreeTerminalManager {
   /// Sessions closing without an explicit user action; the session killer
   /// consumes an entry to spare the remote host-side session.
   private var sessionsToKillLocalOnly: Set<UUID> = []
+  /// Worktrees with a deferred activity re-assert already queued, so a burst
+  /// of layout actions (a divider drag) coalesces into one pass per tick.
+  private var pendingActivityReasserts: Set<Worktree.ID> = []
   @ObservationIgnored
   @Shared(.settingsFile) private var settingsFile: SettingsFile
   private var notificationsEnabled = true
@@ -100,7 +103,6 @@ final class WorktreeTerminalManager {
   /// piece of state, so an identical repeat is a no-op and is dropped.
   private enum CoalesceKey: Hashable {
     case worktreeProjection(Worktree.ID)
-    case tabProgress(TabID)
     case taskStatus(Worktree.ID)
     case focus(Worktree.ID)
     case notificationIndicator
@@ -113,7 +115,6 @@ final class WorktreeTerminalManager {
   private static func coalesceKey(for event: TerminalClient.Event) -> CoalesceKey? {
     switch event {
     case .worktreeProjectionChanged(let worktreeID, _): .worktreeProjection(worktreeID)
-    case .tabProgressDisplayChanged(_, let tabID, _): .tabProgress(tabID)
     case .taskStatusChanged(let worktreeID, _): .taskStatus(worktreeID)
     case .focusChanged(let worktreeID, _): .focus(worktreeID)
     case .notificationIndicatorChanged: .notificationIndicator
@@ -128,8 +129,6 @@ final class WorktreeTerminalManager {
   private static func label(for event: TerminalClient.Event) -> String {
     switch event {
     case .worktreeProjectionChanged(let worktreeID, _): "worktreeProjectionChanged(\(worktreeID))"
-    case .tabProgressDisplayChanged(let worktreeID, let tabID, _):
-      "tabProgressDisplayChanged(\(worktreeID), tab: \(tabID))"
     case .notificationReceived(let worktreeID, let surfaceID, _, _, _):
       "notificationReceived(\(worktreeID), surface: \(surfaceID))"
     default: String(describing: event)
@@ -562,13 +561,6 @@ final class WorktreeTerminalManager {
     // pick up the current snapshot (otherwise they'd stay default until the
     // next mutation).
     for id in hosts.keys { emitProjection(for: id) }
-    // Replay stripe-progress displays so rows attached after the stream start
-    // pick up the current values.
-    for (worktreeID, host) in hosts {
-      for (tabID, display) in host.currentTabProgressDisplays() {
-        emit(.tabProgressDisplayChanged(worktreeID: worktreeID, tabID: tabID, display: display))
-      }
-    }
     return stream
   }
 
@@ -677,12 +669,6 @@ final class WorktreeTerminalManager {
     host.onSetupScriptConsumed = { [weak self] in
       self?.emit(.setupScriptConsumed(worktreeID: worktree.id))
     }
-    host.onTabProgressDisplayChanged = { [weak self] tabID, display in
-      self?.emit(.tabProgressDisplayChanged(worktreeID: worktree.id, tabID: tabID, display: display))
-    }
-    host.onScriptLocksChanged = { [weak self] tabIDs in
-      self?.sendLayout(worktree.id, .scriptLocksChanged(tabIDs))
-    }
     hosts[worktree.id] = host
     // Seed the lifecycle baseline from the hydrated layout, or the first
     // close would diff against an empty set and skip its cleanup; this also
@@ -701,8 +687,22 @@ final class WorktreeTerminalManager {
     // Zoom and selection changes flip which surfaces render; re-derive
     // occlusion and focus so hidden panes stop drawing.
     hosts[worktreeID]?.reassertSurfaceActivity()
+    scheduleDeferredActivityReassert(for: worktreeID)
     emitProjection(for: worktreeID)
     emitHasAnyTerminalSurfaceIfNeeded()
+  }
+
+  /// Re-derives surface activity once more on the next tick: a structural
+  /// rebuild detaches and re-mounts the surviving surfaces, whose detach
+  /// clears their local focus, so activity derived against the old hierarchy
+  /// must not be the last word.
+  private func scheduleDeferredActivityReassert(for worktreeID: Worktree.ID) {
+    guard pendingActivityReasserts.insert(worktreeID).inserted else { return }
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      self.pendingActivityReasserts.remove(worktreeID)
+      self.hosts[worktreeID]?.reassertSurfaceActivity()
+    }
   }
 
   /// Consumes a spare decision for an unexpected-close content; the session
@@ -1755,7 +1755,6 @@ final class WorktreeTerminalManager {
   /// persisted tab UUIDs) would otherwise be wrongly deduped and dropped.
   private static func invalidatedCoalesceKeys(by event: TerminalClient.Event) -> [CoalesceKey] {
     switch event {
-    case .tabRemoved(_, let tabID): [.tabProgress(tabID)]
     case .worktreeStateTornDown(let worktreeID):
       [.worktreeProjection(worktreeID), .taskStatus(worktreeID), .focus(worktreeID)]
     default: []

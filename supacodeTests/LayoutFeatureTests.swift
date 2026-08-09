@@ -757,56 +757,6 @@ struct LayoutFeatureTests {
     await harness.store.receive(.runtime(.killConfirmed(id: second.contentID)))
   }
 
-  // MARK: - Progress and script locks.
-
-  @Test(.dependencies) func tabProgressTracksPerTabAndClearsOnClose() async {
-    @Shared(.settingsFile) var settingsFile
-    $settingsFile.withLock { $0.global.confirmCloseTab = .never }
-    let harness = await makeHarness()
-    let second = await addTab(harness, title: "Two")
-    let paneID = harness.paneID
-    let display = TerminalTabProgressDisplay(style: .determinate(percent: 40))
-    await harness.store.send(.tabProgressChanged(id: second.tabID, display: display)) {
-      $0.tabProgress[second.tabID] = display
-    }
-    // Unknown tabs are refused so a late report cannot leak an entry.
-    await harness.store.send(.tabProgressChanged(id: TabID(), display: display))
-    await harness.store.send(.closeTab(id: second.tabID)) {
-      $0.tabProgress = [:]
-      $0.layout.panes[id: paneID]?.tabs.remove(id: second.tabID)
-      $0.layout.panes[id: paneID]?.selectedTabID = harness.tabID
-    }
-    await harness.store.receive(.runtime(.killConfirmed(id: second.contentID)))
-  }
-
-  @Test func tabProgressClearsOnANilDisplay() async {
-    let harness = await makeHarness()
-    let display = TerminalTabProgressDisplay(style: .indeterminate)
-    await harness.store.send(.tabProgressChanged(id: harness.tabID, display: display)) {
-      $0.tabProgress[harness.tabID] = display
-    }
-    await harness.store.send(.tabProgressChanged(id: harness.tabID, display: nil)) {
-      $0.tabProgress = [:]
-    }
-  }
-
-  @Test(.dependencies) func scriptLocksReplaceAndClearOnClose() async {
-    @Shared(.settingsFile) var settingsFile
-    $settingsFile.withLock { $0.global.confirmCloseTab = .never }
-    let harness = await makeHarness()
-    let second = await addTab(harness, title: "Two")
-    let paneID = harness.paneID
-    await harness.store.send(.scriptLocksChanged([second.tabID])) {
-      $0.scriptLockedTabs = [second.tabID]
-    }
-    await harness.store.send(.closeTab(id: second.tabID)) {
-      $0.scriptLockedTabs = []
-      $0.layout.panes[id: paneID]?.tabs.remove(id: second.tabID)
-      $0.layout.panes[id: paneID]?.selectedTabID = harness.tabID
-    }
-    await harness.store.receive(.runtime(.killConfirmed(id: second.contentID)))
-  }
-
   // MARK: - Resize, equalize, zoom.
 
   @Test func resizePaneClampsRatioAndIgnoresLeaves() async throws {

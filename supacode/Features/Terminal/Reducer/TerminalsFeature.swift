@@ -74,8 +74,7 @@ struct TerminalsFeature {
   // tab visibility; skip the layout-wide re-diff for them.
   private static func canAffectVisibility(_ action: LayoutFeature.Action) -> Bool {
     switch action {
-    case .resizePane, .runtime(.titleChanged), .agentPresenceChanged, .tabProgressChanged,
-      .beginTabRename, .endTabRename, .scriptLocksChanged:
+    case .resizePane, .runtime(.titleChanged), .beginTabRename, .endTabRename:
       return false
     case .newTab, .splitPane, .closeTab, .closePane, .selectTab, .renameTab, .focusPane,
       .moveTab, .equalizePanes, .toggleZoom, .hibernateTab, .wakeTab, .runtime(.killConfirmed),
