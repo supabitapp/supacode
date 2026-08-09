@@ -47,12 +47,12 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
   private var bufferedDeeplinkURLs: [URL] = []
 
   func applicationWillTerminate(_ notification: Notification) {
-    // Drop the queued debounce timers; an already-started async flush has no
-    // cancellation checkpoint and still completes, but the writer's lock plus the
-    // atomic temp+rename keep this terminal write from tearing. The on-quit save
-    // embeds agent records so badges survive relaunch (agents only emit
-    // session_start once per process lifetime), and a second concurrent instance
-    // overwriting the file is an accepted dev-only last-writer-wins window.
+    // Drop the queued debounce timers; a flush already on the writer's serial
+    // queue still completes, but the terminal write below runs on that same queue
+    // and is therefore ordered strictly after it, never regressed by a late flush.
+    // The on-quit save embeds agent records so badges survive relaunch (agents
+    // only emit session_start once per process lifetime), and a second concurrent
+    // instance overwriting the file is an accepted dev-only last-writer-wins window.
     terminalManager?.cancelPendingLayoutSaves()
     let agentsBySurface = appStore?.state.agentPresence.agentsBySurface() ?? [:]
     terminalManager?.saveAllLayoutSnapshots(agentsBySurface: agentsBySurface)

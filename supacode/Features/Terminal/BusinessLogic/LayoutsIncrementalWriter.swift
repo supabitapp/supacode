@@ -30,10 +30,9 @@ actor LayoutsIncrementalWriter {
   nonisolated var unownedExecutor: UnownedSerialExecutor { executorQueue.asUnownedSerialExecutor() }
   private let storage: SettingsFileStorage
   private let url: URL
-  /// Guards the read-modify-write so the off-actor `flushSync` (on-quit) and the
-  /// actor-routed flush/delete paths mutually exclude. The actor still owns FIFO
-  /// ordering of the live path; this only prevents a lost update against the
-  /// single off-actor entrant.
+  /// Redundant now that `flushSync` also runs on `executorQueue`, so the queue
+  /// serializes every write and owns their ordering; kept as belt-and-suspenders
+  /// mutual exclusion around the read-modify-write.
   private let writeLock = NSLock()
 
   init(
@@ -51,10 +50,11 @@ actor LayoutsIncrementalWriter {
   }
 
   /// Synchronous variant for the on-quit terminal write, where the run loop is
-  /// tearing down and there's no chance to await the actor. The atomic temp+rename
-  /// `storage.save` makes the off-actor write safe as the process's final flush.
+  /// tearing down and there's no chance to await the actor. Runs on the writer's
+  /// serial executor so this terminal write is FIFO-ordered strictly after any
+  /// flush already enqueued at quit, never overtaken and regressed by a late one.
   nonisolated func flushSync(records changes: [String: RecordChange]) {
-    applyAndWriteRecords(changes)
+    executorQueue.sync { applyAndWriteRecords(changes) }
   }
 
   private nonisolated func applyAndWriteRecords(_ changes: [String: RecordChange]) {

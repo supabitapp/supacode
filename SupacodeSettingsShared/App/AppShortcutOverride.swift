@@ -312,7 +312,9 @@ extension AppShortcutOverride {
     let resolved = keyCode(forDisplayedKeyEquivalent: character) { code, modifierState in
       currentLayoutCharacter(for: code, modifierState: modifierState)
     }
-    reverseKeyCodeCache.withLock { $0[character] = resolved }
+    // Store misses too: subscript-assigning nil would delete the entry, so an
+    // unresolvable key re-runs the layout scan on every event.
+    reverseKeyCodeCache.withLock { _ = $0.updateValue(resolved, forKey: character) }
     return resolved
   }
 

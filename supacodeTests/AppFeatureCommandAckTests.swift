@@ -268,6 +268,27 @@ struct AppFeatureCommandAckTests {
     #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
   }
 
+  @Test func hasFocusedTabTracksTheSelectedWorktreesFocusedPane() {
+    let worktreeID = Worktree.ID("/tmp/wt-focus")
+    let paneID = PaneID()
+    let tab = TabItem(
+      id: TabID(), title: "shell",
+      content: ContentSnapshot(id: ContentID(), state: .terminal(TerminalContentState(workingDirectory: nil))))
+    let populated = PaneLayout(
+      tree: SplitTree(view: paneID), panes: [Pane(id: paneID, tabs: [tab], selectedTabID: tab.id)],
+      focusedPaneID: paneID)
+    var state = AppFeature.State(repositories: RepositoriesFeature.State(), settings: SettingsFeature.State())
+    state.terminals.layouts = [LayoutFeature.State(id: worktreeID, layout: populated)]
+
+    #expect(WorktreeDetailView.hasFocusedTab(in: state, worktreeID: worktreeID))
+    #expect(!WorktreeDetailView.hasFocusedTab(in: state, worktreeID: nil))
+    #expect(!WorktreeDetailView.hasFocusedTab(in: state, worktreeID: Worktree.ID("/tmp/other")))
+
+    // An emptied layout has no tab to close, so Cmd-W cedes to Close Window.
+    state.terminals.layouts = [LayoutFeature.State(id: worktreeID, layout: PaneLayout())]
+    #expect(!WorktreeDetailView.hasFocusedTab(in: state, worktreeID: worktreeID))
+  }
+
   // MARK: - confirmation timeout.
 
   @Test(.dependencies) func confirmationTimeoutDrainsFd() async {

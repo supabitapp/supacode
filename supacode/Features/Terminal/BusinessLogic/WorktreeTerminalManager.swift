@@ -1464,10 +1464,10 @@ final class WorktreeTerminalManager {
   func cancelPendingLayoutSaves() {
     for task in layoutDirtyTasks.values { task.cancel() }
     layoutDirtyTasks.removeAll()
-    // Best-effort cancel: an already-started flush has no cancellation
-    // checkpoint in `applyAndWrite`, so it runs to completion. The writer's lock
-    // plus the atomic temp+rename keep the on-quit write from tearing; the worst
-    // case is a stale-but-valid key set on the next launch, never a corrupt file.
+    // Cancels debounced saves that have not enqueued yet; a flush already on the
+    // writer's queue runs to completion. That is safe now: the on-quit terminal
+    // write runs on the same serial queue, so it is ordered strictly after those
+    // and can never be overtaken and regressed by a late flush.
     for entry in layoutFlushTasks.values { entry.task.cancel() }
     layoutFlushTasks.removeAll()
   }
