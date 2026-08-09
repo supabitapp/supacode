@@ -247,6 +247,18 @@ private struct PaneSplitView: View {
   let store: StoreOf<LayoutFeature>
   let renderContext: PaneRenderContext
 
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  /// The full-span preview direction when an in-flight span drop is anchored on
+  /// one of this split's own panes; this split frames both, so it paints the
+  /// highlight across the divider.
+  private var spanPreviewDirection: SplitTree<PaneID>.NewDirection? {
+    guard let target = renderContext.dragModel.spanTarget,
+      split.left == .leaf(view: target.anchorPaneID) || split.right == .leaf(view: target.anchorPaneID)
+    else { return nil }
+    return target.direction
+  }
+
   var body: some View {
     SplitView(
       split.direction,
@@ -265,6 +277,12 @@ private struct PaneSplitView: View {
       onResize: { store.send(.resizePane(node: node, ratio: $0)) },
       onEqualize: { store.send(.equalizePanes) }
     )
+    .overlay {
+      if let spanPreviewDirection {
+        PaneSpanDropPreview(direction: spanPreviewDirection).transition(.opacity)
+      }
+    }
+    .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: spanPreviewDirection)
   }
 }
 
@@ -385,7 +403,6 @@ private struct PaneSplitDropZones: View {
   let dragModel: PaneTabDragModel
 
   @State private var targetedDirection: SplitTree<PaneID>.NewDirection?
-  @State private var targetedSpan: SplitTree<PaneID>.NewDirection?
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   /// The pane's shared divider, if any: the edge the full-span band sits
@@ -425,26 +442,23 @@ private struct PaneSplitDropZones: View {
         direction: .right, pane: pane, store: store, dragModel: dragModel, targeted: $targetedDirection)
     }
     // The divider band sits above the per-pane zones so it wins near the shared
-    // edge; away from the divider the per-pane split still takes.
+    // edge; away from the divider the per-pane split still takes. The full-span
+    // preview is painted by the parent split, which reaches across both panes.
     .overlay { spanZones }
     .overlay {
       if let targetedDirection {
         PaneSplitDropPreview(direction: targetedDirection).transition(.opacity)
       }
-      if let targetedSpan {
-        PaneSpanDropPreview(direction: targetedSpan).transition(.opacity)
-      }
     }
     .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: targetedDirection)
-    .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: targetedSpan)
   }
 
   @ViewBuilder private var spanZones: some View {
     if let band = spanBand {
       let near = PaneSpanDropZone(
-        direction: band.near, pane: pane, store: store, dragModel: dragModel, targeted: $targetedSpan)
+        direction: band.near, pane: pane, store: store, dragModel: dragModel)
       let far = PaneSpanDropZone(
-        direction: band.far, pane: pane, store: store, dragModel: dragModel, targeted: $targetedSpan)
+        direction: band.far, pane: pane, store: store, dragModel: dragModel)
       Group {
         if band.isVertical {
           VStack(spacing: 0) { near; far }.frame(width: PaneSplitDropMetrics.dividerBand)
@@ -536,13 +550,13 @@ private struct PaneSplitDropHighlight: View {
 }
 
 /// One full-span drop target in the divider band; dropping here wraps the
-/// shared parent split so the new pane spans both siblings.
+/// shared parent split so the new pane spans both siblings. Targeting publishes
+/// to the shared drag model so the parent split paints the spanning preview.
 private struct PaneSpanDropZone: View {
   let direction: SplitTree<PaneID>.NewDirection
   let pane: Pane
   let store: StoreOf<LayoutFeature>
   let dragModel: PaneTabDragModel
-  @Binding var targeted: SplitTree<PaneID>.NewDirection?
 
   var body: some View {
     Color.clear
@@ -551,10 +565,11 @@ private struct PaneSpanDropZone: View {
         PaneTabDrag.performSpanningSplitDrop(
           items, anchor: pane, direction: direction, store: store, dragModel: dragModel)
       } isTargeted: { isTargeted in
+        let target = PaneTabDragModel.SpanTarget(anchorPaneID: pane.id, direction: direction)
         if isTargeted, PaneTabDrag.canSplitDrop(sourceTabID: dragModel.sourceTabID, anchor: pane, store: store) {
-          targeted = direction
-        } else if targeted == direction {
-          targeted = nil
+          dragModel.spanTarget = target
+        } else if dragModel.spanTarget == target {
+          dragModel.spanTarget = nil
         }
       }
   }

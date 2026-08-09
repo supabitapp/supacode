@@ -638,12 +638,60 @@ struct LayoutFeatureTests {
     // wrapped in a new perpendicular split, so a third pane appears above it.
     await harness.store.send(
       .moveTabToSpanningSplit(id: second.tabID, anchor: harness.paneID, direction: .top))
-    #expect(harness.store.state.layout.panes.count == 3)
-    if case .split(let outer) = harness.store.state.layout.tree.root {
+    let layout = harness.store.state.layout
+    #expect(layout.panes.count == 3)
+    if case .split(let outer) = layout.tree.root {
       #expect(outer.direction == .vertical)
     } else {
       Issue.record("expected a spanning vertical root split")
     }
+    // The moved tab lands in the fresh spanning pane, which takes focus; the
+    // source keeps its remaining tab.
+    let spanPane = layout.pane(containingTab: second.tabID)
+    #expect(spanPane != nil)
+    #expect(spanPane?.id != harness.paneID)
+    #expect(spanPane?.id == layout.focusedPaneID)
+    #expect(layout.panes[id: harness.paneID]?.tabs.ids.contains(harness.tabID) == true)
+    #expect(layout.isConsistent)
+  }
+
+  @Test func spanningMoveOfThePanesOnlyTabOntoItselfIsRefused() async {
+    let harness = await makeHarness()
+    // A parent split rules out the root-leaf throw, isolating the single-tab guard.
+    _ = await splitPane(harness, anchor: harness.paneID)
+    await harness.store.send(
+      .moveTabToSpanningSplit(id: harness.tabID, anchor: harness.paneID, direction: .down))
+    #expect(harness.store.state.layout.panes.count == 2)
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func spanningMoveAtAWindowedAnchorIsRefused() async {
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let split = await splitPane(harness, anchor: harness.paneID)
+    await enterWindowMode(harness, paneID: split.paneID)
+    await harness.store.send(
+      .moveTabToSpanningSplit(id: second.tabID, anchor: split.paneID, direction: .left))
+    #expect(harness.store.state.layout.panes.count == 2)
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func spanningMoveAtAnUnknownAnchorIsRefused() async {
+    let harness = await makeHarness()
+    await harness.store.send(
+      .moveTabToSpanningSplit(id: harness.tabID, anchor: PaneID(), direction: .top))
+    #expect(harness.store.state.layout.panes.count == 1)
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func spanningMoveWithNoParentSplitIsRefused() async {
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    // The sole pane is the root leaf, so the span insert throws and no-ops.
+    await harness.store.send(
+      .moveTabToSpanningSplit(id: second.tabID, anchor: harness.paneID, direction: .top))
+    #expect(harness.store.state.layout.panes.count == 1)
+    #expect(harness.store.state.layout.panes[id: harness.paneID]?.tabs.count == 2)
     #expect(harness.store.state.layout.isConsistent)
   }
 
@@ -962,6 +1010,27 @@ struct LayoutFeatureTests {
       $0.alert = nil
     }
     #expect(harness.store.state.layout.panes[id: harness.paneID]?.tabs[id: harness.tabID] != nil)
+  }
+
+  @Test(.dependencies) func collapsingAnAlertOwningPaneClearsTheStrandedAlert() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .always }
+    let harness = await makeHarness()
+    let split = await splitPane(harness, anchor: harness.paneID)
+    // Raise a close confirmation owned by the source pane.
+    await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .tab)) {
+      $0.alertPaneID = harness.paneID
+      $0.alert = self.closeConfirmAlert(tabs: [harness.tabID], interrupts: false)
+    }
+    harness.store.exhaustivity = .off
+    // Collapsing that pane while another survives must drop the alert, or it
+    // strands on a removed pane and defers hibernation forever.
+    await harness.store.send(.closePane(id: harness.paneID))
+    #expect(harness.store.state.alert == nil)
+    #expect(harness.store.state.alertPaneID == nil)
+    #expect(harness.store.state.layout.panes.count == 1)
+    #expect(harness.store.state.layout.panes[id: split.paneID] != nil)
+    #expect(harness.store.state.layout.isConsistent)
   }
 
   @Test func directionalFocusSkipsWindowedLeavesToTheNextEmbeddedPane() async {

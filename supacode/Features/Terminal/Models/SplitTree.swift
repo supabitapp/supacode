@@ -127,9 +127,9 @@ nonisolated struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
   }
 
   /// Wraps the immediate parent split of `anchor` in a new split, so the new
-  /// leaf spans both panes sharing that divider. `direction` is perpendicular
-  /// to the parent split's axis (top / down over a side-by-side split, left /
-  /// right over a stacked one).
+  /// leaf spans both sides of that divider. `direction` is perpendicular to the
+  /// parent split's axis (top / down over a side-by-side split, left / right
+  /// over a stacked one).
   func insertingSpanningParent(
     view: Leaf, ofLeaf anchor: Leaf, direction: NewDirection, ratio: Double = 0.5
   ) throws -> Self {
@@ -155,7 +155,8 @@ nonisolated struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
         ratio: ratio,
         left: newViewOnLeft ? newLeaf : parentNode,
         right: newViewOnLeft ? parentNode : newLeaf))
-    return .init(root: try root.replacingNode(at: parentPath, with: wrapped), zoomed: zoomed)
+    // Drop any zoom so the new pane surfaces, mirroring `inserting`.
+    return .init(root: try root.replacingNode(at: parentPath, with: wrapped))
   }
 
   func removing(_ target: Node) -> Self {

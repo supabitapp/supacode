@@ -178,8 +178,8 @@ struct LayoutFeature {
     /// the new pane; a background CLI move passes `false` to leave focus put.
     case moveTabToSplit(
       id: TabID, anchor: PaneID, direction: SplitTree<PaneID>.NewDirection, select: Bool = true)
-    /// Moves a tab into a new pane spanning both panes that share `anchor`'s
-    /// divider (its immediate parent split), from a divider-adjacent drop.
+    /// Moves a tab into a new pane spanning both sides of `anchor`'s divider
+    /// (its immediate parent split), from a divider-adjacent drop.
     case moveTabToSpanningSplit(id: TabID, anchor: PaneID, direction: SplitTree<PaneID>.NewDirection)
     /// Detaches a pane into its own window; the layout keeps its leaf as a
     /// placeholder.
@@ -653,8 +653,8 @@ extension LayoutFeature {
     return reduceMoveTab(&state, tabID: tabID, targetPaneID: paneID, index: 0, focusing: select)
   }
 
-  /// Moves a tab into a new pane spanning both panes that share the anchor's
-  /// divider: wraps the anchor's parent split rather than the anchor alone.
+  /// Moves a tab into a new pane spanning both sides of the anchor's divider:
+  /// wraps the anchor's parent split rather than the anchor alone.
   private func reduceMoveTabToSpanningSplit(
     _ state: inout State,
     tabID: TabID,
@@ -667,8 +667,11 @@ extension LayoutFeature {
       return .none
     }
     // A windowed anchor renders a placeholder; nothing can drop on it.
-    guard !state.windowedPaneIDs.contains(anchorID) else { return .none }
-    // Splitting off a pane's only tab recreates the same layout.
+    guard !state.windowedPaneIDs.contains(anchorID) else {
+      Self.logger.info("moveTabToSpanningSplit refused: anchor \(anchorID.rawValue) is windowed")
+      return .none
+    }
+    // Consuming the anchor's only tab collapses it, so nothing is left to span.
     guard source.id != anchorID || source.tabs.count > 1 else { return .none }
     let paneID = PaneID(rawValue: uuid())
     do {
@@ -950,9 +953,9 @@ extension LayoutFeature {
     }
     state.layout.panes.remove(id: paneID)
     state.windowedPaneIDs.remove(paneID)
-    // The alert host unmounts with the last pane; a surviving alert would
-    // re-present as a phantom on the next mount.
-    if state.layout.panes.isEmpty {
+    // An alert whose owning pane is gone can never present and would wedge
+    // hibernation; clear it when that pane collapses or the host unmounts.
+    if state.layout.panes.isEmpty || state.alertPaneID == paneID {
       state.alert = nil
       state.alertPaneID = nil
     }

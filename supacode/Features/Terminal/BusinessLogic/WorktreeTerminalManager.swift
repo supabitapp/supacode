@@ -1314,9 +1314,15 @@ final class WorktreeTerminalManager {
     for surfaceID in surfaceIDs {
       ContentRuntime.liveValue.remove(ContentID(rawValue: surfaceID), tombstone: false)
     }
+    // Global agent presence is keyed by surface id; retract these or the
+    // removed worktree's agents linger in the presence UI.
+    let closedSurfaceIDs = Set(surfaceIDs)
+    if !closedSurfaceIDs.isEmpty {
+      emit(.surfacesClosed(worktreeID: worktreeID, closedSurfaceIDs))
+    }
     sendTerminals(.detachLayout(worktreeID: worktreeID))
     emit(.worktreeStateTornDown(worktreeID: worktreeID))
-    cancelPendingIdleHooks(forSurfaceIDs: Set(surfaceIDs))
+    cancelPendingIdleHooks(forSurfaceIDs: closedSurfaceIDs)
     invalidateCaches(forPrunedWorktree: worktreeID)
     emitNotificationIndicatorCountIfNeeded()
     emitHasAnyTerminalSurfaceIfNeeded()
@@ -1350,10 +1356,16 @@ final class WorktreeTerminalManager {
       // resurrected by an in-flight snapshot.
       paneWindows.closeAll(for: id)
       deleteLayoutSnapshot(worktreeID: id)
+      let closedSurfaceIDs = Set(host.allSurfaceIDs)
       // Watchers stop before the kill; the contents drop from the runtime.
       host.tearDown()
-      for surfaceID in host.allSurfaceIDs {
+      for surfaceID in closedSurfaceIDs {
         ContentRuntime.liveValue.remove(ContentID(rawValue: surfaceID), tombstone: false)
+      }
+      // Global agent presence is keyed by surface id; retract the pruned
+      // surfaces or archived / deleted agents linger in the presence UI.
+      if !closedSurfaceIDs.isEmpty {
+        emit(.surfacesClosed(worktreeID: id, closedSurfaceIDs))
       }
       // Signals the reducer to drop the pruned layout and bookkeeping.
       sendTerminals(.detachLayout(worktreeID: id))

@@ -130,6 +130,36 @@ struct SplitTreeTests {
     #expect(inner.right == .leaf(view: leafB))
   }
 
+  @Test func insertingSpanningParentPlacesTheNewLeafOnTheTrailingSide() throws {
+    let leafA = IDLeaf(id: 1)
+    let leafB = IDLeaf(id: 2)
+    let leafC = IDLeaf(id: 3)
+    // Spanning C rightward over A's divider wraps H(A,B) on the leading side and
+    // puts C on the trailing side: H(H(A,B), C).
+    let tree = try SplitTree(view: leafA).inserting(view: leafB, at: leafA, direction: .right)
+    let spanned = try tree.insertingSpanningParent(view: leafC, ofLeaf: leafA, direction: .right)
+    guard case .split(let outer) = spanned.root else {
+      Issue.record("expected a spanning outer split, got \(String(describing: spanned.root))")
+      return
+    }
+    #expect(outer.direction == .horizontal)
+    #expect(outer.right == .leaf(view: leafC))
+    guard case .split(let inner) = outer.left else {
+      Issue.record("expected the wrapped H(A,B) split on the leading side")
+      return
+    }
+    #expect(inner.left == .leaf(view: leafA))
+    #expect(inner.right == .leaf(view: leafB))
+  }
+
+  @Test func insertingSpanningParentOnARootLeafThrows() throws {
+    let leafA = IDLeaf(id: 1)
+    let tree = SplitTree(view: leafA)
+    #expect(throws: SplitTree<IDLeaf>.SplitError.viewNotFound) {
+      try tree.insertingSpanningParent(view: IDLeaf(id: 2), ofLeaf: leafA, direction: .top)
+    }
+  }
+
   @Test func codableRoundTripsZoomedNodePath() throws {
     let tree = try SplitTree(view: IDLeaf(id: 1))
       .inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .right)

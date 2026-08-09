@@ -230,6 +230,29 @@ struct WorktreeTerminalManagerAckTests {
     #expect(written?.worktrees.isEmpty == true)
   }
 
+  @Test(.dependencies) func removingAWorktreeLayoutRetractsItsSurfacesFromPresence() async {
+    let harness = makeHarness()
+    let contentID = UUID()
+    let record = LayoutRecord(layout: singleTabLayout(contentID: contentID))
+    // Subscribe before the command so the one-shot event isn't stranded.
+    var iterator = harness.manager.eventStream().makeAsyncIterator()
+    harness.store.send(
+      .terminals(.layoutsHydrated(LayoutsFile(worktrees: [harness.worktree.id.rawValue: record]))))
+
+    harness.manager.handleCommand(
+      .removeWorktreeLayout(worktreeID: harness.worktree.id, remoteHost: nil))
+
+    // The prune must retract the surface so AppFeature clears its agent presence.
+    var closed: (worktreeID: Worktree.ID, ids: Set<UUID>)?
+    while closed == nil, let event = await iterator.next() {
+      if case .surfacesClosed(let worktreeID, let ids) = event {
+        closed = (worktreeID, ids)
+      }
+    }
+    #expect(closed?.worktreeID == harness.worktree.id)
+    #expect(closed?.ids == [contentID])
+  }
+
   @Test(.dependencies) func removingADeletedRemoteWorktreesLayoutKillsItsHostSessions() async {
     let (remoteKills, killSignal) = AsyncStream<(String, String)>.makeStream()
     let harness = makeHarness(killRemoteSession: { host, session in

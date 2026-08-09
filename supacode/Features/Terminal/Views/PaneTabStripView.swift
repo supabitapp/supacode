@@ -20,12 +20,30 @@ nonisolated struct PaneTabDragPayload: Codable, Sendable, Transferable {
   }
 }
 
-/// Tracks the tab an in-flight drag started from so a pane's drop zones can
-/// gray out targets the drop would refuse. `.dropDestination`'s `isTargeted`
-/// closure has no access to the payload, so the source is captured here at drag
-/// start (the drag preview's `onAppear`) and shared across one worktree's panes.
+/// Per-worktree drag state shared across sibling panes: the source tab
+/// (captured at drag start, since `.dropDestination`'s `isTargeted` has no
+/// payload access) and the full-span target the parent split paints across both
+/// its sides.
 @MainActor @Observable final class PaneTabDragModel {
   var sourceTabID: TabID?
+  var spanTarget: SpanTarget?
+
+  struct SpanTarget: Equatable {
+    let anchorPaneID: PaneID
+    let direction: SplitTree<PaneID>.NewDirection
+  }
+
+  /// Records the source at drag start, clearing any target a prior drag left.
+  func startDrag(from tabID: TabID) {
+    sourceTabID = tabID
+    spanTarget = nil
+  }
+
+  /// Clears every in-flight signal when the drag ends, on drop or cancel.
+  func reset() {
+    sourceTabID = nil
+    spanTarget = nil
+  }
 }
 
 /// One pane's tab strip: fixed-width tabs, dividers, overflow fades, and the
@@ -222,7 +240,7 @@ enum PaneTabDrag {
     store: StoreOf<LayoutFeature>,
     dragModel: PaneTabDragModel? = nil
   ) -> Bool {
-    dragModel?.sourceTabID = nil
+    dragModel?.reset()
     guard let raw = items.first else { return false }
     let tabID = TabID(rawValue: raw.tabID)
     guard let sourcePane = store.layout.pane(containingTab: tabID) else { return false }
@@ -248,7 +266,7 @@ enum PaneTabDrag {
     store: StoreOf<LayoutFeature>,
     dragModel: PaneTabDragModel? = nil
   ) -> Bool {
-    dragModel?.sourceTabID = nil
+    dragModel?.reset()
     guard let raw = items.first else { return false }
     let tabID = TabID(rawValue: raw.tabID)
     guard let sourcePane = store.layout.pane(containingTab: tabID) else { return false }
@@ -259,7 +277,7 @@ enum PaneTabDrag {
   }
 
   /// A drop near a shared divider: the tab moves into a new pane spanning both
-  /// panes that share it (the anchor's parent split).
+  /// sides of it (the anchor's parent split).
   @MainActor
   static func performSpanningSplitDrop(
     _ items: [PaneTabDragPayload],
@@ -268,7 +286,7 @@ enum PaneTabDrag {
     store: StoreOf<LayoutFeature>,
     dragModel: PaneTabDragModel? = nil
   ) -> Bool {
-    dragModel?.sourceTabID = nil
+    dragModel?.reset()
     guard let raw = items.first else { return false }
     let tabID = TabID(rawValue: raw.tabID)
     guard let sourcePane = store.layout.pane(containingTab: tabID) else { return false }
@@ -428,10 +446,12 @@ private struct PaneTabView: View {
       .accessibilityValue(progressDisplay?.accessibilityValue ?? "")
       .allowsHitTesting(!isEditing)
       .draggable(PaneTabDragPayload(tabID: tab.id.rawValue)) {
-        // The preview appears at drag start; capturing the source here lets the
-        // pane split zones gray out drops this tab can't take.
+        // The preview lives for the drag's duration: capture the source on
+        // appear so the split zones can gray out drops this tab can't take, and
+        // reset on disappear so a cancelled drag leaves no stale highlight.
         PaneTabDragPreview(title: displayTitle)
-          .onAppear { dragModel?.sourceTabID = tab.id }
+          .onAppear { dragModel?.startDrag(from: tab.id) }
+          .onDisappear { dragModel?.reset() }
       }
     }
     .overlay {
