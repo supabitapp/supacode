@@ -274,6 +274,12 @@ struct SupacodeApp: App {
         surfaceExistsInWorktree: { worktreeID, surfaceID in
           terminalManager.surfaceExistsInWorktree(worktreeID: worktreeID, surfaceID: surfaceID)
         },
+        paneExists: { worktreeID, token in
+          terminalManager.paneExists(worktreeID: worktreeID, token: token)
+        },
+        canMoveTabToNewSplit: { worktreeID, tabID in
+          terminalManager.canMoveTabToNewSplit(worktreeID: worktreeID, tabID: tabID)
+        },
         tabID: { worktreeID, surfaceID in
           terminalManager.tabID(forWorktreeID: worktreeID, surfaceID: surfaceID)
         },
@@ -452,6 +458,9 @@ struct SupacodeApp: App {
         }
       }
       AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: tabs ?? [])
+    case "panes":
+      handlePanesQuery(
+        params: params, repos: repos, clientFD: clientFD, terminalManager: terminalManager)
     case "surfaces":
       guard let worktreeID = params["worktreeID"], let tabID = params["tabID"] else {
         AgentHookSocketServer.sendCommandResponse(
@@ -474,6 +483,30 @@ struct SupacodeApp: App {
       AgentHookSocketServer.sendCommandResponse(
         clientFD: clientFD, ok: false, error: "Unknown resource: \(resource)")
     }
+  }
+
+  private static func handlePanesQuery(
+    params: [String: String],
+    repos: IdentifiedArrayOf<Repository>,
+    clientFD: Int32,
+    terminalManager: WorktreeTerminalManager
+  ) {
+    guard let worktreeID = params["worktreeID"] else {
+      AgentHookSocketServer.sendCommandResponse(
+        clientFD: clientFD, ok: false, error: "Missing worktreeID for pane list.")
+      return
+    }
+    let panes = terminalManager.listPanes(worktreeID: worktreeID)
+    if panes == nil {
+      let decoded = worktreeID.removingPercentEncoding ?? worktreeID
+      let worktreeExists = repos.contains { $0.worktrees.contains { $0.id.rawValue == decoded } }
+      guard worktreeExists else {
+        AgentHookSocketServer.sendCommandResponse(
+          clientFD: clientFD, ok: false, error: "Worktree not found: \(worktreeID)")
+        return
+      }
+    }
+    AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: panes ?? [])
   }
 
   private static func handleWorktreeStatusQuery(

@@ -95,6 +95,54 @@ nonisolated enum DeeplinkURLBuilder {
     "supacode://worktree/\(worktreeID)/tab/\(tabID)/surface/\(surfaceID)/destroy"
   }
 
+  // MARK: - Tab move.
+
+  static func tabMove(worktreeID: String, tabID: String, direction: String) -> String {
+    "supacode://worktree/\(worktreeID)/tab/\(tabID)/move?direction=\(direction)"
+  }
+
+  // MARK: - Pane.
+
+  static func paneFocus(worktreeID: String, paneID: String) -> String {
+    "supacode://worktree/\(worktreeID)/pane/\(paneID)"
+  }
+
+  static func paneFocusDirection(worktreeID: String, direction: String) -> String {
+    "supacode://worktree/\(worktreeID)/pane/focus?direction=\(direction)"
+  }
+
+  struct PaneSplitOptions {
+    var direction: String?
+    var input: String?
+    var id: String?
+  }
+
+  static func paneSplit(worktreeID: String, paneToken: String, options: PaneSplitOptions) -> String {
+    var url = "supacode://worktree/\(worktreeID)/pane/\(paneToken)/split"
+    var params: [String] = []
+    if let direction = options.direction { params.append("direction=\(direction)") }
+    if let input = options.input { params.append("input=\(percentEncodeQueryValue(input))") }
+    if let id = options.id { params.append("id=\(id)") }
+    if !params.isEmpty { url += "?\(params.joined(separator: "&"))" }
+    return url
+  }
+
+  static func paneClose(worktreeID: String, paneToken: String) -> String {
+    "supacode://worktree/\(worktreeID)/pane/\(paneToken)/destroy"
+  }
+
+  static func paneZoom(worktreeID: String, paneToken: String) -> String {
+    "supacode://worktree/\(worktreeID)/pane/\(paneToken)/zoom"
+  }
+
+  static func paneWindow(worktreeID: String, paneToken: String) -> String {
+    "supacode://worktree/\(worktreeID)/pane/\(paneToken)/window"
+  }
+
+  static func paneEqualize(worktreeID: String) -> String {
+    "supacode://worktree/\(worktreeID)/pane/equalize"
+  }
+
   // MARK: - Repo.
 
   static func repoOpen(path: String) -> String {

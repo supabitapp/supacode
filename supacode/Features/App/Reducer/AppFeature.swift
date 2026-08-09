@@ -2374,12 +2374,13 @@ struct AppFeature {
     // user can actually clear the orphan.
     let spawnsShell: Bool
     switch action {
-    case .run, .runScript, .tabNew, .surfaceSplit:
+    case .run, .runScript, .tabNew, .surfaceSplit, .paneSplit:
       spawnsShell = true
     case .surface(_, _, let input):
       spawnsShell = input?.isEmpty == false
     case .select, .stop, .stopScript, .tab, .tabRename, .tabDestroy, .surfaceDestroy,
-      .archive, .unarchive, .delete, .pin, .unpin, .appearance:
+      .archive, .unarchive, .delete, .pin, .unpin, .appearance,
+      .tabMove, .paneFocus, .paneFocusDirection, .paneDestroy, .paneZoom, .paneWindow, .paneEqualize:
       spawnsShell = false
     }
     if spawnsShell, let worktree = state.repositories.worktree(for: worktreeID), worktree.isMissing {
@@ -2541,15 +2542,16 @@ struct AppFeature {
         return .none
       }
       // A pane anchor that resolves nothing must fail loudly, not fall back
-      // to a pane the caller didn't ask for.
-      if let pane, !terminalClient.surfaceExistsInWorktree(worktreeID, pane) {
-        deeplinkLogger.warning("Rejecting unknown pane surface \(pane) in worktree \(worktreeID)")
+      // to a pane the caller didn't ask for. The anchor is a pane token, so it
+      // resolves a pane, tab, or content id (matching `createTabAsync`).
+      if let pane, !terminalClient.paneExists(worktreeID, pane) {
+        deeplinkLogger.warning("Rejecting unknown pane anchor \(pane) in worktree \(worktreeID)")
         state.alert = AlertState {
           TextState("Pane not found")
         } actions: {
           ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
         } message: {
-          TextState("No surface \(pane.uuidString) exists in this worktree to anchor the new tab.")
+          TextState("No pane, tab, or content \(pane.uuidString) exists in this worktree to anchor the new tab.")
         }
         return .none
       }
@@ -2716,6 +2718,94 @@ struct AppFeature {
       return awaitingCompletion(
         effect, match: .surfaceClosed(worktreeID: worktreeID, surfaceID: surfaceID),
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
+    case .tabMove(let tabID, let direction):
+      guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
+      // A single-tab or windowed pane refuses the move; report that instead of
+      // a phantom success.
+      guard terminalClient.canMoveTabToNewSplit(worktreeID, tabID) else {
+        deeplinkLogger.warning("Tab \(tabID) cannot move to a new split in worktree \(worktreeID)")
+        state.alert = AlertState {
+          TextState("Tab cannot be moved")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState("Its pane has only this tab, or is in window mode, so there is nothing to split off.")
+        }
+        return .none
+      }
+      // Layout topology has no distinct completion signal, so this acks immediately.
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .moveTabToSplit(worktree, tabID: tabID, direction: direction, focusing: !background)
+      }
+    case .paneFocus(let token):
+      guard validatePane(worktreeID: worktreeID, token: token, state: &state) else { return .none }
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .focusPane(worktree, paneToken: token)
+      }
+    case .paneFocusDirection(let direction):
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .focusSplit(worktree, direction: direction)
+      }
+    case .paneSplit(let token, let direction, let input, let id):
+      guard validatePane(worktreeID: worktreeID, token: token, state: &state) else { return .none }
+      // Reject explicit IDs that collide with an existing or in-flight surface, so
+      // a duplicate id can't have one split resolve the other's ack.
+      if let id,
+        terminalClient.surfaceExistsInWorktree(worktreeID, id)
+          || Self.hasPendingCreationAck(id: id, state: state)
+      {
+        state.alert = AlertState {
+          TextState("Surface ID already exists")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState("A surface with ID \(id.uuidString) already exists.")
+        }
+        return .none
+      }
+      if let input, !input.isEmpty,
+        requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation)
+      {
+        return presentDeeplinkConfirmation(
+          worktreeID: worktreeID, responseFD: responseFD, timeoutSeconds: timeoutSeconds,
+          message: .command(input), action: action, state: &state, background: background)
+      }
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .splitPane(
+          worktree, paneToken: token, direction: direction, input: input, id: id, focusing: !background)
+      }
+      return awaitingCompletion(
+        effect, match: id.map { .surfaceSplit(worktreeID: worktreeID, surfaceID: $0) },
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
+    case .paneDestroy(let token):
+      guard validatePane(worktreeID: worktreeID, token: token, state: &state) else { return .none }
+      guard bypassConfirmation else {
+        return presentDeeplinkConfirmation(
+          worktreeID: worktreeID,
+          responseFD: responseFD,
+          timeoutSeconds: timeoutSeconds,
+          message: .confirmation("Close pane \(token.uuidString.prefix(8))… and its tabs?"),
+          action: action,
+          state: &state,
+          background: background)
+      }
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .closePane(worktree, paneToken: token)
+      }
+    case .paneZoom(let token):
+      guard validatePane(worktreeID: worktreeID, token: token, state: &state) else { return .none }
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .toggleZoomPane(worktree, paneToken: token)
+      }
+    case .paneWindow(let token):
+      guard validatePane(worktreeID: worktreeID, token: token, state: &state) else { return .none }
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .toggleWindowModeForPane(worktree, paneToken: token)
+      }
+    case .paneEqualize:
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .equalizeSplits(worktree)
+      }
     }
   }
 
@@ -3450,6 +3540,30 @@ struct AppFeature {
   }
 
   // MARK: Validation helpers.
+
+  /// Validates that a pane token (a pane, tab, or content id) resolves to a pane
+  /// in the worktree, showing an alert if not. Keeps the CLI ack honest instead
+  /// of reporting a silent no-op as success.
+  private func validatePane(
+    worktreeID: Worktree.ID,
+    token: UUID,
+    state: inout State
+  ) -> Bool {
+    guard terminalClient.paneExists(worktreeID, token) else {
+      deeplinkLogger.warning("Pane token \(token) not found in worktree \(worktreeID)")
+      state.alert = AlertState {
+        TextState("Pane not found")
+      } actions: {
+        ButtonState(role: .cancel, action: .dismiss) {
+          TextState("OK")
+        }
+      } message: {
+        TextState("No pane matching the deeplink could be found. It may have been closed.")
+      }
+      return false
+    }
+    return true
+  }
 
   /// Validates that a tab exists in the given worktree, showing an alert if not.
   private func validateTab(

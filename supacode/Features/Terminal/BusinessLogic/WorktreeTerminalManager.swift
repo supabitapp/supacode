@@ -460,7 +460,8 @@ final class WorktreeTerminalManager {
       .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .removeWorktreeLayout,
       .setNotificationsEnabled, .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
       .setTerminalHibernationEnabled, .toggleWindowModeForFocusedPane,
-      .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits:
+      .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits,
+      .splitPane, .focusPane, .closePane, .toggleZoomPane, .toggleWindowModeForPane, .moveTabToSplit:
       return false
     }
     return true
@@ -480,6 +481,18 @@ final class WorktreeTerminalManager {
       sendFocusedContentLayoutAction(worktree.id) { .contentRequestedToggleZoom(content: $0) }
     case .equalizeSplits(let worktree):
       sendLayout(worktree.id, .equalizePanes)
+    case .splitPane(let worktree, let token, let direction, let input, let id, let focusing):
+      splitPane(in: worktree, paneToken: token, direction: direction, input: input, id: id, focusing: focusing)
+    case .focusPane(let worktree, let paneToken):
+      focusPane(in: worktree, paneToken: paneToken)
+    case .closePane(let worktree, let token):
+      closePane(in: worktree, paneToken: token)
+    case .toggleZoomPane(let worktree, let token):
+      toggleZoomPane(in: worktree, paneToken: token)
+    case .toggleWindowModeForPane(let worktree, let token):
+      toggleWindowModeForPane(in: worktree, paneToken: token)
+    case .moveTabToSplit(let worktree, let tabID, let direction, let focusing):
+      moveTabToSplit(in: worktree, tabID: tabID, direction: direction, focusing: focusing)
     case .performBindingAction(let worktree, let action):
       host(for: worktree).performBindingActionOnFocusedSurface(action)
     case .performBindingActionOnSurface(let worktree, let surfaceID, let action):
@@ -542,7 +555,8 @@ final class WorktreeTerminalManager {
       .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex, .focusSurface,
       .splitSurface, .destroyTab, .destroySurface, .renameTab, .beginTabRename,
-      .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits:
+      .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits,
+      .splitPane, .focusPane, .closePane, .toggleZoomPane, .toggleWindowModeForPane, .moveTabToSplit:
       assertionFailure("Unhandled terminal command reached management handler: \(command)")
     }
   }
@@ -875,11 +889,15 @@ final class WorktreeTerminalManager {
     let combinedInput = [setupInput, initialInput].compactMap { $0 }.joined()
     let launch: LaunchOverride? =
       combinedInput.isEmpty ? nil : LaunchOverride(initialInput: combinedInput)
-    // A pane-addressed create anchors on the surface's pane and inherits its
-    // config; otherwise the focused pane and surface anchor as before.
-    let anchorTab = anchor.flatMap { layout.tab(containingContent: ContentID(rawValue: $0)) }
-    let inheritedFrom = anchorTab?.tab.content.id ?? host.focusedTab?.content.id
-    let paneID = anchorTab?.pane.id ?? layout.focusedPaneID ?? layout.panes.first?.id ?? PaneID()
+    // A pane-addressed create anchors on the resolved pane (a pane id, or a tab
+    // or content it hosts) and inherits its selected content; otherwise the
+    // focused pane and surface anchor as before.
+    let anchorPane = anchor.flatMap { layout.pane(forToken: $0) }
+    let anchorContent = anchorPane.flatMap { pane in
+      pane.selectedTabID.flatMap { pane.tabs[id: $0]?.content.id }
+    }
+    let inheritedFrom = anchorContent ?? host.focusedTab?.content.id
+    let paneID = anchorPane?.id ?? layout.focusedPaneID ?? layout.panes.first?.id ?? PaneID()
     let spec = NewTabSpec(
       tabID: TabID(rawValue: mintedID),
       contentID: ContentID(rawValue: mintedID),
@@ -1132,6 +1150,151 @@ final class WorktreeTerminalManager {
       return
     }
     emit(.surfaceCreated(worktreeID: worktree.id, id: id))
+  }
+
+  // MARK: - Pane-addressed layout ops.
+
+  /// Resolves a CLI / deeplink pane token: a pane's own id, or the id of a
+  /// tab or content the pane hosts.
+  private func resolvePane(_ token: UUID, in worktreeID: Worktree.ID) -> PaneID? {
+    layoutState(for: worktreeID)?.layout.pane(forToken: token)?.id
+  }
+
+  /// Whether a pane token (a pane, tab, or content id) resolves to a pane.
+  func paneExists(worktreeID: Worktree.ID, token: UUID) -> Bool {
+    resolvePane(token, in: worktreeID) != nil
+  }
+
+  /// Whether `tab move` is permitted: the tab's pane holds more than one tab
+  /// and is not windowed, matching the reducer's `moveTabToSplit` guard.
+  func canMoveTabToNewSplit(worktreeID: Worktree.ID, tabID: UUID) -> Bool {
+    guard let layoutState = layoutState(for: worktreeID),
+      let pane = layoutState.layout.pane(containingTab: TabID(rawValue: tabID))
+    else { return false }
+    return pane.tabs.count > 1 && !layoutState.windowedPaneIDs.contains(pane.id)
+  }
+
+  private func splitPane(  // swiftlint:disable:this function_parameter_count
+    in worktree: Worktree,
+    paneToken: UUID,
+    direction: SplitDirection,
+    input: String?,
+    id: UUID?,
+    focusing: Bool
+  ) {
+    _ = host(for: worktree)
+    func fail() {
+      guard let id else { return }
+      emit(
+        .surfaceCreationFailed(
+          worktreeID: worktree.id, attemptedID: id, message: "Could not split the pane."))
+    }
+    // Panes are never empty, so a resolved pane always has a selected content.
+    guard let paneID = resolvePane(paneToken, in: worktree.id),
+      let layout = layoutState(for: worktree.id)?.layout,
+      let anchorPane = layout.panes[id: paneID],
+      let selectedTab = anchorPane.selectedTabID,
+      let anchorContent = anchorPane.tabs[id: selectedTab]?.content.id
+    else {
+      terminalLogger.warning("splitPane: pane token \(paneToken) not found in worktree \(worktree.id).")
+      fail()
+      return
+    }
+    // The wake runs even when not focusing: splitting a dormant pane would
+    // otherwise land in a frozen layout.
+    sendLayout(worktree.id, .wakeTab(id: selectedTab))
+    let resolvedInput = BlockingScriptRunner.makeCommandInput(script: input ?? "")
+    let launch: LaunchOverride? = resolvedInput.map { LaunchOverride(initialInput: $0) }
+    let spec = NewTabSpec(
+      tabID: id.map(TabID.init(rawValue:)),
+      contentID: id.map(ContentID.init(rawValue:)),
+      title: "\(worktree.name) \(nextTabIndex(in: layout, prefix: worktree.name))",
+      content: .terminal(TerminalContentState(workingDirectory: nil, launch: launch)),
+      geometry: ContentRuntime.liveValue.spawnGeometry(near: anchorContent),
+      select: focusing,
+      inheritedFrom: anchorContent
+    )
+    sendLayout(
+      worktree.id,
+      .splitPane(id: paneID, direction: direction == .vertical ? .down : .right, spec: spec)
+    )
+    guard let id else { return }
+    guard layoutState(for: worktree.id)?.layout.tab(containingContent: ContentID(rawValue: id)) != nil else {
+      terminalLogger.warning("splitPane: failed for pane \(paneID) in worktree \(worktree.id).")
+      fail()
+      return
+    }
+    emit(.surfaceCreated(worktreeID: worktree.id, id: id))
+  }
+
+  private func focusPane(in worktree: Worktree, paneToken: UUID) {
+    guard let paneID = resolvePane(paneToken, in: worktree.id),
+      let pane = layoutState(for: worktree.id)?.layout.panes[id: paneID]
+    else {
+      terminalLogger.warning("focusPane: pane token \(paneToken) not found in worktree \(worktree.id).")
+      return
+    }
+    if let selectedTab = pane.selectedTabID {
+      sendLayout(worktree.id, .wakeTab(id: selectedTab))
+    }
+    sendLayout(worktree.id, .focusPane(.pane(paneID)))
+  }
+
+  private func closePane(in worktree: Worktree, paneToken: UUID) {
+    guard let paneID = resolvePane(paneToken, in: worktree.id) else {
+      terminalLogger.warning("closePane: pane token \(paneToken) not found in worktree \(worktree.id).")
+      return
+    }
+    sendLayout(worktree.id, .closePane(id: paneID))
+  }
+
+  private func toggleZoomPane(in worktree: Worktree, paneToken: UUID) {
+    guard let paneID = resolvePane(paneToken, in: worktree.id) else {
+      terminalLogger.warning("toggleZoomPane: pane token \(paneToken) not found in worktree \(worktree.id).")
+      return
+    }
+    sendLayout(worktree.id, .toggleZoom(paneID: paneID))
+  }
+
+  private func toggleWindowModeForPane(in worktree: Worktree, paneToken: UUID) {
+    guard let layout = layoutState(for: worktree.id),
+      let paneID = resolvePane(paneToken, in: worktree.id)
+    else {
+      terminalLogger.warning("toggleWindowMode: pane token \(paneToken) not found in worktree \(worktree.id).")
+      return
+    }
+    let action: LayoutFeature.Action =
+      layout.windowedPaneIDs.contains(paneID)
+      ? .exitWindowMode(paneID: paneID)
+      : .enterWindowMode(paneID: paneID)
+    sendLayout(worktree.id, action)
+  }
+
+  private func moveTabToSplit(
+    in worktree: Worktree, tabID: UUID, direction: TerminalSplitMenuDirection, focusing: Bool
+  ) {
+    let tab = TabID(rawValue: tabID)
+    guard let anchorPane = layoutState(for: worktree.id)?.layout.pane(containingTab: tab) else {
+      terminalLogger.warning("moveTab: tab \(tabID) not found in worktree \(worktree.id).")
+      return
+    }
+    sendLayout(worktree.id, .wakeTab(id: tab))
+    sendLayout(
+      worktree.id,
+      .moveTabToSplit(id: tab, anchor: anchorPane.id, direction: direction.newSplitDirection, select: focusing)
+    )
+  }
+
+  /// Pane UUIDs in the worktree, flagging the focused one.
+  func listPanes(worktreeID: String) -> [[String: String]]? {
+    let decoded = worktreeID.removingPercentEncoding ?? worktreeID
+    guard let layoutState = layoutState(for: WorktreeID(decoded)) else { return nil }
+    let layout = layoutState.layout
+    return layout.panes.map { pane in
+      var entry = ["id": pane.id.rawValue.uuidString]
+      if pane.id == layout.focusedPaneID { entry["focused"] = "1" }
+      return entry
+    }
   }
 
   /// Explicit worktree deletion: drop its layout and sessions whether or not

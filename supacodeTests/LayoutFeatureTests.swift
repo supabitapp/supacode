@@ -615,6 +615,20 @@ struct LayoutFeatureTests {
     #expect(harness.store.state.layout.isConsistent)
   }
 
+  @Test func backgroundMoveToSplitLeavesFocusOnTheSourcePane() async {
+    let harness = await makeHarness()
+    _ = await addTab(harness, title: "Two")
+    harness.store.exhaustivity = .off
+    let sourcePane = harness.paneID
+    // A background move (select: false) must not steal focus to the new pane;
+    // a foreground move would.
+    await harness.store.send(
+      .moveTabToSplit(id: harness.tabID, anchor: sourcePane, direction: .right, select: false))
+    #expect(harness.store.state.layout.focusedPaneID == sourcePane)
+    #expect(harness.store.state.layout.panes.count == 2)
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
   @Test func movingABackgroundTabKeepsSourceSelection() async {
     let harness = await makeHarness()
     let second = await addTab(harness, title: "Two")

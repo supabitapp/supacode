@@ -355,6 +355,15 @@ nonisolated extension PaneLayout {
     return nil
   }
 
+  /// Resolves a CLI / deeplink pane token: a pane's own id, or the id of a tab
+  /// or content the pane hosts.
+  func pane(forToken token: UUID) -> Pane? {
+    if let pane = panes[id: PaneID(rawValue: token)] { return pane }
+    if let pane = pane(containingTab: TabID(rawValue: token)) { return pane }
+    if let resolved = tab(containingContent: ContentID(rawValue: token)) { return resolved.pane }
+    return nil
+  }
+
   /// Every content identity in the layout, tree order not guaranteed.
   var allContentIDs: [ContentID] {
     panes.flatMap { pane in pane.tabs.map(\.content.id) }

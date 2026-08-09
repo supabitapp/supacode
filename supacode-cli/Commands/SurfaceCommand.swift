@@ -4,7 +4,14 @@ import Foundation
 struct SurfaceCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "surface",
-    abstract: "Manage terminal surfaces.",
+    abstract: "[Deprecated] Manage terminal surfaces. Use `pane` and `tab` instead.",
+    discussion: """
+      Deprecated, and removed in the next release: a surface is now a tab's \
+      content. Use `supacode pane split` in place of `surface split`, and \
+      `supacode tab focus` / `tab close` / `tab list` in place of the surface \
+      equivalents. These commands still read the deprecated $SUPACODE_TAB_ID / \
+      $SUPACODE_SURFACE_ID environment variables.
+      """,
     subcommands: [
       List.self,
       Focus.self,

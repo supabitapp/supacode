@@ -149,6 +149,12 @@ private nonisolated enum DeeplinkParser {
         pathSegments: pathSegments,
         queryItems: queryItems,
       )
+    case "pane":
+      return parseWorktreePane(
+        worktreeID: worktreeID,
+        pathSegments: pathSegments,
+        queryItems: queryItems,
+      )
     case "script":
       return parseWorktreeScript(worktreeID: worktreeID, pathSegments: pathSegments)
     default:
@@ -251,6 +257,14 @@ private nonisolated enum DeeplinkParser {
     if pathSegments.count >= 4, pathSegments[3] == "destroy" {
       return .worktree(id: worktreeID, action: .tabDestroy(tabID: tabUUID))
     }
+    if pathSegments.count >= 4, pathSegments[3] == "move" {
+      let directionRaw = queryItems.first(where: { $0.name == "direction" })?.value ?? ""
+      guard let direction = TerminalSplitMenuDirection(deeplinkValue: directionRaw) else {
+        logger.warning("Invalid tab move direction '\(directionRaw)'.")
+        return nil
+      }
+      return .worktree(id: worktreeID, action: .tabMove(tabID: tabUUID, direction: direction))
+    }
 
     // Check for surface sub-path: tab/<tab-uuid>/surface/<surface-uuid>[/split|/destroy].
     if pathSegments.count >= 5, pathSegments[3] == "surface" {
@@ -302,6 +316,77 @@ private nonisolated enum DeeplinkParser {
       id: worktreeID,
       action: .surface(tabID: tabUUID, surfaceID: surfaceUUID, input: input),
     )
+  }
+
+  private static func parseWorktreePane(
+    worktreeID: Worktree.ID,
+    pathSegments: [String],
+    queryItems: [URLQueryItem]
+  ) -> Deeplink? {
+    // "pane/equalize" → equalize every split ratio.
+    // "pane/focus?direction=…" → move focus to a neighboring pane.
+    // "pane/<token>" → focus that pane.
+    // "pane/<token>/split?direction=…&input=…&id=…" → split the pane.
+    // "pane/<token>/destroy" → close the pane and its tabs.
+    // "pane/<token>/zoom" → toggle the pane's zoom.
+    // "pane/<token>/window" → toggle the pane's window mode.
+    // `token` is a pane id, or the id of a tab / content the pane hosts.
+    guard pathSegments.count >= 3 else {
+      logger.warning("Pane deeplink missing sub-action or pane token")
+      return nil
+    }
+    let thirdSegment = pathSegments[2]
+
+    if thirdSegment == "equalize" {
+      return .worktree(id: worktreeID, action: .paneEqualize)
+    }
+    if thirdSegment == "focus" {
+      let directionRaw = queryItems.first(where: { $0.name == "direction" })?.value ?? ""
+      guard let direction = TerminalSplitMenuDirection(deeplinkValue: directionRaw) else {
+        logger.warning("Invalid pane focus direction '\(directionRaw)'.")
+        return nil
+      }
+      return .worktree(id: worktreeID, action: .paneFocusDirection(direction: direction))
+    }
+
+    guard let token = UUID(uuidString: thirdSegment) else {
+      logger.warning("Invalid pane token: \(thirdSegment)")
+      return nil
+    }
+
+    guard pathSegments.count >= 4 else {
+      return .worktree(id: worktreeID, action: .paneFocus(token: token))
+    }
+    switch pathSegments[3] {
+    case "split":
+      let directionRaw = queryItems.first(where: { $0.name == "direction" })?.value ?? "horizontal"
+      guard let direction = SplitDirection(rawValue: directionRaw) else {
+        logger.warning("Invalid pane split direction '\(directionRaw)'.")
+        return nil
+      }
+      let input = queryItems.first(where: { $0.name == "input" })?.value
+      let rawID = queryItems.first(where: { $0.name == "id" })?.value
+      let id = rawID.flatMap(UUID.init(uuidString:))
+      // A malformed id fails the parse rather than minting a random one the
+      // caller cannot then target.
+      if rawID != nil, id == nil {
+        logger.warning("Invalid pane split id: \(rawID ?? "")")
+        return nil
+      }
+      return .worktree(
+        id: worktreeID,
+        action: .paneSplit(token: token, direction: direction, input: input, id: id)
+      )
+    case "destroy":
+      return .worktree(id: worktreeID, action: .paneDestroy(token: token))
+    case "zoom":
+      return .worktree(id: worktreeID, action: .paneZoom(token: token))
+    case "window":
+      return .worktree(id: worktreeID, action: .paneWindow(token: token))
+    default:
+      logger.warning("Unrecognized pane action: \(pathSegments[3])")
+      return nil
+    }
   }
 
   // MARK: - Repo.

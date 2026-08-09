@@ -153,4 +153,27 @@ struct PaneLayoutTests {
     #expect(layout.tab(containingContent: ContentID(rawValue: contentID))?.tab.id == tab.id)
     #expect(layout.allContentIDs == [ContentID(rawValue: contentID)])
   }
+
+  @Test func paneForTokenResolvesPaneTabAndContentIds() throws {
+    let paneA = PaneID()
+    let paneB = PaneID()
+    let tabA = Self.terminalTab(id: UUID())
+    let tabB = Self.terminalTab(id: UUID())
+    let layout = PaneLayout(
+      tree: try SplitTree(view: paneA).inserting(view: paneB, at: paneA, direction: .right, ratio: 0.5),
+      panes: [
+        Pane(id: paneA, tabs: [tabA], selectedTabID: tabA.id),
+        Pane(id: paneB, tabs: [tabB], selectedTabID: tabB.id),
+      ],
+      focusedPaneID: paneA
+    )
+    // A pane's own id resolves to that pane (the branch every pane command relies on).
+    #expect(layout.pane(forToken: paneB.rawValue)?.id == paneB)
+    // A tab id resolves to its hosting pane.
+    #expect(layout.pane(forToken: tabB.id.rawValue)?.id == paneB)
+    // A content id resolves to its hosting pane.
+    #expect(layout.pane(forToken: tabA.content.id.rawValue)?.id == paneA)
+    // An unknown UUID resolves to nothing.
+    #expect(layout.pane(forToken: UUID()) == nil)
+  }
 }

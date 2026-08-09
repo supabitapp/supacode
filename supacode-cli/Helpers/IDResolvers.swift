@@ -31,6 +31,54 @@ nonisolated func resolveSurfaceID(_ explicit: String?) throws -> String {
   return id
 }
 
+/// Resolves the worktree for a go-forward command: the explicit flag, else the
+/// app's focused worktree. Never reads the deprecated `$SUPACODE_WORKTREE_ID`.
+nonisolated func resolveFocusedWorktreeID(_ explicit: String?, timeoutSeconds: Int) throws -> String {
+  try resolveFocused(
+    explicit, resource: "worktrees", timeoutSeconds: timeoutSeconds,
+    noneFocused: "No worktree is focused. Pass -w <id> (see `supacode worktree list`).")
+}
+
+/// Resolves the pane token for a go-forward command: the explicit flag, else the
+/// app's focused pane. Never reads a session env var.
+nonisolated func resolveFocusedPaneToken(
+  _ explicit: String?, worktreeID: String, timeoutSeconds: Int
+) throws -> String {
+  try resolveFocused(
+    explicit, resource: "panes", params: ["worktreeID": worktreeID], timeoutSeconds: timeoutSeconds,
+    noneFocused: "No pane is focused in this worktree. Pass -p <id> (see `supacode pane list`).")
+}
+
+/// Resolves the tab for a go-forward command: the explicit flag, else the app's
+/// focused tab. Never reads the deprecated `$SUPACODE_TAB_ID`.
+nonisolated func resolveFocusedTabID(
+  _ explicit: String?, worktreeID: String, timeoutSeconds: Int
+) throws -> String {
+  try resolveFocused(
+    explicit, resource: "tabs", params: ["worktreeID": worktreeID], timeoutSeconds: timeoutSeconds,
+    noneFocused: "No tab is focused in this worktree. Pass -t <id> (see `supacode tab list`).")
+}
+
+/// Explicit flag, else the resource's focused row, else a validation error.
+private nonisolated func resolveFocused(
+  _ explicit: String?, resource: String, params: [String: String] = [:],
+  timeoutSeconds: Int, noneFocused: String
+) throws -> String {
+  if let id = nonEmpty(explicit) { return id }
+  let items = try QueryDispatcher.query(resource: resource, params: params, timeoutSeconds: timeoutSeconds)
+  guard let focused = items.first(where: { !($0["focused"] ?? "").isEmpty })?["id"] else {
+    throw ValidationError(noneFocused)
+  }
+  return focused
+}
+
+/// Throws unless `newID` is nil or a well-formed UUID.
+nonisolated func validateNewID(_ newID: String?) throws {
+  if let newID, UUID(uuidString: newID) == nil {
+    throw ValidationError("--id must be a UUID.")
+  }
+}
+
 /// Resolves a repo ID from an explicit flag or `$SUPACODE_REPO_ID`, percent-encoded.
 nonisolated func resolveRepoID(_ explicit: String?) throws -> String {
   if let explicit = nonEmpty(explicit) {

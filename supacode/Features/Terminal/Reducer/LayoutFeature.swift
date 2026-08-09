@@ -174,8 +174,10 @@ struct LayoutFeature {
     case endTabRename
     case focusPane(FocusTarget)
     case moveTab(id: TabID, toPane: PaneID, index: Int)
-    /// Moves a tab into a brand-new pane split off `anchor`.
-    case moveTabToSplit(id: TabID, anchor: PaneID, direction: SplitTree<PaneID>.NewDirection)
+    /// Moves a tab into a brand-new pane split off `anchor`. `select` focuses
+    /// the new pane; a background CLI move passes `false` to leave focus put.
+    case moveTabToSplit(
+      id: TabID, anchor: PaneID, direction: SplitTree<PaneID>.NewDirection, select: Bool = true)
     /// Detaches a pane into its own window; the layout keeps its leaf as a
     /// placeholder.
     case enterWindowMode(paneID: PaneID)
@@ -276,8 +278,9 @@ struct LayoutFeature {
         return reduceFocusPane(&state, target: target)
       case .moveTab(let tabID, let targetPaneID, let index):
         return reduceMoveTab(&state, tabID: tabID, targetPaneID: targetPaneID, index: index)
-      case .moveTabToSplit(let tabID, let anchorID, let direction):
-        return reduceMoveTabToSplit(&state, tabID: tabID, anchorID: anchorID, direction: direction)
+      case .moveTabToSplit(let tabID, let anchorID, let direction, let select):
+        return reduceMoveTabToSplit(
+          &state, tabID: tabID, anchorID: anchorID, direction: direction, select: select)
       case .enterWindowMode(let paneID):
         return reduceEnterWindowMode(&state, paneID: paneID)
       case .exitWindowMode(let paneID):
@@ -576,7 +579,8 @@ extension LayoutFeature {
     _ state: inout State,
     tabID: TabID,
     targetPaneID: PaneID,
-    index: Int
+    index: Int,
+    focusing: Bool = true
   ) -> Effect<Action> {
     guard var source = state.layout.pane(containingTab: tabID), let sourceIndex = source.tabs.index(id: tabID) else {
       return .none
@@ -588,7 +592,7 @@ extension LayoutFeature {
       // move.
       source.selectedTabID = tab.id
       state.layout.panes[id: source.id] = source
-      focus(&state, paneID: source.id)
+      if focusing { focus(&state, paneID: source.id) }
       return .none
     }
     guard var target = state.layout.panes[id: targetPaneID] else { return .none }
@@ -605,7 +609,7 @@ extension LayoutFeature {
       }
       state.layout.panes[id: source.id] = source
     }
-    focus(&state, paneID: targetPaneID)
+    if focusing { focus(&state, paneID: targetPaneID) }
     return .none
   }
 
@@ -615,7 +619,8 @@ extension LayoutFeature {
     _ state: inout State,
     tabID: TabID,
     anchorID: PaneID,
-    direction: SplitTree<PaneID>.NewDirection
+    direction: SplitTree<PaneID>.NewDirection,
+    select: Bool
   ) -> Effect<Action> {
     guard let source = state.layout.pane(containingTab: tabID) else { return .none }
     guard state.layout.panes[id: anchorID] != nil else {
@@ -639,7 +644,7 @@ extension LayoutFeature {
     // The new pane starts empty; the ordinary move fills it, retargets the
     // source selection, and collapses the source when it empties.
     state.layout.panes.append(Pane(id: paneID))
-    return reduceMoveTab(&state, tabID: tabID, targetPaneID: paneID, index: 0)
+    return reduceMoveTab(&state, tabID: tabID, targetPaneID: paneID, index: 0, focusing: select)
   }
 
   private func reduceSelectTab(_ state: inout State, tabID: TabID) -> Effect<Action> {

@@ -9,6 +9,12 @@ struct TerminalClient {
   var tabCanRename: @MainActor @Sendable (Worktree.ID, TabID) -> Bool
   var surfaceExists: @MainActor @Sendable (Worktree.ID, TabID, UUID) -> Bool
   var surfaceExistsInWorktree: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
+  /// Whether a CLI / deeplink pane token (a pane, tab, or content id) resolves
+  /// to a pane in the worktree.
+  var paneExists: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
+  /// Whether a tab can move into a new split: its pane holds more than one tab
+  /// and is not windowed. A single-tab or windowed pane refuses the move.
+  var canMoveTabToNewSplit: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
   var tabID: @MainActor @Sendable (Worktree.ID, UUID) -> TabID?
   var selectedTabID: @MainActor @Sendable (Worktree.ID) -> TabID?
   /// Active surface in the selected tab. Lets the reducer capture the target
@@ -63,6 +69,16 @@ struct TerminalClient {
     case focusSplit(Worktree, direction: TerminalSplitMenuDirection)
     case toggleSplitZoom(Worktree)
     case equalizeSplits(Worktree)
+    /// Pane-addressed layout ops from the CLI / deeplinks. `paneToken` is a pane
+    /// id, or the id of a tab / content the pane hosts.
+    case splitPane(
+      Worktree, paneToken: UUID, direction: SplitDirection, input: String?, id: UUID? = nil,
+      focusing: Bool = true)
+    case focusPane(Worktree, paneToken: UUID)
+    case closePane(Worktree, paneToken: UUID)
+    case toggleZoomPane(Worktree, paneToken: UUID)
+    case toggleWindowModeForPane(Worktree, paneToken: UUID)
+    case moveTabToSplit(Worktree, tabID: UUID, direction: TerminalSplitMenuDirection, focusing: Bool = true)
     case performBindingAction(Worktree, action: String)
     case performBindingActionOnSurface(Worktree, surfaceID: UUID, action: String)
     case setImagePasteAgents(surfaceID: UUID, agents: Set<SkillAgent>)
@@ -146,6 +162,8 @@ extension TerminalClient: DependencyKey {
     tabCanRename: { _, _ in fatalError("TerminalClient.tabCanRename not configured") },
     surfaceExists: { _, _, _ in fatalError("TerminalClient.surfaceExists not configured") },
     surfaceExistsInWorktree: { _, _ in fatalError("TerminalClient.surfaceExistsInWorktree not configured") },
+    paneExists: { _, _ in fatalError("TerminalClient.paneExists not configured") },
+    canMoveTabToNewSplit: { _, _ in fatalError("TerminalClient.canMoveTabToNewSplit not configured") },
     tabID: { _, _ in fatalError("TerminalClient.tabID not configured") },
     selectedTabID: { _ in fatalError("TerminalClient.selectedTabID not configured") },
     selectedSurfaceID: { _ in fatalError("TerminalClient.selectedSurfaceID not configured") },
@@ -165,6 +183,8 @@ extension TerminalClient: DependencyKey {
     tabCanRename: unimplemented("TerminalClient.tabCanRename", placeholder: true),
     surfaceExists: unimplemented("TerminalClient.surfaceExists", placeholder: true),
     surfaceExistsInWorktree: unimplemented("TerminalClient.surfaceExistsInWorktree", placeholder: true),
+    paneExists: unimplemented("TerminalClient.paneExists", placeholder: true),
+    canMoveTabToNewSplit: unimplemented("TerminalClient.canMoveTabToNewSplit", placeholder: true),
     tabID: unimplemented("TerminalClient.tabID", placeholder: nil),
     selectedTabID: unimplemented("TerminalClient.selectedTabID", placeholder: nil),
     selectedSurfaceID: unimplemented("TerminalClient.selectedSurfaceID", placeholder: nil),

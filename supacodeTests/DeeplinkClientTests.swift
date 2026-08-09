@@ -363,6 +363,85 @@ struct DeeplinkClientTests {
     #expect(parse(url) == nil)
   }
 
+  // MARK: - Pane actions.
+
+  private let encoded = "%2Ftmp%2Frepo%2Fwt-1"
+  private let paneUUID = UUID(uuidString: "770E8400-E29B-41D4-A716-446655440000")!
+
+  @Test func worktreePaneFocus() {
+    let url = URL(string: "supacode://worktree/\(encoded)/pane/\(paneUUID.uuidString)")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .paneFocus(token: paneUUID)))
+  }
+
+  @Test(arguments: [("left", TerminalSplitMenuDirection.left), ("right", .right), ("up", .up), ("down", .down)])
+  func worktreePaneFocusDirection(_ raw: String, _ expected: TerminalSplitMenuDirection) {
+    let url = URL(string: "supacode://worktree/\(encoded)/pane/focus?direction=\(raw)")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .paneFocusDirection(direction: expected)))
+  }
+
+  @Test func worktreePaneFocusInvalidDirectionReturnsNil() {
+    let url = URL(string: "supacode://worktree/\(encoded)/pane/focus?direction=sideways")!
+    #expect(parse(url) == nil)
+  }
+
+  @Test func worktreePaneSplitVerticalWithInput() {
+    let url = URL(
+      string: "supacode://worktree/\(encoded)/pane/\(paneUUID.uuidString)/split?direction=vertical&input=echo%20hi")!
+    #expect(
+      parse(url)
+        == .worktree(
+          id: "/tmp/repo/wt-1",
+          action: .paneSplit(token: paneUUID, direction: .vertical, input: "echo hi", id: nil)
+        )
+    )
+  }
+
+  @Test func worktreePaneSplitDefaultsToHorizontal() {
+    let url = URL(string: "supacode://worktree/\(encoded)/pane/\(paneUUID.uuidString)/split")!
+    #expect(
+      parse(url)
+        == .worktree(
+          id: "/tmp/repo/wt-1",
+          action: .paneSplit(token: paneUUID, direction: .horizontal, input: nil, id: nil)
+        )
+    )
+  }
+
+  @Test func worktreePaneDestroyZoomWindow() {
+    let id = WorktreeID("/tmp/repo/wt-1")
+    let base = "supacode://worktree/\(encoded)/pane/\(paneUUID.uuidString)"
+    #expect(parse(URL(string: "\(base)/destroy")!) == .worktree(id: id, action: .paneDestroy(token: paneUUID)))
+    #expect(parse(URL(string: "\(base)/zoom")!) == .worktree(id: id, action: .paneZoom(token: paneUUID)))
+    #expect(parse(URL(string: "\(base)/window")!) == .worktree(id: id, action: .paneWindow(token: paneUUID)))
+  }
+
+  @Test func worktreePaneEqualize() {
+    let url = URL(string: "supacode://worktree/\(encoded)/pane/equalize")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .paneEqualize))
+  }
+
+  @Test func worktreePaneInvalidTokenReturnsNil() {
+    let url = URL(string: "supacode://worktree/\(encoded)/pane/not-a-uuid/zoom")!
+    #expect(parse(url) == nil)
+  }
+
+  @Test func worktreePaneSplitInvalidIdReturnsNil() {
+    let url = URL(string: "supacode://worktree/\(encoded)/pane/\(paneUUID.uuidString)/split?id=not-a-uuid")!
+    #expect(parse(url) == nil)
+  }
+
+  @Test func worktreeTabMove() {
+    let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!
+    let url = URL(string: "supacode://worktree/\(encoded)/tab/\(tabUUID.uuidString)/move?direction=right")!
+    #expect(parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .tabMove(tabID: tabUUID, direction: .right)))
+  }
+
+  @Test func worktreeTabMoveInvalidDirectionReturnsNil() {
+    let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!
+    let url = URL(string: "supacode://worktree/\(encoded)/tab/\(tabUUID.uuidString)/move?direction=sideways")!
+    #expect(parse(url) == nil)
+  }
+
   // MARK: - Repo actions.
 
   @Test func repoOpen() {

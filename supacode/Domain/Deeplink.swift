@@ -41,6 +41,20 @@ enum Deeplink: Equatable, Sendable {
     case tabNew(input: String?, id: UUID?, title: String? = nil, pane: UUID? = nil)
     case tabRename(tabID: UUID, title: String)
     case tabDestroy(tabID: UUID)
+    /// Moves a tab into a fresh split neighboring its current pane.
+    case tabMove(tabID: UUID, direction: TerminalSplitMenuDirection)
+    /// Focus the pane resolved from a token (its own id, or a tab / content it hosts).
+    case paneFocus(token: UUID)
+    /// Move focus to the pane neighboring the focused one.
+    case paneFocusDirection(direction: TerminalSplitMenuDirection)
+    /// Split a pane, opening a fresh tab in the new pane. `token` is the pane's
+    /// own id or the id of a tab / content it hosts.
+    case paneSplit(token: UUID, direction: SplitDirection, input: String?, id: UUID?)
+    case paneDestroy(token: UUID)
+    case paneZoom(token: UUID)
+    /// Toggle window mode for the pane addressed by `token`.
+    case paneWindow(token: UUID)
+    case paneEqualize
     case surface(tabID: UUID, surfaceID: UUID, input: String?)
     case surfaceSplit(tabID: UUID, surfaceID: UUID, direction: SplitDirection, input: String?, id: UUID?)
     case surfaceDestroy(tabID: UUID, surfaceID: UUID)

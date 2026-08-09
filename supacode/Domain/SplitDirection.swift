@@ -30,6 +30,17 @@ enum TerminalSplitMenuDirection: Equatable, Sendable, CaseIterable {
   case down
   case up
 
+  /// Parses the four-way direction a `pane focus` / `tab move` deeplink carries.
+  nonisolated init?(deeplinkValue: String) {
+    switch deeplinkValue {
+    case "right", "r": self = .right
+    case "left", "l": self = .left
+    case "down", "d": self = .down
+    case "up", "u": self = .up
+    default: return nil
+    }
+  }
+
   /// The split-tree insertion direction for this menu direction.
   var newSplitDirection: SplitTree<PaneID>.NewDirection {
     switch self {
