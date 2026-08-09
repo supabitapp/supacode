@@ -1,5 +1,6 @@
 import AppKit
 import ComposableArchitecture
+import OrderedCollections
 import SupacodeSettingsShared
 import SwiftUI
 
@@ -179,6 +180,19 @@ final class PaneWindowManager {
     terminalManager?.sendLayout(key.worktreeID, .focusPane(.pane(target)))
   }
 
+  /// The header's "repository / worktree" line, mirroring the notification
+  /// pane's section titles.
+  private static func headerInfo(for worktreeID: Worktree.ID, in repositories: RepositoriesFeature.State) -> String {
+    guard let row = repositories.sidebarItems[id: worktreeID] else { return "" }
+    let worktreeName = SidebarDisplayName.resolved(custom: row.customTitle, fallback: row.name) ?? row.name
+    guard let repositoryID = repositories.repositoryID(containing: worktreeID) else { return worktreeName }
+    let repositoryName = Repository.sidebarDisplayName(
+      custom: repositories.sidebar.sections[repositoryID]?.title,
+      fallback: repositories.repositoryName(for: repositoryID) ?? "Repository"
+    )
+    return "\(repositoryName) / \(worktreeName)"
+  }
+
   private func makeController(worktreeID: Worktree.ID, paneID: PaneID) -> PaneWindowController? {
     guard let terminalManager, let appStore = terminalManager.appStore else {
       Self.logger.error("Cannot open pane window without the app store.")
@@ -195,10 +209,13 @@ final class PaneWindowManager {
     let key = Key(worktreeID: worktreeID, paneID: paneID)
     let window = PaneWindow(
       contentRect: NSRect(x: 0, y: 0, width: 760, height: 520),
-      styleMask: [.titled, .closable, .miniaturizable, .resizable],
+      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
     )
+    // The root view draws its own repo and worktree header; the system title
+    // stays set for the window menu and assistive tech but never renders.
+    window.titleVisibility = .hidden
     window.isReleasedWhenClosed = false
     // Window mode is never persisted, so restoration has nothing to restore.
     window.isRestorable = false
@@ -237,9 +254,17 @@ final class PaneWindowManager {
       ghosttyShortcuts: ghosttyShortcuts,
       commandKeyObserver: commandKeyObserver,
       windowIsKey: { [weak window] in window?.isKeyWindow == true },
-      updateWindowTitle: { [weak window] title in window?.title = title }
+      updateWindowTitle: { [weak window] title in window?.title = title },
+      headerInfo: { [weak terminalManager] in
+        terminalManager?.appStore?.withState { state in
+          Self.headerInfo(for: worktreeID, in: state.repositories)
+        } ?? ""
+      }
     )
-    window.contentView = NSHostingView(rootView: root)
+    let hostingView = NSHostingView(rootView: root)
+    // Full-size content: the header row occupies the titlebar band itself.
+    hostingView.safeAreaRegions = []
+    window.contentView = hostingView
     return PaneWindowController(
       window: window,
       onCloseRequested: { [weak terminalManager] in
@@ -310,6 +335,10 @@ private final class PaneWindowController: NSWindowController, NSWindowDelegate {
   func tearDown() {
     window?.delegate = nil
     close()
+    // Release the content tree, not just the window: a retained NSHostingView
+    // keeps its focused values and shortcuts registered app-wide, shadowing
+    // the live windows' publications.
+    window?.contentView = nil
   }
 }
 
@@ -329,22 +358,27 @@ private struct WindowedPaneRootView: View {
   /// rather than act while another window is key.
   let windowIsKey: () -> Bool
   let updateWindowTitle: (String) -> Void
+  /// Resolves the header's repository and worktree line at render time.
+  let headerInfo: () -> String
 
   var body: some View {
     // Re-read config-derived colors on every Ghostty config reload.
     let _ = manager.configGeneration
     Group {
       if let pane = store.layout.panes[id: paneID], store.windowedPaneIDs.contains(paneID) {
-        PaneStripView(
-          pane: pane,
-          windowedPaneIDs: [],
-          store: store,
-          runtime: runtime,
-          surfaceState: { [weak manager] surfaceID in
-            manager?.hostIfExists(for: worktreeID)?.surfaceStates[surfaceID]
-          },
-          context: .windowed
-        )
+        VStack(spacing: 0) {
+          PaneWindowHeaderView(title: headerInfo())
+          PaneStripView(
+            pane: pane,
+            windowedPaneIDs: [],
+            store: store,
+            runtime: runtime,
+            surfaceState: { [weak manager] surfaceID in
+              manager?.hostIfExists(for: worktreeID)?.surfaceStates[surfaceID]
+            },
+            context: .windowed
+          )
+        }
         .onAppear {
           updateWindowTitle(Self.title(for: pane))
         }
@@ -463,5 +497,26 @@ private struct WindowedPaneRootView: View {
   static func title(for pane: Pane) -> String {
     guard let tab = pane.selectedTab else { return "Terminal" }
     return tab.customTitle ?? tab.title
+  }
+}
+
+/// The pane window's titlebar band: the repository and worktree line, drawn
+/// by the content because the system title is hidden. Hit-testing stays off
+/// so titlebar drags and the traffic lights work through it.
+private struct PaneWindowHeaderView: View {
+  let title: String
+
+  var body: some View {
+    Text(title)
+      .font(.caption)
+      .fontWeight(.semibold)
+      .foregroundStyle(.secondary)
+      .lineLimit(1)
+      .frame(maxWidth: .infinity)
+      // Clear the traffic lights on the leading edge.
+      .padding(.horizontal, 80)
+      .frame(height: 28)
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
   }
 }
