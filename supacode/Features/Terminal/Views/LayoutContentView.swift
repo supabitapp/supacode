@@ -64,8 +64,13 @@ struct LayoutPaneTreeView: View {
   var body: some View {
     Group {
       if let node = store.layout.tree.visibleNode {
+        // Panes flow down BY VALUE from this `.id` boundary: a structural
+        // change swaps the subtree, so the dismantling copy keeps its frozen
+        // pane values and can never retarget a host to post-swap state and
+        // steal its renderer into the dying hierarchy.
         PaneNodeView(
-          node: node, store: store, runtime: runtime, dividerColor: dividerColor,
+          node: node, panes: store.layout.panes, store: store, runtime: runtime,
+          dividerColor: dividerColor,
           stripFill: stripFill, unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState,
           isLifecycleBusy: isLifecycleBusy
         )
@@ -198,6 +203,7 @@ private struct EmptyLayoutView: View {
 /// divider, a leaf renders its pane.
 private struct PaneNodeView: View {
   let node: SplitTree<PaneID>.Node
+  let panes: IdentifiedArrayOf<Pane>
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let dividerColor: Color
@@ -209,13 +215,16 @@ private struct PaneNodeView: View {
   var body: some View {
     switch node {
     case .leaf(let paneID):
-      PaneStripView(
-        paneID: paneID, store: store, runtime: runtime, stripFill: stripFill,
-        unfocusedOverlay: unfocusedOverlay,
-        surfaceState: surfaceState, isLifecycleBusy: isLifecycleBusy)
+      if let pane = panes[id: paneID] {
+        PaneStripView(
+          pane: pane, store: store, runtime: runtime, stripFill: stripFill,
+          unfocusedOverlay: unfocusedOverlay,
+          surfaceState: surfaceState, isLifecycleBusy: isLifecycleBusy)
+      }
     case .split(let split):
       PaneSplitView(
-        node: node, split: split, store: store, runtime: runtime, dividerColor: dividerColor,
+        node: node, split: split, panes: panes, store: store, runtime: runtime,
+        dividerColor: dividerColor,
         stripFill: stripFill, unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState,
         isLifecycleBusy: isLifecycleBusy)
     }
@@ -227,6 +236,7 @@ private struct PaneNodeView: View {
 private struct PaneSplitView: View {
   let node: SplitTree<PaneID>.Node
   let split: SplitTree<PaneID>.Split
+  let panes: IdentifiedArrayOf<Pane>
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let dividerColor: Color
@@ -242,13 +252,15 @@ private struct PaneSplitView: View {
       dividerColor: dividerColor,
       left: {
         PaneNodeView(
-          node: split.left, store: store, runtime: runtime, dividerColor: dividerColor,
+          node: split.left, panes: panes, store: store, runtime: runtime,
+          dividerColor: dividerColor,
           stripFill: stripFill, unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState,
           isLifecycleBusy: isLifecycleBusy)
       },
       right: {
         PaneNodeView(
-          node: split.right, store: store, runtime: runtime, dividerColor: dividerColor,
+          node: split.right, panes: panes, store: store, runtime: runtime,
+          dividerColor: dividerColor,
           stripFill: stripFill, unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState,
           isLifecycleBusy: isLifecycleBusy)
       },
@@ -259,9 +271,11 @@ private struct PaneSplitView: View {
 }
 
 /// A pane: its tab strip and the selected tab's content. A single-tab pane
-/// still shows its strip, matching the current chrome.
+/// still shows its strip, matching the current chrome. The pane arrives by
+/// value from the `.id` boundary, never read from the store here, so a
+/// dismantling copy can never see post-swap selection.
 private struct PaneStripView: View {
-  let paneID: PaneID
+  let pane: Pane
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let stripFill: Color
@@ -269,11 +283,10 @@ private struct PaneStripView: View {
   let surfaceState: (UUID) -> WorktreeSurfaceState?
   let isLifecycleBusy: Bool
 
-  private var pane: Pane? { store.layout.panes[id: paneID] }
-  private var isFocused: Bool { store.layout.focusedPaneID == paneID }
+  private var isFocused: Bool { store.layout.focusedPaneID == pane.id }
   private var isZoomed: Bool {
     guard case .leaf(let leaf) = store.layout.tree.zoomed else { return false }
-    return leaf == paneID
+    return leaf == pane.id
   }
 
   /// Only a multi-pane view dims; the sole visible pane (single pane or
@@ -283,39 +296,37 @@ private struct PaneStripView: View {
   }
 
   var body: some View {
-    if let pane {
-      VStack(spacing: 0) {
-        PaneTabStrip(
-          pane: pane,
-          isFocusedPane: isFocused,
-          isZoomed: isZoomed,
-          isLifecycleBusy: isLifecycleBusy,
-          store: store,
-          runtime: runtime,
-          surfaceState: surfaceState
-        )
-        .background(stripFill)
-        if let contentID = pane.selectedTab?.content.id {
-          // The epoch read keeps this branch re-evaluating on hibernate/wake;
-          // a visible content without a renderer (failed wake, vanished
-          // worktree) gets an explicit placeholder, never a silent blank.
-          let epoch = store.renderEpoch
-          if runtime.renderer(for: contentID) != nil {
-            ContentHostView(contentID: contentID, runtime: runtime, epoch: epoch)
-              .frame(maxWidth: .infinity, maxHeight: .infinity)
-              .overlay {
-                if isDimmed, let fill = unfocusedOverlay.fill, unfocusedOverlay.opacity > 0 {
-                  fill
-                    .opacity(unfocusedOverlay.opacity)
-                    .allowsHitTesting(false)
-                }
+    VStack(spacing: 0) {
+      PaneTabStrip(
+        pane: pane,
+        isFocusedPane: isFocused,
+        isZoomed: isZoomed,
+        isLifecycleBusy: isLifecycleBusy,
+        store: store,
+        runtime: runtime,
+        surfaceState: surfaceState
+      )
+      .background(stripFill)
+      if let contentID = pane.selectedTab?.content.id {
+        // The epoch read keeps this branch re-evaluating on hibernate/wake;
+        // a visible content without a renderer (failed wake, vanished
+        // worktree) gets an explicit placeholder, never a silent blank.
+        let epoch = store.renderEpoch
+        if runtime.renderer(for: contentID) != nil {
+          ContentHostView(contentID: contentID, runtime: runtime, epoch: epoch)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay {
+              if isDimmed, let fill = unfocusedOverlay.fill, unfocusedOverlay.opacity > 0 {
+                fill
+                  .opacity(unfocusedOverlay.opacity)
+                  .allowsHitTesting(false)
               }
-          } else {
-            EmptyTerminalPaneView(message: "This terminal is unavailable.")
-          }
+            }
         } else {
-          Color.clear
+          EmptyTerminalPaneView(message: "This terminal is unavailable.")
         }
+      } else {
+        Color.clear
       }
     }
   }
