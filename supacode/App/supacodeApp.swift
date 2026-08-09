@@ -619,7 +619,7 @@ struct SupacodeApp: App {
         TerminalCommands(ghosttyShortcuts: ghosttyShortcuts)
         TerminalTabSelectionCommands(store: store)
       }
-      WindowCommands(ghosttyShortcuts: ghosttyShortcuts)
+      WindowCommands()
       CommandGroup(after: .textEditing) {
         Button("Go to Worktree") {
           guard NSApp.currentEvent?.isAutoRepeatKeyDown != true else { return }

@@ -89,7 +89,10 @@ extension AppShortcutOverride {
 
 extension AppShortcutOverride {
   // Well-known macOS app conventions always reserved by AppKit (not in the symbolic hotkeys plist).
-  public static let appKitReservedDisplayStrings: Set<String> = ["⌘Q", "⌘W", "⌘H", "⌘M"]
+  // ⌘W is deliberately absent: the Close Tab layout shortcut owns it, and
+  // the Close Window menu item falls back to it only while Close Tab is
+  // unavailable.
+  public static let appKitReservedDisplayStrings: Set<String> = ["⌘Q", "⌘H", "⌘M"]
 
   // Reads macOS system symbolic hotkeys at runtime and returns their display strings,
   // combined with well-known AppKit reserved shortcuts.

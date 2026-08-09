@@ -328,7 +328,7 @@ private struct PaneTabView: View {
           TerminalTabTrailingButton(
             title: "Close Tab",
             systemImage: "xmark",
-            ghosttyAction: "close_tab",
+            shortcut: AppShortcuts.closeTab,
             isVisible: isHovering && !isShowingHint,
             action: requestClose,
             gestureActive: $trailingButtonGestureActive
@@ -772,7 +772,7 @@ private struct PaneTabStripAccessories: View {
         PaneTabStripAccessoryButton(
           title: "Exit Split Zoom",
           systemImage: "arrow.down.right.and.arrow.up.left",
-          shortcutBinding: "toggle_split_zoom",
+          shortcut: AppShortcuts.toggleSplitZoom,
           action: { store.send(.toggleZoom(paneID: pane.id)) }
         )
       }
@@ -821,15 +821,14 @@ private struct PaneTabStripNewTabControl: View {
   let split: (TerminalSplitMenuDirection) -> Void
   let toggleWindowMode: () -> Void
 
-  @Environment(GhosttyShortcutManager.self)
-  private var ghosttyShortcuts
+  @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
     HStack(spacing: 0) {
       PaneTabStripAccessoryButton(
         title: "New Tab",
         systemImage: "plus",
-        shortcutBinding: "new_tab",
+        shortcut: AppShortcuts.newTerminalTab,
         action: newTab
       )
       Menu {
@@ -837,7 +836,7 @@ private struct PaneTabStripNewTabControl: View {
           Button(direction.title, systemImage: direction.systemImage) {
             split(direction)
           }
-          .ghosttyKeyboardShortcut(direction.ghosttyBinding, in: ghosttyShortcuts)
+          .appKeyboardShortcut(direction.appShortcut.effective(from: settingsFile.global.shortcutOverrides))
           .disabled(!canSplit)
         }
         Divider()
@@ -846,6 +845,7 @@ private struct PaneTabStripNewTabControl: View {
           systemImage: "macwindow.on.rectangle",
           action: toggleWindowMode
         )
+        .appKeyboardShortcut(AppShortcuts.toggleWindowMode.effective(from: settingsFile.global.shortcutOverrides))
       } label: {
         Image(systemName: "chevron.down")
           .imageScale(.small)
@@ -875,14 +875,13 @@ extension TerminalSplitMenuDirection {
 private struct PaneTabStripAccessoryButton: View {
   let title: String
   let systemImage: String
-  let shortcutBinding: String
+  let shortcut: AppShortcut
   let action: () -> Void
 
-  @Environment(GhosttyShortcutManager.self)
-  private var ghosttyShortcuts
+  @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
-    let shortcut = ghosttyShortcuts.display(for: shortcutBinding)
+    let shortcut = shortcut.effective(from: settingsFile.global.shortcutOverrides)?.display
 
     Button(action: action) {
       Label(title, systemImage: systemImage)

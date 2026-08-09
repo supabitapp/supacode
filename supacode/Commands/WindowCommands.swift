@@ -1,29 +1,23 @@
+import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 struct WindowCommands: Commands {
-  let ghosttyShortcuts: GhosttyShortcutManager
-  @FocusedValue(\.closeSurfaceAction) private var closeSurfaceAction
+  @Shared(.settingsFile) private var settingsFile
   @FocusedValue(\.closeTabAction) private var closeTabAction
   @FocusedValue(\.terminateAllTerminalSessionsAction) private var terminateAllTerminalSessionsAction
 
   var body: some Commands {
-    let closeSurfaceHotkey = ghosttyShortcuts.keyboardShortcut(for: "close_surface")
-    let isCloseSurfaceOverlapping = closeSurfaceHotkey?.key == "w" && closeSurfaceHotkey?.modifiers == .command
-
-    let closeSurfaceEnabled = closeSurfaceAction?.isEnabled == true
+    let closeTab = AppShortcuts.closeTab.effective(from: settingsFile.global.shortcutOverrides)
+    let closeTabEnabled = closeTabAction?.isEnabled == true && closeTab != nil
+    let isCloseTabOverlapping = closeTab?.display == "⌘W"
     CommandGroup(replacing: .saveItem) {
-      Button("Close Terminal", systemImage: "xmark") {
-        closeSurfaceAction?()
-      }
-      // Suppress the Ghostty shortcut when the close-surface action is unavailable so Close Window can claim ⌘W.
-      .keyboardShortcut(closeSurfaceEnabled ? ghosttyShortcuts.keyboardShortcut(for: "close_surface") : nil)
-      .disabled(!closeSurfaceEnabled)
-
-      Button("Close Terminal Tab") {
+      Button("Close Tab", systemImage: "xmark") {
         closeTabAction?()
       }
-      .ghosttyKeyboardShortcut("close_tab", in: ghosttyShortcuts)
-      .disabled(closeTabAction?.isEnabled != true)
+      // Suppressed while unavailable so Close Window can claim ⌘W.
+      .appKeyboardShortcut(closeTabEnabled ? closeTab : nil)
+      .disabled(!closeTabEnabled)
 
       Button("Terminate All Terminal Sessions…") {
         terminateAllTerminalSessionsAction?()
@@ -39,7 +33,7 @@ struct WindowCommands: Commands {
         }
         NSApplication.shared.keyWindow?.performClose(nil)
       }
-      .keyboardShortcut(!isCloseSurfaceOverlapping || !closeSurfaceEnabled ? .init("w") : nil)
+      .keyboardShortcut(!isCloseTabOverlapping || !closeTabEnabled ? .init("w") : nil)
     }
   }
 }

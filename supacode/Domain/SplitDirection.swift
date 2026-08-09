@@ -1,3 +1,5 @@
+import SupacodeSettingsShared
+
 /// Direction for terminal surface splits.
 /// Keep in sync with `CLISplitDirection` in `supacode-cli/Helpers/CLISplitDirection.swift`.
 nonisolated enum SplitDirection: Equatable, Sendable {
@@ -53,6 +55,45 @@ enum TerminalSplitMenuDirection: Equatable, Sendable, CaseIterable {
     case .left: "Split Left"
     case .down: "Split Down"
     case .up: "Split Up"
+    }
+  }
+
+  /// The app-owned layout shortcut for this split direction.
+  var appShortcut: AppShortcut {
+    switch self {
+    case .right: AppShortcuts.splitRight
+    case .left: AppShortcuts.splitLeft
+    case .down: AppShortcuts.splitDown
+    case .up: AppShortcuts.splitUp
+    }
+  }
+
+  /// The app-owned layout shortcut for focusing the neighbor in this direction.
+  var focusAppShortcut: AppShortcut {
+    switch self {
+    case .right: AppShortcuts.focusSplitRight
+    case .left: AppShortcuts.focusSplitLeft
+    case .down: AppShortcuts.focusSplitDown
+    case .up: AppShortcuts.focusSplitUp
+    }
+  }
+
+  var focusMenuBarTitle: String {
+    switch self {
+    case .right: "Focus Split Right"
+    case .left: "Focus Split Left"
+    case .down: "Focus Split Down"
+    case .up: "Focus Split Up"
+    }
+  }
+
+  /// Ghostty's `goto_split` argument for this direction.
+  var gotoSplitBinding: String {
+    switch self {
+    case .right: "goto_split:right"
+    case .left: "goto_split:left"
+    case .down: "goto_split:bottom"
+    case .up: "goto_split:top"
     }
   }
 

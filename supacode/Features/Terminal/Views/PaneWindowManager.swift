@@ -416,9 +416,13 @@ private struct WindowedPaneRootView: View {
           // One content per tab: closing the surface closes the tab.
           requestCloseSelectedTab(of: pane)
         }
-        // Published disabled: a pane window takes no splits, and the main
-        // scene's action would otherwise split the selected worktree.
+        // Published disabled: a pane window takes no splits, zoom, or
+        // neighbor focus, and the main scene's actions would otherwise hit
+        // the selected worktree.
         .focusedAction(\.splitTerminalAction, enabled: false) { (_: TerminalSplitMenuDirection) in }
+        .focusedAction(\.focusSplitAction, enabled: false) { (_: TerminalSplitMenuDirection) in }
+        .focusedAction(\.toggleSplitZoomAction, enabled: false) {}
+        .focusedAction(\.equalizeSplitsAction, enabled: false) {}
         .focusedSceneAction(\.toggleWindowModeAction, enabled: true, token: paneID.rawValue) {
           guard windowIsKey() else { return }
           store.send(.exitWindowMode(paneID: paneID))

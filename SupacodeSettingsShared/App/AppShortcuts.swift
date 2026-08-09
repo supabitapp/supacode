@@ -17,6 +17,10 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case selectTab(Int)
   case openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository, openPullRequest, copyPath
   case runScript, stopRunScript, renameTab, toggleWindowMode
+  case newTerminalTab, closeTab
+  case splitRight, splitLeft, splitDown, splitUp
+  case focusSplitLeft, focusSplitRight, focusSplitUp, focusSplitDown
+  case toggleSplitZoom, equalizeSplits
   case jumpToLatestUnread
   case togglePullRequestInspector, toggleFilesInspector, toggleNotificationsInspector
 
@@ -71,6 +75,18 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .stopRunScript: "stopRunScript"
     case .renameTab: "renameTab"
     case .toggleWindowMode: "toggleWindowMode"
+    case .newTerminalTab: "newTerminalTab"
+    case .closeTab: "closeTab"
+    case .splitRight: "splitRight"
+    case .splitLeft: "splitLeft"
+    case .splitDown: "splitDown"
+    case .splitUp: "splitUp"
+    case .focusSplitLeft: "focusSplitLeft"
+    case .focusSplitRight: "focusSplitRight"
+    case .focusSplitUp: "focusSplitUp"
+    case .focusSplitDown: "focusSplitDown"
+    case .toggleSplitZoom: "toggleSplitZoom"
+    case .equalizeSplits: "equalizeSplits"
     case .jumpToLatestUnread: "jumpToLatestUnread"
     case .togglePullRequestInspector: "togglePullRequestInspector"
     case .toggleFilesInspector: "toggleFilesInspector"
@@ -110,6 +126,18 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "stopRunScript": .stopRunScript,
     "renameTab": .renameTab,
     "toggleWindowMode": .toggleWindowMode,
+    "newTerminalTab": .newTerminalTab,
+    "closeTab": .closeTab,
+    "splitRight": .splitRight,
+    "splitLeft": .splitLeft,
+    "splitDown": .splitDown,
+    "splitUp": .splitUp,
+    "focusSplitLeft": .focusSplitLeft,
+    "focusSplitRight": .focusSplitRight,
+    "focusSplitUp": .focusSplitUp,
+    "focusSplitDown": .focusSplitDown,
+    "toggleSplitZoom": .toggleSplitZoom,
+    "equalizeSplits": .equalizeSplits,
     "jumpToLatestUnread": .jumpToLatestUnread,
     "togglePullRequestInspector": .togglePullRequestInspector,
     "toggleFilesInspector": .toggleFilesInspector,
@@ -168,6 +196,18 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .stopRunScript: "Stop Run Script"
     case .renameTab: "Rename Tab"
     case .toggleWindowMode: "Toggle Window Mode"
+    case .newTerminalTab: "New Terminal Tab"
+    case .closeTab: "Close Tab"
+    case .splitRight: "Split Right"
+    case .splitLeft: "Split Left"
+    case .splitDown: "Split Down"
+    case .splitUp: "Split Up"
+    case .focusSplitLeft: "Focus Split Left"
+    case .focusSplitRight: "Focus Split Right"
+    case .focusSplitUp: "Focus Split Up"
+    case .focusSplitDown: "Focus Split Down"
+    case .toggleSplitZoom: "Toggle Split Zoom"
+    case .equalizeSplits: "Equalize Splits"
     case .jumpToLatestUnread: "Jump to Latest Unread"
     case .togglePullRequestInspector: "Toggle Pull Request Inspector"
     case .toggleFilesInspector: "Toggle Files Inspector"
@@ -337,6 +377,7 @@ public enum AppShortcutCategory: String, CaseIterable, Sendable {
   case worktrees
   case worktreeSelection
   case tabSelection
+  case layout
   case actions
 
   public var displayName: String {
@@ -346,6 +387,7 @@ public enum AppShortcutCategory: String, CaseIterable, Sendable {
     case .worktrees: "Worktrees"
     case .worktreeSelection: "Worktree Selection"
     case .tabSelection: "Tab Selection"
+    case .layout: "Layout"
     case .actions: "Actions"
     }
   }
@@ -452,6 +494,39 @@ public enum AppShortcuts {
   public static let stopRunScript = AppShortcut(id: .stopRunScript, key: ".", modifiers: .command)
   public static let renameTab = AppShortcut(id: .renameTab, key: "r", modifiers: [.control, .shift])
   public static let toggleWindowMode = AppShortcut(id: .toggleWindowMode, key: "m", modifiers: [.command, .shift])
+  public static let newTerminalTab = AppShortcut(id: .newTerminalTab, key: "t", modifiers: .command)
+  public static let closeTab = AppShortcut(id: .closeTab, key: "w", modifiers: .command)
+  public static let splitRight = AppShortcut(id: .splitRight, key: "d", modifiers: .command)
+  public static let splitDown = AppShortcut(id: .splitDown, key: "d", modifiers: [.command, .shift])
+  public static let splitLeft = AppShortcut(
+    id: .splitLeft, key: "d", modifiers: [.command, .option], isEnabledByDefault: false
+  )
+  public static let splitUp = AppShortcut(
+    id: .splitUp, key: "d", modifiers: [.command, .option, .shift], isEnabledByDefault: false
+  )
+  public static let focusSplitLeft = AppShortcut(
+    id: .focusSplitLeft,
+    keyEquivalent: .leftArrow, ghosttyKeyName: "arrow_left", modifiers: [.command, .option]
+  )
+  public static let focusSplitRight = AppShortcut(
+    id: .focusSplitRight,
+    keyEquivalent: .rightArrow, ghosttyKeyName: "arrow_right", modifiers: [.command, .option]
+  )
+  public static let focusSplitUp = AppShortcut(
+    id: .focusSplitUp,
+    keyEquivalent: .upArrow, ghosttyKeyName: "arrow_up", modifiers: [.command, .option]
+  )
+  public static let focusSplitDown = AppShortcut(
+    id: .focusSplitDown,
+    keyEquivalent: .downArrow, ghosttyKeyName: "arrow_down", modifiers: [.command, .option]
+  )
+  public static let toggleSplitZoom = AppShortcut(
+    id: .toggleSplitZoom,
+    keyEquivalent: .return, ghosttyKeyName: "return", modifiers: [.command, .shift]
+  )
+  public static let equalizeSplits = AppShortcut(
+    id: .equalizeSplits, key: "=", modifiers: [.command, .shift], isEnabledByDefault: false
+  )
   public static let jumpToLatestUnread = AppShortcut(
     id: .jumpToLatestUnread, key: "u", modifiers: [.command, .shift]
   )
@@ -523,10 +598,19 @@ public enum AppShortcuts {
     AppShortcutGroup(category: .worktreeSelection, shortcuts: worktreeSelection),
     AppShortcutGroup(category: .tabSelection, shortcuts: tabSelection),
     AppShortcutGroup(
+      category: .layout,
+      shortcuts: [
+        newTerminalTab, closeTab,
+        splitRight, splitLeft, splitDown, splitUp,
+        focusSplitLeft, focusSplitRight, focusSplitUp, focusSplitDown,
+        toggleSplitZoom, equalizeSplits, toggleWindowMode,
+      ]
+    ),
+    AppShortcutGroup(
       category: .actions,
       shortcuts: [
         openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository,
-        openPullRequest, copyPath, runScript, stopRunScript, renameTab, toggleWindowMode, jumpToLatestUnread,
+        openPullRequest, copyPath, runScript, stopRunScript, renameTab, jumpToLatestUnread,
         togglePullRequestInspector, toggleFilesInspector, toggleNotificationsInspector,
       ]
     ),

@@ -60,6 +60,70 @@ struct AppFeatureSplitTerminalTests {
     await store.finish()
   }
 
+  @Test(.dependencies, arguments: TerminalSplitMenuDirection.allCases)
+  func focusSplitForwardsTheGotoBinding(direction: TerminalSplitMenuDirection) async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+
+    await store.send(.focusSplit(direction))
+    await store.finish()
+    #expect(sent.value == [.performBindingAction(worktree, action: direction.gotoSplitBinding)])
+  }
+
+  @Test(.dependencies) func toggleSplitZoomForwardsTheBinding() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+
+    await store.send(.toggleSplitZoom)
+    await store.finish()
+    #expect(sent.value == [.performBindingAction(worktree, action: "toggle_split_zoom")])
+  }
+
+  @Test(.dependencies) func equalizeSplitsForwardsTheBinding() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+
+    await store.send(.equalizeSplits)
+    await store.finish()
+    #expect(sent.value == [.performBindingAction(worktree, action: "equalize_splits")])
+  }
+
   @Test(.dependencies) func toggleWindowModeForwardsToTheTerminalClient() async {
     let worktree = makeWorktree()
     let sent = LockIsolated<[TerminalClient.Command]>([])

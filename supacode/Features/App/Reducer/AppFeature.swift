@@ -310,6 +310,9 @@ struct AppFeature {
     case newTerminal
     case renameSelectedTerminalTab
     case toggleWindowModeForFocusedPane
+    case toggleSplitZoom
+    case equalizeSplits
+    case focusSplit(TerminalSplitMenuDirection)
     case selectTerminalTabAtIndex(Int)
     case splitTerminal(TerminalSplitMenuDirection)
     case jumpToLatestUnread
@@ -955,6 +958,36 @@ struct AppFeature {
         }
         return .run { _ in
           await terminalClient.send(.toggleWindowModeForFocusedPane(worktree))
+        }
+
+      case .toggleSplitZoom:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.performBindingAction(worktree, action: "toggle_split_zoom"))
+        }
+
+      case .equalizeSplits:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.performBindingAction(worktree, action: "equalize_splits"))
+        }
+
+      case .focusSplit(let direction):
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.performBindingAction(worktree, action: direction.gotoSplitBinding))
         }
 
       case .jumpToLatestUnread:
