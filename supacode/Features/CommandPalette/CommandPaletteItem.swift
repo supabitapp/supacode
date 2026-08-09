@@ -223,6 +223,10 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
   case splitLeft = "split-left"
   case splitDown = "split-down"
   case splitUp = "split-up"
+  case focusSplitRight = "focus-split-right"
+  case focusSplitLeft = "focus-split-left"
+  case focusSplitDown = "focus-split-down"
+  case focusSplitUp = "focus-split-up"
   case toggleSplitZoom = "toggle-split-zoom"
   case equalizeSplits = "equalize-splits"
 
@@ -234,6 +238,10 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
     case .splitLeft: "Split Left"
     case .splitDown: "Split Down"
     case .splitUp: "Split Up"
+    case .focusSplitRight: "Focus Split Right"
+    case .focusSplitLeft: "Focus Split Left"
+    case .focusSplitDown: "Focus Split Down"
+    case .focusSplitUp: "Focus Split Up"
     case .toggleSplitZoom: "Toggle Split Zoom"
     case .equalizeSplits: "Equalize Splits"
     }
@@ -248,6 +256,10 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
     case .splitLeft: TerminalSplitMenuDirection.left.systemImage
     case .splitDown: TerminalSplitMenuDirection.down.systemImage
     case .splitUp: TerminalSplitMenuDirection.up.systemImage
+    case .focusSplitRight: "arrow.right"
+    case .focusSplitLeft: "arrow.left"
+    case .focusSplitDown: "arrow.down"
+    case .focusSplitUp: "arrow.up"
     case .toggleSplitZoom: "arrow.up.left.and.arrow.down.right"
     case .equalizeSplits: "rectangle.split.2x1"
     }
@@ -262,6 +274,10 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
     case .splitLeft: AppShortcuts.splitLeft
     case .splitDown: AppShortcuts.splitDown
     case .splitUp: AppShortcuts.splitUp
+    case .focusSplitRight: AppShortcuts.focusSplitRight
+    case .focusSplitLeft: AppShortcuts.focusSplitLeft
+    case .focusSplitDown: AppShortcuts.focusSplitDown
+    case .focusSplitUp: AppShortcuts.focusSplitUp
     case .toggleSplitZoom: AppShortcuts.toggleSplitZoom
     case .equalizeSplits: AppShortcuts.equalizeSplits
     }

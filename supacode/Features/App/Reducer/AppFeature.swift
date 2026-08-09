@@ -1537,6 +1537,14 @@ struct AppFeature {
           return .send(.splitTerminal(.down))
         case .splitUp:
           return .send(.splitTerminal(.up))
+        case .focusSplitRight:
+          return .send(.focusSplit(.right))
+        case .focusSplitLeft:
+          return .send(.focusSplit(.left))
+        case .focusSplitDown:
+          return .send(.focusSplit(.down))
+        case .focusSplitUp:
+          return .send(.focusSplit(.up))
         case .toggleSplitZoom:
           return .send(.toggleSplitZoom)
         case .equalizeSplits:
