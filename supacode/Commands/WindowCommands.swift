@@ -31,6 +31,12 @@ struct WindowCommands: Commands {
       .disabled(terminateAllTerminalSessionsAction?.isEnabled != true)
 
       Button("Close Window") {
+        // In a pane window the chord falls back here when the focused values
+        // do not propagate; it must still close the tab, never the window.
+        if let paneWindow = NSApp.keyWindow as? PaneWindow, let closeTab = paneWindow.closeSelectedTab {
+          closeTab()
+          return
+        }
         NSApplication.shared.keyWindow?.performClose(nil)
       }
       .keyboardShortcut(!isCloseSurfaceOverlapping || !closeSurfaceEnabled ? .init("w") : nil)

@@ -23,9 +23,7 @@ struct WorktreeLayoutView: View {
     let _ = colorScheme
     let selectedContentID = selectedContentID
     Group {
-      // An empty layout must not mount the AX container: it cuts the window
-      // tint's mask hole, and with no surface to paint the hole shows raw
-      // window blur instead of the terminal background.
+      // An empty layout renders the hint instead of an empty pane tree.
       if let layoutStore = terminalsStore.scope(
         state: \.layouts[id: worktree.id],
         action: \.layouts[id: worktree.id]
@@ -34,11 +32,6 @@ struct WorktreeLayoutView: View {
           store: layoutStore,
           runtime: runtime,
           dividerColor: manager.splitDividerColor(),
-          // The strip sits inside the tint-mask hole; repaint the chrome tint
-          // behind it or transparent windows show raw blur above every pane.
-          // `focusedSurfaceBackground` is observable, so tint moves retint it.
-          stripFill: Color(nsColor: manager.focusedSurfaceBackground)
-            .opacity(manager.ghosttyRuntime.backgroundOpacity()),
           unfocusedOverlay: manager.unfocusedSplitOverlay(),
           surfaceState: { [weak manager] surfaceID in
             manager?.hostIfExists(for: worktree.id)?.surfaceStates[surfaceID]
@@ -111,7 +104,6 @@ private struct LayoutAlertHost: View {
   @Bindable var store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let dividerColor: Color
-  let stripFill: Color
   let unfocusedOverlay: (fill: Color?, opacity: Double)
   let surfaceState: (UUID) -> WorktreeSurfaceState?
   let isLifecycleBusy: Bool
@@ -128,7 +120,6 @@ private struct LayoutAlertHost: View {
       store: store,
       runtime: runtime,
       dividerColor: dividerColor,
-      stripFill: stripFill,
       unfocusedOverlay: unfocusedOverlay,
       surfaceState: surfaceState,
       isLifecycleBusy: isLifecycleBusy,

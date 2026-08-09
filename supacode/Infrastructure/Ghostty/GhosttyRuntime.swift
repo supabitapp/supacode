@@ -837,7 +837,7 @@ extension Notification.Name {
   // move or OSC 11), so window chrome re-tints to follow it.
   static let ghosttyFocusedSurfaceBackgroundDidChange = Notification.Name(
     "ghosttyFocusedSurfaceBackgroundDidChange")
-  // Posted when a tint mask region (the terminal body container) lays out or
+  // Posted when a tint mask region (a mounted surface wrapper) lays out or
   // attaches/detaches from its window, so `WindowTintBackdrop` re-cuts the hole
   // it masks out of the window tint. Handled synchronously so the mask never lags
   // a frame behind the region: a stale hole flashes the transparent backing.

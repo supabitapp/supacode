@@ -11,10 +11,6 @@ struct LayoutContentView: View {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   var dividerColor: Color = Color(nsColor: .separatorColor)
-  /// Chrome fill behind each tab strip: the strip sits inside the window
-  /// tint's mask hole, so it must repaint the tint or transparent windows
-  /// show raw blur above every pane.
-  var stripFill: Color = .clear
   /// The `unfocused-split-fill` dim painted over visible unfocused panes.
   var unfocusedOverlay: (fill: Color?, opacity: Double) = (nil, 0)
   /// Resolves a content id to its observable unseen-notification counter.
@@ -38,7 +34,6 @@ struct LayoutContentView: View {
       renderContext: PaneRenderContext(
         runtime: runtime,
         dividerColor: dividerColor,
-        stripFill: stripFill,
         unfocusedOverlay: unfocusedOverlay,
         surfaceState: surfaceState,
         isLifecycleBusy: isLifecycleBusy,
@@ -61,7 +56,6 @@ struct LayoutContentView: View {
 struct PaneRenderContext {
   let runtime: ContentRuntime
   var dividerColor: Color = Color(nsColor: .separatorColor)
-  var stripFill: Color = .clear
   var unfocusedOverlay: (fill: Color?, opacity: Double) = (nil, 0)
   var surfaceState: (UUID) -> WorktreeSurfaceState? = { _ in nil }
   var isLifecycleBusy = false
@@ -120,7 +114,7 @@ private struct LayoutAXContainer: NSViewRepresentable {
 }
 
 @MainActor
-final class LayoutAXContainerView: NSView, WindowTintMaskRegion {
+final class LayoutAXContainerView: NSView {
   // Typed hosting view (no `AnyView`) so re-assigning `rootView` lets SwiftUI
   // diff against a stable concrete view type.
   private var hostingView: NSHostingView<LayoutPaneTreeView>?
@@ -164,18 +158,6 @@ final class LayoutAXContainerView: NSView, WindowTintMaskRegion {
       // membership or order changes.
       NSAccessibility.post(element: self, notification: .layoutChanged)
     }
-  }
-
-  // Drive the window tint mask: this container's bounds are the hole cut out
-  // of the tint, so the terminal body composites over blur.
-  override func layout() {
-    super.layout()
-    NotificationCenter.default.post(name: .ghosttyTintMaskRegionDidChange, object: self)
-  }
-
-  override func viewDidMoveToWindow() {
-    super.viewDidMoveToWindow()
-    NotificationCenter.default.post(name: .ghosttyTintMaskRegionDidChange, object: self)
   }
 
   override func isAccessibilityElement() -> Bool {
@@ -227,7 +209,6 @@ private struct PaneNodeView: View {
           PaneStripView(
             pane: pane, windowedPaneIDs: windowedPaneIDs, store: store,
             runtime: renderContext.runtime,
-            stripFill: renderContext.stripFill,
             unfocusedOverlay: renderContext.unfocusedOverlay,
             surfaceState: renderContext.surfaceState,
             isLifecycleBusy: renderContext.isLifecycleBusy)
@@ -296,7 +277,6 @@ struct PaneStripView: View {
   let windowedPaneIDs: Set<PaneID>
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
-  let stripFill: Color
   var unfocusedOverlay: (fill: Color?, opacity: Double) = (nil, 0)
   var surfaceState: (UUID) -> WorktreeSurfaceState? = { _ in nil }
   var isLifecycleBusy = false
@@ -328,7 +308,6 @@ struct PaneStripView: View {
         runtime: runtime,
         surfaceState: surfaceState
       )
-      .background(stripFill)
       Group {
         if let contentID = pane.selectedTab?.content.id {
           // The epoch read keeps this branch re-evaluating on hibernate/wake;

@@ -250,6 +250,33 @@ struct AppShortcutsTests {
     #expect(AppShortcuts.renameTab.displayName == "Rename Tab")
   }
 
+  @Test func toggleWindowModeKeyRoundTrips() {
+    let decoded = AppShortcutID(codingKey: PlainCodingKey("toggleWindowMode"))
+    #expect(decoded == .toggleWindowMode)
+    #expect(decoded?.codingKey.stringValue == "toggleWindowMode")
+  }
+
+  @Test func toggleWindowModeShortcutHasNoDefaultConflict() {
+    #expect(AppShortcuts.conflictWarnings(from: [:])[.toggleWindowMode] == nil)
+  }
+
+  @Test func toggleWindowModeShortcutUnbindsInGhostty() {
+    #expect(AppShortcuts.toggleWindowMode.ghosttyUnbindArgument == "--keybind=shift+super+m=unbind")
+    #expect(
+      AppShortcuts.ghosttyCLIKeybindArguments.contains(AppShortcuts.toggleWindowMode.ghosttyUnbindArgument)
+    )
+  }
+
+  @Test func everyShortcutKeyRoundTripsThroughTheDecodeMap() {
+    // A stable key missing from the decode map does not merely drop the
+    // override: the dictionary decode throws and the whole settings file
+    // resets to defaults.
+    for id in AppShortcuts.all.map(\.id) {
+      let key = id.codingKey.stringValue
+      #expect(AppShortcutID(codingKey: PlainCodingKey(key)) == id, "\(key) does not round-trip")
+    }
+  }
+
   @Test func renameTabKeyRoundTrips() {
     let decoded = AppShortcutID(codingKey: PlainCodingKey("renameTab"))
     #expect(decoded == .renameTab)

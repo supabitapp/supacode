@@ -76,6 +76,8 @@ struct TerminalClient {
     case destroyTab(Worktree, tabID: TabID, focusing: Bool = true)
     case destroySurface(Worktree, tabID: TabID, surfaceID: UUID, focusing: Bool = true)
     case beginTabRename(Worktree, tabID: TabID? = nil)
+    /// Moves the worktree's focused pane into its own window, or back.
+    case toggleWindowModeForFocusedPane(Worktree)
     case renameTab(Worktree, tabID: TabID, title: String)
     case prune(keeping: Set<Worktree.ID>, protectingRepositoryIDs: Set<Repository.ID>)
     /// Explicitly deleted worktree: its layout, sessions, and persisted record

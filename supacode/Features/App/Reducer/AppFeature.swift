@@ -309,6 +309,7 @@ struct AppFeature {
     case requestTerminateAllTerminalSessions
     case newTerminal
     case renameSelectedTerminalTab
+    case toggleWindowModeForFocusedPane
     case selectTerminalTabAtIndex(Int)
     case splitTerminal(TerminalSplitMenuDirection)
     case jumpToLatestUnread
@@ -946,6 +947,16 @@ struct AppFeature {
           await terminalClient.send(.performBindingAction(worktree, action: direction.ghosttyBinding))
         }
 
+      case .toggleWindowModeForFocusedPane:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.toggleWindowModeForFocusedPane(worktree))
+        }
+
       case .jumpToLatestUnread:
         guard let location = terminalClient.latestUnreadNotification() else {
           jumpLogger.debug("jumpToLatestUnread invoked with no unread notifications.")
@@ -1475,6 +1486,9 @@ struct AppFeature {
         return .send(
           .repositories(.sidebarItems(.element(id: worktreeID, action: .focusTerminalRequested)))
         )
+
+      case .commandPalette(.delegate(.toggleWindowMode)):
+        return .send(.toggleWindowModeForFocusedPane)
 
       case .commandPalette(.delegate(.checkForUpdates)):
         return .send(.updates(.checkForUpdates))

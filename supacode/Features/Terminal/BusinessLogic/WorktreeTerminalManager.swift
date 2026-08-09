@@ -459,7 +459,7 @@ final class WorktreeTerminalManager {
       .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .focusSurface, .splitSurface,
       .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .removeWorktreeLayout,
       .setNotificationsEnabled, .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
-      .setTerminalHibernationEnabled:
+      .setTerminalHibernationEnabled, .toggleWindowModeForFocusedPane:
       return false
     }
     return true
@@ -478,7 +478,7 @@ final class WorktreeTerminalManager {
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex,
       .focusSurface, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .removeWorktreeLayout,
       .setNotificationsEnabled, .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
-      .setTerminalHibernationEnabled:
+      .setTerminalHibernationEnabled, .toggleWindowModeForFocusedPane:
       return false
     }
     return true
@@ -502,6 +502,8 @@ final class WorktreeTerminalManager {
       enforceNotificationRetentionLimit()
     case .setTerminalHibernationEnabled:
       sendTerminals(.hibernationPolicyChanged)
+    case .toggleWindowModeForFocusedPane(let worktree):
+      toggleWindowModeForFocusedPane(of: worktree)
     case .setSelectedWorktreeID(let id):
       guard id != selectedWorktreeID else { return }
       if let previousID = selectedWorktreeID, let previousHost = hosts[previousID] {
@@ -528,6 +530,46 @@ final class WorktreeTerminalManager {
       .splitSurface, .destroyTab, .destroySurface, .renameTab, .beginTabRename:
       assertionFailure("Unhandled terminal command reached management handler: \(command)")
     }
+  }
+
+  /// Toggles window mode for the worktree's focused pane. A key pane window
+  /// (or its palette child) wins over the selected worktree, so the command
+  /// returns THAT pane inline.
+  private func toggleWindowModeForFocusedPane(of worktree: Worktree) {
+    let keyPaneWindow = (NSApp.keyWindow as? PaneWindow) ?? (NSApp.keyWindow?.parent as? PaneWindow)
+    if let keyPaneWindow, let worktreeID = keyPaneWindow.hostedWorktreeID,
+      let paneID = keyPaneWindow.hostedPaneID
+    {
+      sendLayout(worktreeID, .exitWindowMode(paneID: paneID))
+      return
+    }
+    guard let layout = layoutState(for: worktree.id) else {
+      terminalLogger.warning("toggleWindowMode: no layout state for \(worktree.id).")
+      return
+    }
+    guard let paneID = layout.layout.focusedPaneID else {
+      terminalLogger.debug("toggleWindowMode: no focused pane in \(worktree.id).")
+      return
+    }
+    let action: LayoutFeature.Action =
+      layout.windowedPaneIDs.contains(paneID)
+      ? .exitWindowMode(paneID: paneID)
+      : .enterWindowMode(paneID: paneID)
+    sendLayout(worktree.id, action)
+  }
+
+  /// The content's OSC 11 background, nil when unset or unmounted.
+  func surfaceBackground(forContent contentID: ContentID) -> NSColor? {
+    guard let surface = ContentRuntime.liveValue.renderer(for: contentID) as? GhosttySurfaceView else {
+      return nil
+    }
+    let state = surface.bridge.state
+    return Self.osc11BackgroundColor(
+      kind: state.colorChangeKind,
+      red: state.colorChangeR,
+      green: state.colorChangeG,
+      blue: state.colorChangeB
+    )
   }
 
   func eventStream() -> AsyncStream<TerminalClient.Event> {

@@ -60,6 +60,45 @@ struct AppFeatureSplitTerminalTests {
     await store.finish()
   }
 
+  @Test(.dependencies) func toggleWindowModeForwardsToTheTerminalClient() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+
+    await store.send(.toggleWindowModeForFocusedPane)
+    await store.finish()
+    #expect(sent.value == [.toggleWindowModeForFocusedPane(worktree)])
+  }
+
+  @Test(.dependencies) func toggleWindowModeWithoutSelectionIsNoop() async {
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: RepositoriesFeature.State(),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in
+        Issue.record("terminalClient.send should not be called without a selected worktree")
+      }
+    }
+
+    await store.send(.toggleWindowModeForFocusedPane)
+    await store.finish()
+  }
+
   private func makeWorktree() -> Worktree {
     Worktree(
       id: "/tmp/repo/wt-1",

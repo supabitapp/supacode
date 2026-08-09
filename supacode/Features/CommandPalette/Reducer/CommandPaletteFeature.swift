@@ -65,6 +65,7 @@ struct CommandPaletteFeature {
     case viewArchivedWorktrees
     case refreshWorktrees
     case ghosttyCommand(String)
+    case toggleWindowMode
     case openPullRequest(Worktree.ID)
     case markPullRequestReady(Worktree.ID)
     case mergePullRequest(Worktree.ID)
@@ -279,6 +280,14 @@ struct CommandPaletteFeature {
     if repositories.selectedWorktreeID != nil {
       items.append(contentsOf: ghosttyCommandItems(ghosttyCommands))
       items.append(contentsOf: scriptItems(scripts: scripts, runningScriptIDs: runningScriptIDs))
+      items.append(
+        CommandPaletteItem(
+          id: CommandPaletteItemID.toggleWindowMode,
+          title: "Toggle Window Mode",
+          subtitle: "Move the focused pane to its own window, or back",
+          kind: .toggleWindowMode
+        )
+      )
     }
     if let selectedWorktreeID = repositories.selectedWorktreeID,
       let repositoryID = repositories.repositoryID(containing: selectedWorktreeID),
@@ -411,6 +420,7 @@ struct CommandPaletteFeature {
     scripts: [ScriptDefinition] = []
   ) -> [CommandPaletteItem.ID] {
     var ids = CommandPaletteItemID.globalIDs
+    ids.append(CommandPaletteItemID.toggleWindowMode)
     for repository in repositories {
       ids.append(contentsOf: CommandPaletteItemID.pullRequestIDs(repositoryID: repository.id))
       ids.append(CommandPaletteItemID.customizeRepositoryAppearance(repository.id))
@@ -716,6 +726,7 @@ private enum CommandPaletteItemID {
   static let globalNewWorktree = "global.new-worktree"
   static let globalRefreshWorktrees = "global.refresh-worktrees"
   static let globalViewArchivedWorktrees = "global.view-archived-worktrees"
+  static let toggleWindowMode = "worktree.toggle-window-mode"
 
   static var globalIDs: [CommandPaletteItem.ID] {
     [
@@ -853,7 +864,7 @@ private func delegateAction(for kind: CommandPaletteItem.Kind) -> CommandPalette
     return .removeWorktree(worktreeID, repositoryID)
   case .archiveWorktree(let worktreeID, let repositoryID):
     return .archiveWorktree(worktreeID, repositoryID)
-  case .renameBranch, .customizeRepositoryAppearance, .customizeWorktreeAppearance:
+  case .renameBranch, .customizeRepositoryAppearance, .customizeWorktreeAppearance, .toggleWindowMode:
     return selectedEntryDelegateAction(for: kind)!
   case .viewArchivedWorktrees:
     return .viewArchivedWorktrees
@@ -892,8 +903,18 @@ private func selectedEntryDelegateAction(
     return .customizeRepositoryAppearance(repositoryID)
   case .customizeWorktreeAppearance(let worktreeID, let repositoryID):
     return .customizeWorktreeAppearance(worktreeID, repositoryID)
-  default:
+  case .toggleWindowMode:
+    return .toggleWindowMode
+  case .checkForUpdates, .openRepository, .addRemoteRepository, .worktreeSelect, .openSettings,
+    .newWorktree, .removeWorktree, .archiveWorktree, .viewArchivedWorktrees, .refreshWorktrees,
+    .ghosttyCommand, .openPullRequest, .markPullRequestReady, .mergePullRequest, .closePullRequest,
+    .copyFailingJobURL, .copyCiFailureLogs, .rerunFailedJobs, .openFailingCheckDetails,
+    .runScript, .stopScript:
     return nil
+  #if DEBUG
+    case .debugTestToast:
+      return nil
+  #endif
   }
 }
 
@@ -944,6 +965,7 @@ private func pullRequestDelegateAction(
     .viewArchivedWorktrees,
     .refreshWorktrees,
     .ghosttyCommand,
+    .toggleWindowMode,
     .runScript,
     .stopScript:
     return nil

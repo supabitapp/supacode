@@ -6,7 +6,19 @@ import SwiftUI
 /// A windowed pane's window; typed so app-level chrome can recognize and
 /// anchor to it.
 @MainActor
-final class PaneWindow: NSWindow {}
+final class PaneWindow: NSWindow, WindowTintColorProviding {
+  /// The pane this window hosts; commands arriving while this window is key
+  /// target it, whatever worktree is selected.
+  var hostedWorktreeID: Worktree.ID?
+  var hostedPaneID: PaneID?
+  /// Closes the pane's selected tab. The close-terminal chord routes here
+  /// even through the menu's Close Window fallback, so only the close button
+  /// exits window mode.
+  var closeSelectedTab: (() -> Void)?
+  /// This pane's surface background, so the chrome never wears the selected
+  /// worktree's color.
+  var tintColor: (() -> NSColor?)?
+}
 
 /// Owns the windowed-pane windows: one per pane in window mode, reconciled
 /// from layout state after every layout change. Closing a window exits window
@@ -190,7 +202,27 @@ final class PaneWindowManager {
     window.isReleasedWhenClosed = false
     // Window mode is never persisted, so restoration has nothing to restore.
     window.isRestorable = false
+    // `WindowChromeApplier` owns the background; this only avoids a default
+    // titlebar flash before the first apply.
+    window.titlebarAppearsTransparent = true
     window.tabbingMode = .disallowed
+    window.hostedWorktreeID = worktreeID
+    window.hostedPaneID = paneID
+    window.closeSelectedTab = { [weak terminalManager] in
+      guard
+        let contentID = terminalManager?.layoutState(for: worktreeID)?
+          .layout.panes[id: paneID]?.selectedTab?.content.id
+      else { return }
+      terminalManager?.sendLayout(worktreeID, .contentRequestedClose(content: contentID, scope: .tab))
+    }
+    window.tintColor = { [weak terminalManager] in
+      guard
+        let terminalManager,
+        let contentID = terminalManager.layoutState(for: worktreeID)?
+          .layout.panes[id: paneID]?.selectedTab?.content.id
+      else { return nil }
+      return terminalManager.surfaceBackground(forContent: contentID)
+    }
     window.minSize = NSSize(width: 320, height: 240)
     window.title = terminalManager.layoutState(for: worktreeID)?.layout.panes[id: paneID]
       .flatMap(WindowedPaneRootView.title(for:)) ?? "Terminal"
@@ -308,8 +340,6 @@ private struct WindowedPaneRootView: View {
           windowedPaneIDs: [],
           store: store,
           runtime: runtime,
-          stripFill: Color(nsColor: manager.focusedSurfaceBackground)
-            .opacity(manager.ghosttyRuntime.backgroundOpacity()),
           surfaceState: { [weak manager] surfaceID in
             manager?.hostIfExists(for: worktreeID)?.surfaceStates[surfaceID]
           },
@@ -355,6 +385,10 @@ private struct WindowedPaneRootView: View {
         // Published disabled: a pane window takes no splits, and the main
         // scene's action would otherwise split the selected worktree.
         .focusedAction(\.splitTerminalAction, enabled: false) { (_: TerminalSplitMenuDirection) in }
+        .focusedSceneAction(\.toggleWindowModeAction, enabled: true, token: paneID.rawValue) {
+          guard windowIsKey() else { return }
+          store.send(.exitWindowMode(paneID: paneID))
+        }
         // Search is surface-level; route it to this pane's surface so the
         // menu never searches the selected worktree's terminal instead.
         .focusedSceneAction(
@@ -404,6 +438,11 @@ private struct WindowedPaneRootView: View {
         Color.clear.alert($store.scope(state: \.alert, action: \.alert))
       }
     }
+    // The same chrome stack as the main window: the backdrop carries the
+    // tint minus this window's surfaces, and the observer keeps the window
+    // background and appearance applied through mounts and config changes.
+    .background(WindowTintBackdrop(runtime: manager.ghosttyRuntime))
+    .background(WindowChromeObserver(runtime: manager.ghosttyRuntime))
     .environment(ghosttyShortcuts)
     .environment(commandKeyObserver)
   }

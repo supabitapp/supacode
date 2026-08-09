@@ -2090,7 +2090,7 @@ extension GhosttySurfaceView: NSServicesMenuRequestor {
   }
 }
 
-final class GhosttySurfaceScrollView: NSView {
+final class GhosttySurfaceScrollView: NSView, WindowTintMaskRegion {
   private struct ScrollbarState {
     let total: UInt64
     let offset: UInt64
@@ -2208,6 +2208,14 @@ final class GhosttySurfaceScrollView: NSView {
     synchronizeScrollView()
     synchronizeSurfaceView()
     synchronizeCoreSurface()
+    // This wrapper is the tint's subtract mask; the rebuild runs inline so
+    // the hole lands in the same frame as the surface's geometry.
+    NotificationCenter.default.post(name: .ghosttyTintMaskRegionDidChange, object: self)
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    NotificationCenter.default.post(name: .ghosttyTintMaskRegionDidChange, object: self)
   }
 
   func updateSurfaceSize() {

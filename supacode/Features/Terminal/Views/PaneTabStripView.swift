@@ -776,7 +776,7 @@ private struct PaneTabStripAccessories: View {
           action: { store.send(.toggleZoom(paneID: pane.id)) }
         )
       }
-      PaneTabStripNewTabMenu(
+      PaneTabStripNewTabControl(
         canSplit: !isWindowed && selectedLiveContentID != nil,
         isWindowed: isWindowed,
         newTab: requestNewTab,
@@ -811,9 +811,10 @@ private struct PaneTabStripAccessories: View {
   }
 }
 
-/// The `+` menu: a tap opens a tab, the chevron reveals the four splits and
-/// the window-mode toggle.
-private struct PaneTabStripNewTabMenu: View {
+/// The new-tab split control, mirroring the window toolbar's split buttons:
+/// the `+` opens a tab on click, the adjacent chevron opens the splits and
+/// window-mode menu on click, with no press-and-hold.
+private struct PaneTabStripNewTabControl: View {
   let canSplit: Bool
   let isWindowed: Bool
   let newTab: () -> Void
@@ -824,37 +825,39 @@ private struct PaneTabStripNewTabMenu: View {
   private var ghosttyShortcuts
 
   var body: some View {
-    let shortcut = ghosttyShortcuts.display(for: "new_tab")
-
-    Menu {
-      ForEach(TerminalSplitMenuDirection.allCases, id: \.self) { direction in
-        Button(direction.title, systemImage: direction.systemImage) {
-          split(direction)
-        }
-        .ghosttyKeyboardShortcut(direction.ghosttyBinding, in: ghosttyShortcuts)
-        .disabled(!canSplit)
-      }
-      Divider()
-      Button(
-        isWindowed ? "Return to Main Window" : "Move to New Window",
-        systemImage: "macwindow.on.rectangle",
-        action: toggleWindowMode
+    HStack(spacing: 0) {
+      PaneTabStripAccessoryButton(
+        title: "New Tab",
+        systemImage: "plus",
+        shortcutBinding: "new_tab",
+        action: newTab
       )
-    } label: {
-      HStack(spacing: 1) {
-        Image(systemName: "plus")
+      Menu {
+        ForEach(TerminalSplitMenuDirection.allCases, id: \.self) { direction in
+          Button(direction.title, systemImage: direction.systemImage) {
+            split(direction)
+          }
+          .ghosttyKeyboardShortcut(direction.ghosttyBinding, in: ghosttyShortcuts)
+          .disabled(!canSplit)
+        }
+        Divider()
+        Button(
+          isWindowed ? "Return to Main Window" : "Move to New Window",
+          systemImage: "macwindow.on.rectangle",
+          action: toggleWindowMode
+        )
+      } label: {
         Image(systemName: "chevron.down")
           .imageScale(.small)
           .font(.caption2)
+          // Narrower than the `+` so the pair reads as one split control.
+          .frame(minWidth: 16, minHeight: TerminalTabBarMetrics.barHeight)
+          .contentShape(.rect)
+          .accessibilityLabel("Splits and Window Mode")
       }
-      .frame(minWidth: TerminalTabBarMetrics.barHeight, minHeight: TerminalTabBarMetrics.barHeight)
-      .contentShape(.rect)
-      .accessibilityLabel("New Tab")
-    } primaryAction: {
-      newTab()
+      .menuStyle(.secondaryToolbar)
+      .help("Splits and Window Mode")
     }
-    .menuStyle(.secondaryToolbar)
-    .help(shortcut.map { "New Tab (\($0))" } ?? "New Tab")
   }
 }
 

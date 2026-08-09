@@ -9,6 +9,7 @@ struct TerminalCommands: Commands {
   @FocusedValue(\.newTerminalAction) private var newTerminalAction
   @FocusedValue(\.renameTabAction) private var renameTabAction
   @FocusedValue(\.splitTerminalAction) private var splitTerminalAction
+  @FocusedValue(\.toggleWindowModeAction) private var toggleWindowModeAction
   @FocusedValue(\.startSearchAction) private var startSearchAction
   @FocusedValue(\.searchSelectionAction) private var searchSelectionAction
   @FocusedValue(\.navigateSearchNextAction) private var navigateSearchNextAction
@@ -17,6 +18,7 @@ struct TerminalCommands: Commands {
 
   var body: some Commands {
     let renameTab = AppShortcuts.renameTab.effective(from: settingsFile.global.shortcutOverrides)
+    let toggleWindowMode = AppShortcuts.toggleWindowMode.effective(from: settingsFile.global.shortcutOverrides)
     CommandGroup(after: .newItem) {
       Divider()
       Button("New Terminal Tab", systemImage: "macwindow") {
@@ -41,6 +43,15 @@ struct TerminalCommands: Commands {
         .ghosttyKeyboardShortcut(direction.ghosttyBinding, in: ghosttyShortcuts)
         .disabled(splitTerminalAction?.isEnabled != true)
       }
+
+      Divider()
+
+      Button("Toggle Window Mode", systemImage: "macwindow.on.rectangle") {
+        toggleWindowModeAction?()
+      }
+      .appKeyboardShortcut(toggleWindowMode)
+      .disabled(toggleWindowModeAction?.isEnabled != true)
+      .help("Toggle Window Mode (\(toggleWindowMode?.display ?? "none"))")
     }
     CommandGroup(after: .textEditing) {
       Button("Find...") {
@@ -123,11 +134,20 @@ extension FocusedValues {
   }
 }
 
+private struct ToggleWindowModeActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
 private struct RenameTabActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
 
 extension FocusedValues {
+  var toggleWindowModeAction: FocusedAction<Void>? {
+    get { self[ToggleWindowModeActionKey.self] }
+    set { self[ToggleWindowModeActionKey.self] = newValue }
+  }
+
   var renameTabAction: FocusedAction<Void>? {
     get { self[RenameTabActionKey.self] }
     set { self[RenameTabActionKey.self] = newValue }

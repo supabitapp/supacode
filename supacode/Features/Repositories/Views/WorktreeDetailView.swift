@@ -332,6 +332,9 @@ struct WorktreeDetailView: View {
       .focusedAction(\.splitTerminalAction, enabled: hasActiveWorktree) { direction in
         store.send(.splitTerminal(direction))
       }
+      .focusedSceneAction(\.toggleWindowModeAction, enabled: hasActiveWorktree) {
+        store.send(.toggleWindowModeForFocusedPane)
+      }
       .focusedAction(\.closeTabAction, enabled: hasActiveWorktree) {
         store.send(.closeTab)
       }
