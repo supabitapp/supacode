@@ -66,10 +66,10 @@ nonisolated struct LayoutsFile: Equatable, Codable, Sendable {
     if !dropped.isEmpty {
       migrationLogger.error("Dropped unreadable layout entries: \(dropped.sorted())")
     }
-    // Fold in tabs the nested `Pane` decode dropped: a record can decode while
-    // silently losing a tab, which must still read as lossy.
-    let droppedTabs = (decoder.userInfo[.layoutDecodeLoss] as? LayoutDecodeLoss)?.droppedTabCount ?? 0
-    undecodedEntryCount = dropped.count + droppedTabs
+    // Fold in content the nested decode dropped (a lost tab or a duplicate pane):
+    // a record can decode while silently losing content, which must read as lossy.
+    let droppedContent = (decoder.userInfo[.layoutDecodeLoss] as? LayoutDecodeLoss)?.droppedCount ?? 0
+    undecodedEntryCount = dropped.count + droppedContent
   }
 
   func encode(to encoder: any Encoder) throws {

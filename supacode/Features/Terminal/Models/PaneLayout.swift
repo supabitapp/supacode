@@ -278,7 +278,7 @@ nonisolated struct Pane: Equatable, Identifiable, Codable, Sendable {
     // rather than reap the missing session (its id is now absent).
     let droppedTabs = rawTabs.count - unique.count
     if droppedTabs > 0, let loss = decoder.userInfo[.layoutDecodeLoss] as? LayoutDecodeLoss {
-      loss.droppedTabCount += droppedTabs
+      loss.droppedCount += droppedTabs
     }
     let decodedSelection = try container.decodeIfPresent(TabID.self, forKey: .selectedTabID)
     selectedTabID = decodedSelection.flatMap { unique[id: $0] != nil ? $0 : nil } ?? unique.first?.id
@@ -330,6 +330,12 @@ nonisolated struct PaneLayout: Equatable, Codable, Sendable {
       unique.append(pane)
     }
     panes = unique
+    // A dropped duplicate pane takes its tabs' session ids with it; mark the loss
+    // so a destructive reader refuses the file rather than reap them.
+    let droppedPanes = decodedPanes.count - unique.count
+    if droppedPanes > 0, let loss = decoder.userInfo[.layoutDecodeLoss] as? LayoutDecodeLoss {
+      loss.droppedCount += droppedPanes
+    }
     let decodedFocus = try container.decodeIfPresent(PaneID.self, forKey: .focusedPaneID)
     focusedPaneID = decodedFocus.flatMap { unique[id: $0] != nil ? $0 : nil } ?? unique.first?.id
   }
@@ -446,11 +452,11 @@ nonisolated struct FailableDecodable<Value: Decodable>: Decodable {
 }
 
 /// Accumulates content a tolerant layout decode silently dropped (unreadable
-/// tabs), so a destructive reader can treat the file as lossy and keep the
-/// orphan reaper from sweeping sessions the dropped content still owns. Install
-/// one in the decoder's `userInfo` under `.layoutDecodeLoss` to collect it.
+/// tabs, duplicate panes), so a destructive reader can treat the file as lossy
+/// and keep the orphan reaper from sweeping sessions the dropped content still
+/// owns. Install one in the decoder's `userInfo` under `.layoutDecodeLoss`.
 nonisolated final class LayoutDecodeLoss {
-  var droppedTabCount = 0
+  var droppedCount = 0
 }
 
 nonisolated extension CodingUserInfoKey {

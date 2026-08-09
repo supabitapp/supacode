@@ -362,6 +362,34 @@ struct LayoutsMigratorTests {
     }
   }
 
+  @Test func duplicatePaneMarksTheFileLossyAndUnreadable() throws {
+    let paneID = PaneID()
+    let tab = TabItem(
+      id: TabID(), title: "shell",
+      content: ContentSnapshot(id: ContentID(), state: .terminal(TerminalContentState(workingDirectory: nil))))
+    let paneData = try JSONEncoder().encode(Pane(id: paneID, tabs: [tab], selectedTabID: tab.id))
+    let pane = try #require(String(bytes: paneData, encoding: .utf8))
+    let tree = try #require(String(bytes: JSONEncoder().encode(SplitTree(view: paneID)), encoding: .utf8))
+    let focus = try #require(String(bytes: JSONEncoder().encode(paneID), encoding: .utf8))
+    // The same pane twice: the decoder keeps the first and drops the duplicate.
+    let json = """
+      {"schemaVersion":2,"worktrees":{"wt":{"layout":{
+        "tree":\(tree),
+        "panes":[\(pane),\(pane)],
+        "focusedPaneID":\(focus)
+      }}}}
+      """
+    let decoder = JSONDecoder()
+    decoder.userInfo[.layoutDecodeLoss] = LayoutDecodeLoss()
+    let decoded = try decoder.decode(LayoutsFile.self, from: Data(json.utf8))
+    #expect(decoded.undecodedEntryCount == 1)
+
+    guard case .unreadable = Self.readState(seededWith: json) else {
+      Issue.record("Expected .unreadable for a duplicate-pane decode.")
+      return
+    }
+  }
+
   /// Reads `readFromDisk` against an in-memory file seeded with `json`.
   nonisolated private static func readState(seededWith json: String) -> LayoutsFile.DiskState {
     let files = LockIsolated<[URL: Data]>([layoutsURL: Data(json.utf8)])
