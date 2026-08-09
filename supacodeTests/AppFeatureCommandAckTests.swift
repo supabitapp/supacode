@@ -246,6 +246,28 @@ struct AppFeatureCommandAckTests {
     #expect(readPipeJSON(readFD2)?["ok"] as? Bool == false)
   }
 
+  @Test(.dependencies) func creationIdAlreadyLiveInAnotherWorktreeIsRejected() async {
+    let worktree = makeWorktree()
+    let id = UUID()
+    // The id exists as content in a different worktree; the global runtime keys
+    // by id, so reusing it here must be refused even though this worktree is clean.
+    let store = makeStore(worktree: worktree, tabExists: false) {
+      $0.terminalClient.contentExistsAnywhere = { _ in true }
+    }
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: nil, id: id)),
+        source: .socket, responseFD: writeFD, timeoutSeconds: 0))
+    await store.finish()
+
+    #expect(store.state.alert != nil)
+    #expect(store.state.pendingCommandAcks[id: writeFD] == nil)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
   // MARK: - confirmation timeout.
 
   @Test(.dependencies) func confirmationTimeoutDrainsFd() async {

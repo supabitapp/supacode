@@ -318,7 +318,48 @@ struct LayoutsMigratorTests {
       return
     }
     #expect(file.worktrees.count == 1)
-    #expect(file.undecodedWorktreeCount == 0)
+    #expect(file.undecodedEntryCount == 0)
+  }
+
+  @Test func newerSchemaReadsAsUnreadableSoADowngradeNeverReaps() {
+    // A future build's file decodes partially here; treating it as authoritative
+    // would let the reaper kill sessions the newer schema still owns.
+    let json = """
+      {"schemaVersion":3,"worktrees":{"good":{"layout":{"panes":[],"tree":{}}}}}
+      """
+    let state = Self.readState(seededWith: json)
+    guard case .unreadable = state else {
+      Issue.record("Expected .unreadable for a newer schema, got \(state).")
+      return
+    }
+  }
+
+  @Test func droppedTabMarksTheFileLossyAndUnreadable() throws {
+    // Encode a clean one-tab layout, then inject an undecodable tab so the pane
+    // still decodes while silently losing a tab.
+    let contentID = ContentID()
+    let paneID = PaneID()
+    let tab = TabItem(
+      id: TabID(),
+      title: "shell",
+      content: ContentSnapshot(id: contentID, state: .terminal(TerminalContentState(workingDirectory: nil))))
+    let layout = PaneLayout(
+      tree: SplitTree(view: paneID), panes: [Pane(id: paneID, tabs: [tab], selectedTabID: tab.id)],
+      focusedPaneID: paneID)
+    let clean = try JSONEncoder().encode(LayoutsFile(worktrees: ["wt": LayoutRecord(layout: layout)]))
+    let json = try #require(String(bytes: clean, encoding: .utf8))
+      .replacing("\"tabs\":[", with: "\"tabs\":[\"rotten\",")
+
+    // The nested drop surfaces only when a tracker is installed, as readFromDisk does.
+    let decoder = JSONDecoder()
+    decoder.userInfo[.layoutDecodeLoss] = LayoutDecodeLoss()
+    let decoded = try decoder.decode(LayoutsFile.self, from: Data(json.utf8))
+    #expect(decoded.undecodedEntryCount == 1)
+
+    guard case .unreadable = Self.readState(seededWith: json) else {
+      Issue.record("Expected .unreadable for a dropped-tab decode.")
+      return
+    }
   }
 
   /// Reads `readFromDisk` against an in-memory file seeded with `json`.

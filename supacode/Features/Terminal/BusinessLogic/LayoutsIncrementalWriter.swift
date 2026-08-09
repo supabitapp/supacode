@@ -99,10 +99,12 @@ actor LayoutsIncrementalWriter {
       }
       return LayoutsFile(worktrees: [:])
     }
-    if let file = try? JSONDecoder().decode(LayoutsFile.self, from: data) {
-      // A lossy decode dropped entries; writing it back would make the loss
-      // permanent. Abort and leave the bytes for recovery.
-      guard file.undecodedWorktreeCount == 0 else {
+    let decoder = JSONDecoder()
+    decoder.userInfo[.layoutDecodeLoss] = LayoutDecodeLoss()
+    if let file = try? decoder.decode(LayoutsFile.self, from: data) {
+      // A lossy decode dropped entries or tabs; writing it back would make the
+      // loss permanent. Abort and leave the bytes for recovery.
+      guard file.undecodedEntryCount == 0 else {
         Self.logger.error("Aborting v2 layout flush: on-disk file has unreadable entries.")
         return nil
       }

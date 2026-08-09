@@ -40,9 +40,9 @@ nonisolated struct LayoutsFile: Equatable, Codable, Sendable {
 
   var schemaVersion: Int
   var worktrees: [String: LayoutRecord]
-  /// Worktree entries the tolerant decode dropped; never encoded. A non-zero
-  /// count marks the value as lossy, so writers must not persist it back.
-  var undecodedWorktreeCount = 0
+  /// Worktree entries or tabs the tolerant decode dropped; never encoded. A
+  /// non-zero count marks the value as lossy, so readers and writers reject it.
+  var undecodedEntryCount = 0
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion
@@ -63,10 +63,13 @@ nonisolated struct LayoutsFile: Equatable, Codable, Sendable {
     // A dropped entry loses its session references to the orphan reaper; the
     // loss must at least be diagnosable.
     let dropped = raw.keys.filter { worktrees[$0] == nil }
-    undecodedWorktreeCount = dropped.count
     if !dropped.isEmpty {
       migrationLogger.error("Dropped unreadable layout entries: \(dropped.sorted())")
     }
+    // Fold in tabs the nested `Pane` decode dropped: a record can decode while
+    // silently losing a tab, which must still read as lossy.
+    let droppedTabs = (decoder.userInfo[.layoutDecodeLoss] as? LayoutDecodeLoss)?.droppedTabCount ?? 0
+    undecodedEntryCount = dropped.count + droppedTabs
   }
 
   func encode(to encoder: any Encoder) throws {
@@ -102,14 +105,24 @@ nonisolated extension LayoutsFile {
       }
       return .absent
     }
-    if let file = try? JSONDecoder().decode(LayoutsFile.self, from: data) {
-      // A tolerant decode that dropped entries leaves `allKnownSurfaceIDs`
+    let decoder = JSONDecoder()
+    decoder.userInfo[.layoutDecodeLoss] = LayoutDecodeLoss()
+    if let file = try? decoder.decode(LayoutsFile.self, from: data) {
+      // A newer build's file decodes partially here (unknown content kinds drop
+      // to nothing), so a downgrade must not treat it as authoritative and reap.
+      guard file.schemaVersion <= LayoutsFile.currentSchemaVersion else {
+        migrationLogger.error(
+          "layouts.json schema v\(file.schemaVersion) is newer than v\(LayoutsFile.currentSchemaVersion); "
+            + "treating as unreadable.")
+        return .unreadable
+      }
+      // A tolerant decode that dropped entries or tabs leaves `allKnownSurfaceIDs`
       // incomplete; the orphan reaper would then kill sessions the dropped
       // records still own. Treat a partial read as unreadable, mirroring the
       // writer's refusal to persist a lossy value.
-      guard file.undecodedWorktreeCount == 0 else {
+      guard file.undecodedEntryCount == 0 else {
         migrationLogger.error(
-          "layouts.json dropped \(file.undecodedWorktreeCount) entrie(s); treating as unreadable."
+          "layouts.json dropped \(file.undecodedEntryCount) entrie(s); treating as unreadable."
         )
         return .unreadable
       }

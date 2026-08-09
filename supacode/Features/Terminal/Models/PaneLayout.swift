@@ -267,16 +267,19 @@ nonisolated struct Pane: Equatable, Identifiable, Codable, Sendable {
     id = try container.decode(PaneID.self, forKey: .id)
     // Element-wise so a tab a rollback build cannot read (a future content
     // kind) drops that tab, not the whole layout.
-    let decodedTabs =
-      try container
-      .decode([FailableDecodable<TabItem>].self, forKey: .tabs)
-      .compactMap(\.value)
+    let rawTabs = try container.decode([FailableDecodable<TabItem>].self, forKey: .tabs)
     // Duplicate tab IDs would trap IdentifiedArray; keep the first occurrence.
     var unique = IdentifiedArrayOf<TabItem>()
-    for tab in decodedTabs where unique[id: tab.id] == nil {
+    for tab in rawTabs.compactMap(\.value) where unique[id: tab.id] == nil {
       unique.append(tab)
     }
     tabs = unique
+    // Report dropped tabs so a destructive reader can refuse the partial file
+    // rather than reap the missing session (its id is now absent).
+    let droppedTabs = rawTabs.count - unique.count
+    if droppedTabs > 0, let loss = decoder.userInfo[.layoutDecodeLoss] as? LayoutDecodeLoss {
+      loss.droppedTabCount += droppedTabs
+    }
     let decodedSelection = try container.decodeIfPresent(TabID.self, forKey: .selectedTabID)
     selectedTabID = decodedSelection.flatMap { unique[id: $0] != nil ? $0 : nil } ?? unique.first?.id
   }
@@ -440,4 +443,17 @@ nonisolated struct FailableDecodable<Value: Decodable>: Decodable {
   init(from decoder: any Decoder) {
     value = try? Value(from: decoder)
   }
+}
+
+/// Accumulates content a tolerant layout decode silently dropped (unreadable
+/// tabs), so a destructive reader can treat the file as lossy and keep the
+/// orphan reaper from sweeping sessions the dropped content still owns. Install
+/// one in the decoder's `userInfo` under `.layoutDecodeLoss` to collect it.
+nonisolated final class LayoutDecodeLoss {
+  var droppedTabCount = 0
+}
+
+nonisolated extension CodingUserInfoKey {
+  /// Carries a `LayoutDecodeLoss` through a layout decode.
+  static let layoutDecodeLoss = CodingUserInfoKey(rawValue: "sh.supacode.layoutDecodeLoss")!
 }

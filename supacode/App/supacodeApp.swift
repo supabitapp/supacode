@@ -274,6 +274,9 @@ struct SupacodeApp: App {
         surfaceExistsInWorktree: { worktreeID, surfaceID in
           terminalManager.surfaceExistsInWorktree(worktreeID: worktreeID, surfaceID: surfaceID)
         },
+        contentExistsAnywhere: { id in
+          terminalManager.contentExistsAnywhere(id)
+        },
         paneExists: { worktreeID, token in
           terminalManager.paneExists(worktreeID: worktreeID, token: token)
         },
