@@ -20,13 +20,13 @@ nonisolated struct PaneTabDragPayload: Codable, Sendable, Transferable {
   }
 }
 
-/// One pane's tab strip: the ported terminal tab bar (fixed-width tabs,
-/// dividers, overflow fades) plus the new-tab and split accessories, with no
-/// background so the window tint shows through like the old bar.
+/// One pane's tab strip: fixed-width tabs, dividers, overflow fades, and the
+/// trailing accessories, with no background so the window tint shows through.
 struct PaneTabStrip: View {
   let pane: Pane
   let isFocusedPane: Bool
   let isZoomed: Bool
+  var isWindowed = false
   let isLifecycleBusy: Bool
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
@@ -44,7 +44,13 @@ struct PaneTabStrip: View {
     HStack(spacing: 0) {
       tabsScroller
       Spacer(minLength: 0)
-      PaneTabStripAccessories(pane: pane, store: store, runtime: runtime)
+      PaneTabStripAccessories(
+        pane: pane,
+        isZoomed: isZoomed,
+        isWindowed: isWindowed,
+        store: store,
+        runtime: runtime
+      )
     }
     .frame(height: TerminalTabBarMetrics.barHeight)
     .saturation(controlActiveState == .inactive ? 0 : 1)
@@ -119,7 +125,6 @@ struct PaneTabStrip: View {
           pane: pane,
           isSelected: pane.selectedTabID == tab.id,
           isFocusedPane: isFocusedPane,
-          isZoomed: isZoomed,
           isLifecycleBusy: isLifecycleBusy,
           tabIndex: index,
           fixedWidth: effectiveTabWidth,
@@ -219,6 +224,24 @@ enum PaneTabDrag {
     store.send(.moveTab(id: tabID, toPane: pane.id, index: target))
     return true
   }
+
+  /// A drop on a pane's edge zone: the tab moves into a new pane split off
+  /// the anchor.
+  @MainActor
+  static func performSplitDrop(
+    _ items: [PaneTabDragPayload],
+    anchor pane: Pane,
+    direction: SplitTree<PaneID>.NewDirection,
+    store: StoreOf<LayoutFeature>
+  ) -> Bool {
+    guard let raw = items.first else { return false }
+    let tabID = TabID(rawValue: raw.tabID)
+    guard let sourcePane = store.layout.pane(containingTab: tabID) else { return false }
+    // A pane's only tab dropped on its own edge is a no-op reshuffle.
+    guard sourcePane.id != pane.id || sourcePane.tabs.count > 1 else { return false }
+    store.send(.moveTabToSplit(id: tabID, anchor: pane.id, direction: direction))
+    return true
+  }
 }
 
 /// Accent capsule marking the insertion point of an in-flight tab drag.
@@ -242,7 +265,6 @@ private struct PaneTabView: View {
   let pane: Pane
   let isSelected: Bool
   let isFocusedPane: Bool
-  let isZoomed: Bool
   let isLifecycleBusy: Bool
   let tabIndex: Int
   let fixedWidth: CGFloat?
@@ -303,26 +325,14 @@ private struct PaneTabView: View {
             PaneTabShortcutHintText(hint: shortcutHint)
               .transition(.opacity)
           }
-          if isShowingZoomExit {
-            TerminalTabTrailingButton(
-              title: "Exit Split Zoom",
-              systemImage: "arrow.up.right.and.arrow.down.left",
-              ghosttyAction: "toggle_split_zoom",
-              // Always offered while zoomed, unlike close, which waits for hover.
-              isVisible: !isShowingHint,
-              action: { store.send(.toggleZoom(paneID: pane.id)) },
-              gestureActive: $trailingButtonGestureActive
-            )
-          } else {
-            TerminalTabTrailingButton(
-              title: "Close Tab",
-              systemImage: "xmark",
-              ghosttyAction: "close_tab",
-              isVisible: isHovering && !isShowingHint,
-              action: requestClose,
-              gestureActive: $trailingButtonGestureActive
-            )
-          }
+          TerminalTabTrailingButton(
+            title: "Close Tab",
+            systemImage: "xmark",
+            ghosttyAction: "close_tab",
+            isVisible: isHovering && !isShowingHint,
+            action: requestClose,
+            gestureActive: $trailingButtonGestureActive
+          )
         }
         .frame(minWidth: TerminalTabBarMetrics.closeButtonSize, maxHeight: TerminalTabBarMetrics.closeButtonSize)
         .transition(.opacity)
@@ -483,10 +493,6 @@ private struct PaneTabView: View {
       || (isSelected && isFocusedPane && isLifecycleBusy)
   }
 
-  private var isShowingZoomExit: Bool {
-    isZoomed && isSelected
-  }
-
   private var shortcutHint: String? {
     commandKeyObserver.tabSelectionHint(atSlot: tabIndex)
   }
@@ -494,11 +500,11 @@ private struct PaneTabView: View {
   /// Whether anything can occupy the trailing slot; false collapses it so the
   /// title gets the full width.
   private func hasTrailingContent(isLocked: Bool) -> Bool {
-    isShowingHint || isShowingZoomExit || isLocked || isHovering || hasUnseenNotifications
+    isShowingHint || isLocked || isHovering || hasUnseenNotifications
   }
 
   private var suppressIdleIndicator: Bool {
-    isHovering || isShowingHint || isShowingZoomExit
+    isHovering || isShowingHint
   }
 
   private var hasUnseenNotifications: Bool {
@@ -651,8 +657,8 @@ private struct PaneTabShortcutHintText: View {
   }
 }
 
-/// `suppress` hides the dot in the states the trailing slot is held for
-/// something else (hover, shortcut hint, split zoom).
+/// `suppress` hides the dot while the trailing slot is held for something
+/// else (hover, shortcut hint).
 private struct PaneTabNotificationIndicator: View {
   let hasUnseenNotifications: Bool
   let suppress: Bool
@@ -750,26 +756,34 @@ private struct PaneTabStripe: View {
   }
 }
 
-/// The strip's trailing accessories: new tab plus the two split menus.
+/// The strip's trailing accessories: the exit-zoom button (zoomed panes only)
+/// and the new-tab menu carrying the splits and the window-mode toggle.
 private struct PaneTabStripAccessories: View {
   let pane: Pane
+  let isZoomed: Bool
+  let isWindowed: Bool
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
 
   var body: some View {
-    let canSplit = selectedLiveContentID != nil
     HStack(spacing: TerminalTabBarMetrics.contentTrailingSpacing) {
-      PaneTabStripAccessoryButton(
-        title: "New Tab",
-        systemImage: "plus",
-        shortcutBinding: "new_tab",
-        action: requestNewTab
+      // Zoom is pane-level state, so its exit control belongs to the strip.
+      if isZoomed {
+        PaneTabStripAccessoryButton(
+          title: "Exit Split Zoom",
+          systemImage: "arrow.down.right.and.arrow.up.left",
+          shortcutBinding: "toggle_split_zoom",
+          action: { store.send(.toggleZoom(paneID: pane.id)) }
+        )
+      }
+      PaneTabStripNewTabMenu(
+        canSplit: !isWindowed && selectedLiveContentID != nil,
+        isWindowed: isWindowed,
+        newTab: requestNewTab,
+        split: requestSplit,
+        toggleWindowMode: toggleWindowMode
       )
       .disabled(pane.selectedTab == nil)
-      PaneTabStripSplitMenu(primary: .right, secondary: .left, split: requestSplit)
-        .disabled(!canSplit)
-      PaneTabStripSplitMenu(primary: .down, secondary: .up, split: requestSplit)
-        .disabled(!canSplit)
     }
     .frame(height: TerminalTabBarMetrics.barHeight)
     .padding(.trailing, 8)
@@ -790,6 +804,57 @@ private struct PaneTabStripAccessories: View {
   private func requestSplit(_ direction: TerminalSplitMenuDirection) {
     guard let contentID = selectedLiveContentID else { return }
     store.send(.contentRequestedSplit(content: contentID, direction: direction.paneDirection))
+  }
+
+  private func toggleWindowMode() {
+    store.send(isWindowed ? .exitWindowMode(paneID: pane.id) : .enterWindowMode(paneID: pane.id))
+  }
+}
+
+/// The `+` menu: a tap opens a tab, the chevron reveals the four splits and
+/// the window-mode toggle.
+private struct PaneTabStripNewTabMenu: View {
+  let canSplit: Bool
+  let isWindowed: Bool
+  let newTab: () -> Void
+  let split: (TerminalSplitMenuDirection) -> Void
+  let toggleWindowMode: () -> Void
+
+  @Environment(GhosttyShortcutManager.self)
+  private var ghosttyShortcuts
+
+  var body: some View {
+    let shortcut = ghosttyShortcuts.display(for: "new_tab")
+
+    Menu {
+      ForEach(TerminalSplitMenuDirection.allCases, id: \.self) { direction in
+        Button(direction.title, systemImage: direction.systemImage) {
+          split(direction)
+        }
+        .ghosttyKeyboardShortcut(direction.ghosttyBinding, in: ghosttyShortcuts)
+        .disabled(!canSplit)
+      }
+      Divider()
+      Button(
+        isWindowed ? "Return to Main Window" : "Move to New Window",
+        systemImage: "macwindow.on.rectangle",
+        action: toggleWindowMode
+      )
+    } label: {
+      HStack(spacing: 1) {
+        Image(systemName: "plus")
+        Image(systemName: "chevron.down")
+          .imageScale(.small)
+          .font(.caption2)
+      }
+      .frame(minWidth: TerminalTabBarMetrics.barHeight, minHeight: TerminalTabBarMetrics.barHeight)
+      .contentShape(.rect)
+      .accessibilityLabel("New Tab")
+    } primaryAction: {
+      newTab()
+    }
+    .menuStyle(.secondaryToolbar)
+    .help(shortcut.map { "New Tab (\($0))" } ?? "New Tab")
   }
 }
 
@@ -830,44 +895,6 @@ private struct PaneTabStripAccessoryButton: View {
   private func helpText(shortcut: String?) -> String {
     guard let shortcut else { return title }
     return "\(title) (\(shortcut))"
-  }
-}
-
-private struct PaneTabStripSplitMenu: View {
-  let primary: TerminalSplitMenuDirection
-  let secondary: TerminalSplitMenuDirection
-  let split: (TerminalSplitMenuDirection) -> Void
-
-  @Environment(GhosttyShortcutManager.self)
-  private var ghosttyShortcuts
-
-  var body: some View {
-    let primaryShortcut = ghosttyShortcuts.display(for: primary.ghosttyBinding)
-
-    Menu {
-      Button(primary.title, systemImage: primary.systemImage) {
-        split(primary)
-      }
-      .ghosttyKeyboardShortcut(primary.ghosttyBinding, in: ghosttyShortcuts)
-      Button(secondary.title, systemImage: secondary.systemImage) {
-        split(secondary)
-      }
-      .ghosttyKeyboardShortcut(secondary.ghosttyBinding, in: ghosttyShortcuts)
-    } label: {
-      Label(primary.title, systemImage: primary.systemImage)
-        .labelStyle(.iconOnly)
-        .frame(minWidth: TerminalTabBarMetrics.barHeight, minHeight: TerminalTabBarMetrics.barHeight)
-        .contentShape(.rect)
-    } primaryAction: {
-      split(primary)
-    }
-    .menuStyle(.secondaryToolbar)
-    .help(helpText(shortcut: primaryShortcut))
-  }
-
-  private func helpText(shortcut: String?) -> String {
-    guard let shortcut else { return primary.title }
-    return "\(primary.title) (\(shortcut))"
   }
 }
 

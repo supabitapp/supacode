@@ -21,6 +21,8 @@ struct LayoutContentView: View {
   var surfaceState: (UUID) -> WorktreeSurfaceState? = { _ in nil }
   /// Workspace lifecycle work, represented on the focused pane's selected tab.
   var isLifecycleBusy = false
+  /// Brings a windowed pane's window to the front.
+  var showWindowedPane: (PaneID) -> Void = { _ in }
   // Captured here, in the outer SwiftUI world, and re-injected past the
   // NSHostingView boundary, which environment objects do not cross.
   @Environment(GhosttyShortcutManager.self) private var ghosttyShortcuts
@@ -33,46 +35,56 @@ struct LayoutContentView: View {
     let _ = store.renderEpoch
     LayoutAXContainer(
       store: store,
-      runtime: runtime,
-      dividerColor: dividerColor,
-      stripFill: stripFill,
-      unfocusedOverlay: unfocusedOverlay,
-      surfaceState: surfaceState,
-      isLifecycleBusy: isLifecycleBusy,
+      renderContext: PaneRenderContext(
+        runtime: runtime,
+        dividerColor: dividerColor,
+        stripFill: stripFill,
+        unfocusedOverlay: unfocusedOverlay,
+        surfaceState: surfaceState,
+        isLifecycleBusy: isLifecycleBusy,
+        showWindowedPane: showWindowedPane
+      ),
       ghosttyShortcuts: ghosttyShortcuts,
       commandKeyObserver: commandKeyObserver,
+      // Windowed panes render in their own windows; their surfaces are not
+      // this container's AX children.
       panes: visiblePaneIDs.compactMap { paneID in
-        store.layout.panes[id: paneID]?.selectedTab.flatMap { runtime.renderer(for: $0.content.id) }
+        guard !store.windowedPaneIDs.contains(paneID) else { return nil }
+        return store.layout.panes[id: paneID]?.selectedTab.flatMap { runtime.renderer(for: $0.content.id) }
       }
     )
   }
+}
+
+/// The values every pane renders with, constant across the tree; bundled so
+/// the recursive node views forward one value instead of seven.
+struct PaneRenderContext {
+  let runtime: ContentRuntime
+  var dividerColor: Color = Color(nsColor: .separatorColor)
+  var stripFill: Color = .clear
+  var unfocusedOverlay: (fill: Color?, opacity: Double) = (nil, 0)
+  var surfaceState: (UUID) -> WorktreeSurfaceState? = { _ in nil }
+  var isLifecycleBusy = false
+  var showWindowedPane: (PaneID) -> Void = { _ in }
 }
 
 /// Renders the pane tree itself: the split structure over panes, each pane a
 /// tab strip above its selected content.
 struct LayoutPaneTreeView: View {
   let store: StoreOf<LayoutFeature>
-  let runtime: ContentRuntime
-  let dividerColor: Color
-  var stripFill: Color = .clear
-  var unfocusedOverlay: (fill: Color?, opacity: Double) = (nil, 0)
-  var surfaceState: (UUID) -> WorktreeSurfaceState? = { _ in nil }
-  var isLifecycleBusy = false
+  let renderContext: PaneRenderContext
   var ghosttyShortcuts: GhosttyShortcutManager?
   var commandKeyObserver: CommandKeyObserver?
 
   var body: some View {
     Group {
       if let node = store.layout.tree.visibleNode {
-        // Panes flow down BY VALUE from this `.id` boundary: a structural
-        // change swaps the subtree, so the dismantling copy keeps its frozen
-        // pane values and can never retarget a host to post-swap state and
-        // steal its renderer into the dying hierarchy.
+        // Panes and the windowed set flow down by value from this `.id`
+        // boundary, so a dismantling copy cannot retarget a content host to
+        // post-swap state.
         PaneNodeView(
-          node: node, panes: store.layout.panes, store: store, runtime: runtime,
-          dividerColor: dividerColor,
-          stripFill: stripFill, unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState,
-          isLifecycleBusy: isLifecycleBusy
+          node: node, panes: store.layout.panes, windowedPaneIDs: store.windowedPaneIDs,
+          store: store, renderContext: renderContext
         )
         .id(store.layout.tree.structuralIdentity)
       } else {
@@ -88,12 +100,7 @@ struct LayoutPaneTreeView: View {
 /// assistive technologies, mirroring the split-tree container it replaces.
 private struct LayoutAXContainer: NSViewRepresentable {
   let store: StoreOf<LayoutFeature>
-  let runtime: ContentRuntime
-  let dividerColor: Color
-  let stripFill: Color
-  let unfocusedOverlay: (fill: Color?, opacity: Double)
-  let surfaceState: (UUID) -> WorktreeSurfaceState?
-  let isLifecycleBusy: Bool
+  let renderContext: PaneRenderContext
   let ghosttyShortcuts: GhosttyShortcutManager?
   let commandKeyObserver: CommandKeyObserver?
   let panes: [NSView]
@@ -105,9 +112,7 @@ private struct LayoutAXContainer: NSViewRepresentable {
   func updateNSView(_ nsView: LayoutAXContainerView, context: Context) {
     nsView.update(
       rootView: LayoutPaneTreeView(
-        store: store, runtime: runtime, dividerColor: dividerColor,
-        stripFill: stripFill, unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState,
-        isLifecycleBusy: isLifecycleBusy,
+        store: store, renderContext: renderContext,
         ghosttyShortcuts: ghosttyShortcuts, commandKeyObserver: commandKeyObserver),
       panes: panes
     )
@@ -202,31 +207,45 @@ private struct EmptyLayoutView: View {
 /// One node of the pane tree: a split renders its children with a draggable
 /// divider, a leaf renders its pane.
 private struct PaneNodeView: View {
+  private static let logger = SupaLogger("LayoutContentView")
+
   let node: SplitTree<PaneID>.Node
   let panes: IdentifiedArrayOf<Pane>
+  /// Frozen alongside `panes`: a live read here would let a dismantling copy
+  /// swap a placeholder back to a strip and steal the survivor's renderer.
+  let windowedPaneIDs: Set<PaneID>
   let store: StoreOf<LayoutFeature>
-  let runtime: ContentRuntime
-  let dividerColor: Color
-  let stripFill: Color
-  let unfocusedOverlay: (fill: Color?, opacity: Double)
-  let surfaceState: (UUID) -> WorktreeSurfaceState?
-  let isLifecycleBusy: Bool
+  let renderContext: PaneRenderContext
 
   var body: some View {
     switch node {
     case .leaf(let paneID):
       if let pane = panes[id: paneID] {
-        PaneStripView(
-          pane: pane, store: store, runtime: runtime, stripFill: stripFill,
-          unfocusedOverlay: unfocusedOverlay,
-          surfaceState: surfaceState, isLifecycleBusy: isLifecycleBusy)
+        if windowedPaneIDs.contains(paneID) {
+          WindowedPanePlaceholderView(paneID: paneID, store: store, showWindow: renderContext.showWindowedPane)
+        } else {
+          PaneStripView(
+            pane: pane, windowedPaneIDs: windowedPaneIDs, store: store,
+            runtime: renderContext.runtime,
+            stripFill: renderContext.stripFill,
+            unfocusedOverlay: renderContext.unfocusedOverlay,
+            surfaceState: renderContext.surfaceState,
+            isLifecycleBusy: renderContext.isLifecycleBusy)
+        }
+      } else {
+        // Tree and panes disagree; render an explicit fallback, never a hole.
+        EmptyTerminalPaneView(
+          message: "This pane is unavailable.",
+          hint: Text("Reopen the worktree to rebuild its layout.")
+        )
+        .onAppear {
+          Self.logger.error("Tree leaf \(paneID.rawValue) has no pane; layout state is inconsistent.")
+        }
       }
     case .split(let split):
       PaneSplitView(
-        node: node, split: split, panes: panes, store: store, runtime: runtime,
-        dividerColor: dividerColor,
-        stripFill: stripFill, unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState,
-        isLifecycleBusy: isLifecycleBusy)
+        node: node, split: split, panes: panes, windowedPaneIDs: windowedPaneIDs,
+        store: store, renderContext: renderContext)
     }
   }
 }
@@ -237,32 +256,24 @@ private struct PaneSplitView: View {
   let node: SplitTree<PaneID>.Node
   let split: SplitTree<PaneID>.Split
   let panes: IdentifiedArrayOf<Pane>
+  let windowedPaneIDs: Set<PaneID>
   let store: StoreOf<LayoutFeature>
-  let runtime: ContentRuntime
-  let dividerColor: Color
-  let stripFill: Color
-  let unfocusedOverlay: (fill: Color?, opacity: Double)
-  let surfaceState: (UUID) -> WorktreeSurfaceState?
-  let isLifecycleBusy: Bool
+  let renderContext: PaneRenderContext
 
   var body: some View {
     SplitView(
       split.direction,
       ratio: split.ratio,
-      dividerColor: dividerColor,
+      dividerColor: renderContext.dividerColor,
       left: {
         PaneNodeView(
-          node: split.left, panes: panes, store: store, runtime: runtime,
-          dividerColor: dividerColor,
-          stripFill: stripFill, unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState,
-          isLifecycleBusy: isLifecycleBusy)
+          node: split.left, panes: panes, windowedPaneIDs: windowedPaneIDs,
+          store: store, renderContext: renderContext)
       },
       right: {
         PaneNodeView(
-          node: split.right, panes: panes, store: store, runtime: runtime,
-          dividerColor: dividerColor,
-          stripFill: stripFill, unfocusedOverlay: unfocusedOverlay, surfaceState: surfaceState,
-          isLifecycleBusy: isLifecycleBusy)
+          node: split.right, panes: panes, windowedPaneIDs: windowedPaneIDs,
+          store: store, renderContext: renderContext)
       },
       onResize: { store.send(.resizePane(node: node, ratio: $0)) },
       onEqualize: { store.send(.equalizePanes) }
@@ -270,18 +281,26 @@ private struct PaneSplitView: View {
   }
 }
 
-/// A pane: its tab strip and the selected tab's content. A single-tab pane
-/// still shows its strip, matching the current chrome. The pane arrives by
-/// value from the `.id` boundary, never read from the store here, so a
-/// dismantling copy can never see post-swap selection.
-private struct PaneStripView: View {
+/// A pane: its tab strip and the selected tab's content. The pane value is a
+/// parameter, never looked up from the store, so a dismantling copy of the
+/// embedded tree cannot retarget the content host to post-swap selection.
+/// `.windowed` renders the same strip in a pane's own window: no drop zones,
+/// no dim.
+struct PaneStripView: View {
+  enum Context {
+    case embedded
+    case windowed
+  }
+
   let pane: Pane
+  let windowedPaneIDs: Set<PaneID>
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let stripFill: Color
-  let unfocusedOverlay: (fill: Color?, opacity: Double)
-  let surfaceState: (UUID) -> WorktreeSurfaceState?
-  let isLifecycleBusy: Bool
+  var unfocusedOverlay: (fill: Color?, opacity: Double) = (nil, 0)
+  var surfaceState: (UUID) -> WorktreeSurfaceState? = { _ in nil }
+  var isLifecycleBusy = false
+  var context: Context = .embedded
 
   private var isFocused: Bool { store.layout.focusedPaneID == pane.id }
   private var isZoomed: Bool {
@@ -290,9 +309,11 @@ private struct PaneStripView: View {
   }
 
   /// Only a multi-pane view dims; the sole visible pane (single pane or
-  /// zoomed) is always the working one.
+  /// zoomed) is always the working one. A windowed pane never dims, and its
+  /// placeholder leaf does not count as company.
   private var isDimmed: Bool {
-    !isFocused && store.layout.tree.visibleLeaves().count > 1
+    guard context == .embedded, !isFocused else { return false }
+    return Set(store.layout.tree.visibleLeaves()).subtracting(windowedPaneIDs).count > 1
   }
 
   var body: some View {
@@ -301,34 +322,166 @@ private struct PaneStripView: View {
         pane: pane,
         isFocusedPane: isFocused,
         isZoomed: isZoomed,
+        isWindowed: context == .windowed,
         isLifecycleBusy: isLifecycleBusy,
         store: store,
         runtime: runtime,
         surfaceState: surfaceState
       )
       .background(stripFill)
-      if let contentID = pane.selectedTab?.content.id {
-        // The epoch read keeps this branch re-evaluating on hibernate/wake;
-        // a visible content without a renderer (failed wake, vanished
-        // worktree) gets an explicit placeholder, never a silent blank.
-        let epoch = store.renderEpoch
-        if runtime.renderer(for: contentID) != nil {
-          ContentHostView(contentID: contentID, runtime: runtime, epoch: epoch)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay {
-              if isDimmed, let fill = unfocusedOverlay.fill, unfocusedOverlay.opacity > 0 {
-                fill
-                  .opacity(unfocusedOverlay.opacity)
-                  .allowsHitTesting(false)
+      Group {
+        if let contentID = pane.selectedTab?.content.id {
+          // The epoch read keeps this branch re-evaluating on hibernate/wake;
+          // a visible content without a renderer (failed wake, vanished
+          // worktree) gets an explicit placeholder, never a silent blank.
+          let epoch = store.renderEpoch
+          if runtime.renderer(for: contentID) != nil {
+            ContentHostView(contentID: contentID, runtime: runtime, epoch: epoch)
+              .overlay {
+                if isDimmed, let fill = unfocusedOverlay.fill, unfocusedOverlay.opacity > 0 {
+                  fill
+                    .opacity(unfocusedOverlay.opacity)
+                    .allowsHitTesting(false)
+                }
               }
-            }
+          } else {
+            EmptyTerminalPaneView(message: "This terminal is unavailable.")
+          }
         } else {
-          EmptyTerminalPaneView(message: "This terminal is unavailable.")
+          Color.clear
         }
-      } else {
-        Color.clear
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      // On the whole content region, so a dormant pane still takes drops.
+      .overlay {
+        if context == .embedded {
+          PaneSplitDropZones(pane: pane, store: store)
+        }
       }
     }
+  }
+}
+
+/// Placeholder leaf for a pane rendering in its own window.
+private struct WindowedPanePlaceholderView: View {
+  let paneID: PaneID
+  let store: StoreOf<LayoutFeature>
+  let showWindow: (PaneID) -> Void
+
+  var body: some View {
+    ContentUnavailableView {
+      Label("In Separate Window", systemImage: "macwindow.on.rectangle")
+    } description: {
+      Text("This pane is open in its own window.")
+    } actions: {
+      Button("Show Window") {
+        showWindow(paneID)
+      }
+      .help("Bring the pane's window to the front")
+      Button("Exit Window Mode") {
+        store.send(.exitWindowMode(paneID: paneID))
+      }
+      .help("Return the pane to this layout")
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+}
+
+/// Edge drop zones over a pane's content: dropping a dragged tab on an edge
+/// splits the pane toward it, previewing the half the new pane will occupy.
+/// The zones register only the private tab-drag payload, so file drags still
+/// reach the terminal beneath.
+private struct PaneSplitDropZones: View {
+  let pane: Pane
+  let store: StoreOf<LayoutFeature>
+
+  @State private var targetedDirection: SplitTree<PaneID>.NewDirection?
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  var body: some View {
+    HStack(spacing: 0) {
+      PaneSplitDropZone(direction: .left, pane: pane, store: store, targeted: $targetedDirection)
+      VStack(spacing: 0) {
+        PaneSplitDropZone(direction: .top, pane: pane, store: store, targeted: $targetedDirection)
+        PaneSplitDropZone(direction: .down, pane: pane, store: store, targeted: $targetedDirection)
+      }
+      PaneSplitDropZone(direction: .right, pane: pane, store: store, targeted: $targetedDirection)
+    }
+    .overlay {
+      if let targetedDirection {
+        PaneSplitDropPreview(direction: targetedDirection)
+          .transition(.opacity)
+      }
+    }
+    .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: targetedDirection)
+  }
+}
+
+/// One directional drop target; invisible, it only participates in tab drags.
+private struct PaneSplitDropZone: View {
+  let direction: SplitTree<PaneID>.NewDirection
+  let pane: Pane
+  let store: StoreOf<LayoutFeature>
+  @Binding var targeted: SplitTree<PaneID>.NewDirection?
+
+  var body: some View {
+    Color.clear
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .dropDestination(for: PaneTabDragPayload.self) { items, _ in
+        PaneTabDrag.performSplitDrop(items, anchor: pane, direction: direction, store: store)
+      } isTargeted: { isTargeted in
+        if isTargeted {
+          targeted = direction
+        } else if targeted == direction {
+          targeted = nil
+        }
+      }
+  }
+}
+
+/// Semi-transparent accent highlight over the half the new pane will occupy.
+private struct PaneSplitDropPreview: View {
+  let direction: SplitTree<PaneID>.NewDirection
+
+  var body: some View {
+    // Two equal flexible children split the pane in half without measuring.
+    switch direction {
+    case .left:
+      HStack(spacing: 0) {
+        PaneSplitDropHighlight()
+        Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+    case .right:
+      HStack(spacing: 0) {
+        Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+        PaneSplitDropHighlight()
+      }
+    case .top:
+      VStack(spacing: 0) {
+        PaneSplitDropHighlight()
+        Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+    case .down:
+      VStack(spacing: 0) {
+        Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+        PaneSplitDropHighlight()
+      }
+    }
+  }
+}
+
+/// The accent fill-and-border card previewing the half a drop will occupy.
+private struct PaneSplitDropHighlight: View {
+  var body: some View {
+    RoundedRectangle(cornerRadius: 6)
+      .fill(Color.accentColor.opacity(0.2))
+      .overlay {
+        RoundedRectangle(cornerRadius: 6)
+          .strokeBorder(Color.accentColor.opacity(0.6), lineWidth: 1.5)
+      }
+      .padding(3)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .allowsHitTesting(false)
   }
 }
 
@@ -342,9 +495,8 @@ private struct ContentHostView: NSViewRepresentable {
   let epoch: UInt64
 
   /// This host's claim on the content it last mounted. Structural rebuilds
-  /// briefly overlap old and new hosts for the same content; the claim keeps
-  /// a stale host's late update from stealing the renderer back into the
-  /// dying hierarchy, which left survivor panes permanently blank.
+  /// and window-mode flips briefly overlap two hosts for one content; the
+  /// claim keeps a stale host's late update from stealing the renderer.
   final class Coordinator {
     var claimedContentID: ContentID?
     var claim: UInt64 = 0

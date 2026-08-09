@@ -77,7 +77,8 @@ struct TerminalsFeature {
     case .resizePane, .runtime(.titleChanged), .beginTabRename, .endTabRename:
       return false
     case .newTab, .splitPane, .closeTab, .closePane, .selectTab, .renameTab, .focusPane,
-      .moveTab, .equalizePanes, .toggleZoom, .hibernateTab, .wakeTab, .runtime(.killConfirmed),
+      .moveTab, .moveTabToSplit, .enterWindowMode, .exitWindowMode,
+      .equalizePanes, .toggleZoom, .hibernateTab, .wakeTab, .runtime(.killConfirmed),
       .contentRequestedClose, .contentRequestedNewTab, .contentRequestedSplit,
       .contentRequestedFocus, .contentRequestedFocusSplit, .contentRequestedToggleZoom,
       .contentRequestedResize, .contentRequestedGotoTab, .contentRequestedMoveTab, .alert:
@@ -153,16 +154,25 @@ struct TerminalsFeature {
 // MARK: - Hibernation.
 
 extension TerminalsFeature {
-  /// Whether a tab is hidden: everything except the selected tabs of the
-  /// selected worktree's rendering panes (zoom hides every other pane).
-  private static func isTabHidden(
-    _ tab: TabItem,
-    pane: Pane,
-    paneRenders: Bool,
-    worktreeID: Worktree.ID,
+  /// Whether a tab is hidden: everything except the selected tab of a pane
+  /// that shows content somewhere.
+  private static func isTabHidden(_ tab: TabItem, pane: Pane, paneShowsContent: Bool) -> Bool {
+    !(paneShowsContent && pane.selectedTabID == tab.id)
+  }
+
+  /// Whether a pane's area renders: the selected worktree's visible panes
+  /// (zoom hides the rest), or any windowed pane, whose window stays open
+  /// even when miniaturized.
+  private static func paneShowsContent(
+    _ pane: Pane,
+    in layout: LayoutFeature.State,
+    visiblePanes: Set<PaneID>,
     selectedWorktreeID: Worktree.ID?
   ) -> Bool {
-    !(worktreeID == selectedWorktreeID && paneRenders && pane.selectedTabID == tab.id)
+    if layout.windowedPaneIDs.contains(pane.id) {
+      return true
+    }
+    return layout.id == selectedWorktreeID && visiblePanes.contains(pane.id)
   }
 
   /// Diffs the hidden set against armed timers and wakes newly visible
@@ -176,15 +186,15 @@ extension TerminalsFeature {
     for layout in state.layouts {
       let visiblePanes = Set(layout.layout.tree.visibleLeaves())
       for pane in layout.layout.panes {
+        let showsContent = Self.paneShowsContent(
+          pane,
+          in: layout,
+          visiblePanes: visiblePanes,
+          selectedWorktreeID: state.selectedWorktreeID
+        )
         for tab in pane.tabs {
           allTabs.insert(tab.id)
-          let isHidden = Self.isTabHidden(
-            tab,
-            pane: pane,
-            paneRenders: visiblePanes.contains(pane.id),
-            worktreeID: layout.id,
-            selectedWorktreeID: state.selectedWorktreeID
-          )
+          let isHidden = Self.isTabHidden(tab, pane: pane, paneShowsContent: showsContent)
           if isHidden {
             hidden.insert(tab.id)
             state.wakeRequestedTabs.remove(tab.id)
@@ -249,9 +259,12 @@ extension TerminalsFeature {
       Self.isTabHidden(
         tab,
         pane: pane,
-        paneRenders: Set(layout.layout.tree.visibleLeaves()).contains(pane.id),
-        worktreeID: worktreeID,
-        selectedWorktreeID: state.selectedWorktreeID
+        paneShowsContent: Self.paneShowsContent(
+          pane,
+          in: layout,
+          visiblePanes: Set(layout.layout.tree.visibleLeaves()),
+          selectedWorktreeID: state.selectedWorktreeID
+        )
       )
     else { return .none }
     guard layout.alert == nil else {

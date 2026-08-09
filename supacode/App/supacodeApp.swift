@@ -191,6 +191,10 @@ struct SupacodeApp: App {
     _worktreeInfoWatcher = State(initialValue: worktreeInfoWatcher)
     let keyObserver = CommandKeyObserver()
     _commandKeyObserver = State(initialValue: keyObserver)
+    // Windowed panes host the same strip views, which read these from the
+    // environment; the app shell is the only place both exist.
+    terminalManager.paneWindows.ghosttyShortcuts = shortcuts
+    terminalManager.paneWindows.commandKeyObserver = keyObserver
     let appStore = Self.makeStore(
       initialSettings: initialSettings,
       runtime: runtime,

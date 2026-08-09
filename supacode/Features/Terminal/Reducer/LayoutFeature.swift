@@ -121,6 +121,12 @@ struct LayoutFeature {
     /// The tab whose strip shows the inline rename field; owned here so the
     /// menu command reaches it and it survives structural rebuilds.
     var editingTabID: TabID?
+    /// Panes shown in their own windows; the tree keeps their leaves as
+    /// placeholders. Never persisted: a relaunch re-attaches them inline.
+    var windowedPaneIDs: Set<PaneID> = []
+    /// The pane whose close request raised the pending alert, so the host in
+    /// that pane's window (main layout or pane window) presents it.
+    var alertPaneID: PaneID?
     @Presents var alert: AlertState<Action.Alert>?
   }
 
@@ -168,6 +174,13 @@ struct LayoutFeature {
     case endTabRename
     case focusPane(FocusTarget)
     case moveTab(id: TabID, toPane: PaneID, index: Int)
+    /// Moves a tab into a brand-new pane split off `anchor`.
+    case moveTabToSplit(id: TabID, anchor: PaneID, direction: SplitTree<PaneID>.NewDirection)
+    /// Detaches a pane into its own window; the layout keeps its leaf as a
+    /// placeholder.
+    case enterWindowMode(paneID: PaneID)
+    /// Returns a windowed pane to the layout.
+    case exitWindowMode(paneID: PaneID)
     case resizePane(node: SplitTree<PaneID>.Node, ratio: Double)
     case equalizePanes
     case toggleZoom(paneID: PaneID)
@@ -209,7 +222,8 @@ struct LayoutFeature {
     case .resizePane, .runtime(.titleChanged), .beginTabRename, .endTabRename:
       return true
     case .newTab, .splitPane, .closeTab, .closePane, .selectTab, .renameTab, .focusPane,
-      .moveTab, .equalizePanes, .toggleZoom, .hibernateTab, .wakeTab, .runtime(.killConfirmed),
+      .moveTab, .moveTabToSplit, .enterWindowMode, .exitWindowMode,
+      .equalizePanes, .toggleZoom, .hibernateTab, .wakeTab, .runtime(.killConfirmed),
       .contentRequestedClose, .contentRequestedNewTab, .contentRequestedSplit,
       .contentRequestedFocus, .contentRequestedFocusSplit, .contentRequestedToggleZoom,
       .contentRequestedResize, .contentRequestedGotoTab, .contentRequestedMoveTab, .alert:
@@ -262,6 +276,14 @@ struct LayoutFeature {
         return reduceFocusPane(&state, target: target)
       case .moveTab(let tabID, let targetPaneID, let index):
         return reduceMoveTab(&state, tabID: tabID, targetPaneID: targetPaneID, index: index)
+      case .moveTabToSplit(let tabID, let anchorID, let direction):
+        return reduceMoveTabToSplit(&state, tabID: tabID, anchorID: anchorID, direction: direction)
+      case .enterWindowMode(let paneID):
+        return reduceEnterWindowMode(&state, paneID: paneID)
+      case .exitWindowMode(let paneID):
+        state.windowedPaneIDs.remove(paneID)
+        cancelAlert(&state, ifOwnedBy: paneID)
+        return .none
       case .resizePane(let node, let ratio):
         return reduceResizePane(&state, node: node, ratio: ratio)
       case .equalizePanes:
@@ -287,6 +309,12 @@ struct LayoutFeature {
         return .none
       case .contentRequestedFocusSplit(let contentID, let direction):
         guard let located = state.layout.tab(containingContent: contentID) else { return .none }
+        // A pane window has no neighbors; walking the main tree from its
+        // placeholder would strand focus on a window that is not key.
+        guard !state.windowedPaneIDs.contains(located.pane.id) else {
+          Self.logger.info("focusSplit refused: pane \(located.pane.id.rawValue) is windowed")
+          return .none
+        }
         focus(&state, paneID: located.pane.id)
         return reduceFocusPane(&state, target: .direction(direction))
       case .contentRequestedToggleZoom(let contentID):
@@ -299,8 +327,10 @@ struct LayoutFeature {
       case .contentRequestedMoveTab(let contentID, let amount):
         return reduceContentRequestedMoveTab(&state, contentID: contentID, amount: amount)
       case .alert(.presented(.confirmClose(let tabIDs))):
+        state.alertPaneID = nil
         return closeTabs(&state, tabIDs: tabIDs)
       case .alert:
+        state.alertPaneID = nil
         return .none
       }
     }
@@ -397,6 +427,10 @@ extension LayoutFeature {
       case .busy: interrupts
       }
     guard confirms else { return closeTabs(&state, tabIDs: targets) }
+    if let pending = state.alertPaneID, pending != pane.id {
+      Self.logger.warning("Replacing pane \(pending.rawValue)'s pending close confirmation.")
+    }
+    state.alertPaneID = pane.id
     state.alert = Self.closeConfirmationAlert(tabs: targets, interrupts: interrupts)
     return .none
   }
@@ -575,6 +609,39 @@ extension LayoutFeature {
     return .none
   }
 
+  /// Moves an existing tab into a brand-new pane split off the anchor,
+  /// collapsing the source pane when the move empties it.
+  private func reduceMoveTabToSplit(
+    _ state: inout State,
+    tabID: TabID,
+    anchorID: PaneID,
+    direction: SplitTree<PaneID>.NewDirection
+  ) -> Effect<Action> {
+    guard let source = state.layout.pane(containingTab: tabID) else { return .none }
+    guard state.layout.panes[id: anchorID] != nil else {
+      Self.logger.warning("moveTabToSplit at unknown anchor \(anchorID.rawValue)")
+      return .none
+    }
+    // A windowed anchor renders a placeholder; nothing can drop on it.
+    guard !state.windowedPaneIDs.contains(anchorID) else {
+      Self.logger.info("moveTabToSplit refused: anchor \(anchorID.rawValue) is windowed")
+      return .none
+    }
+    // Splitting a pane off its own only tab would recreate the same layout.
+    guard source.id != anchorID || source.tabs.count > 1 else { return .none }
+    let paneID = PaneID(rawValue: uuid())
+    do {
+      state.layout.tree = try state.layout.tree.inserting(view: paneID, at: anchorID, direction: direction)
+    } catch {
+      Self.logger.error("moveTabToSplit insert failed at \(anchorID.rawValue): \(error)")
+      return .none
+    }
+    // The new pane starts empty; the ordinary move fills it, retargets the
+    // source selection, and collapses the source when it empties.
+    state.layout.panes.append(Pane(id: paneID))
+    return reduceMoveTab(&state, tabID: tabID, targetPaneID: paneID, index: 0)
+  }
+
   private func reduceSelectTab(_ state: inout State, tabID: TabID) -> Effect<Action> {
     guard var pane = state.layout.pane(containingTab: tabID) else { return .none }
     pane.selectedTabID = tabID
@@ -674,6 +741,12 @@ extension LayoutFeature {
       Self.logger.warning("splitPane at unknown anchor \(anchorID.rawValue)")
       return .none
     }
+    // A windowed pane's keybinds must not grow the main layout behind its
+    // placeholder.
+    guard !state.windowedPaneIDs.contains(anchorID) else {
+      Self.logger.info("splitPane refused: anchor \(anchorID.rawValue) is windowed")
+      return .none
+    }
     guard let identity = mintedIdentity(in: state.layout, for: spec, operation: "splitPane") else { return .none }
     let request = ContentRequest(
       worktreeID: state.id,
@@ -709,6 +782,29 @@ extension LayoutFeature {
     return .none
   }
 
+  /// Enters window mode for a pane: its leaf stays in the tree as a
+  /// placeholder while the pane renders in its own window.
+  private func reduceEnterWindowMode(_ state: inout State, paneID: PaneID) -> Effect<Action> {
+    guard state.layout.panes[id: paneID] != nil else { return .none }
+    // A zoomed placeholder would fill the whole layout with no content.
+    if case .leaf(let leaf) = state.layout.tree.zoomed, leaf == paneID {
+      state.layout.tree = state.layout.tree.settingZoomed(nil)
+    }
+    state.windowedPaneIDs.insert(paneID)
+    cancelAlert(&state, ifOwnedBy: paneID)
+    return .none
+  }
+
+  /// The pane's alert host lives in whichever window shows the pane; a
+  /// window-mode flip swaps that host, so a pending confirmation would
+  /// survive unpresented and re-materialize as a phantom.
+  private func cancelAlert(_ state: inout State, ifOwnedBy paneID: PaneID) {
+    guard state.alertPaneID == paneID, state.alert != nil else { return }
+    Self.logger.info("Cancelling the pending close confirmation for pane \(paneID.rawValue).")
+    state.alert = nil
+    state.alertPaneID = nil
+  }
+
   private func reduceContentRequestedSplit(
     _ state: inout State,
     contentID: ContentID,
@@ -735,14 +831,26 @@ extension LayoutFeature {
     guard let located = state.layout.tab(containingContent: contentID),
       let node = state.layout.tree.find(id: located.pane.id.rawValue)
     else { return .none }
+    // A pane window has no dividers to drag.
+    guard !state.windowedPaneIDs.contains(located.pane.id) else {
+      Self.logger.info("resize refused: pane \(located.pane.id.rawValue) is windowed")
+      return .none
+    }
     // Pane extents come from each pane's visible renderer; a pane mid-wake
     // reports zero, and a degenerate total would slam ratios to the clamp.
+    // A windowed pane's renderer sizes its own window, not its placeholder,
+    // so it must not feed main-tree geometry; the total then under-reports
+    // the placeholder's area, an accepted approximation.
     let panes = state.layout.panes
+    let windowedPaneIDs = state.windowedPaneIDs
     let size = state.layout.tree.viewBounds { paneID in
-      guard let selected = panes[id: paneID]?.selectedTab else { return .zero }
+      guard !windowedPaneIDs.contains(paneID), let selected = panes[id: paneID]?.selectedTab else { return .zero }
       return contentRuntime.renderer(for: selected.content.id)?.bounds.size ?? .zero
     }
-    guard size.width >= 1, size.height >= 1 else { return .none }
+    guard size.width >= 1, size.height >= 1 else {
+      Self.logger.info("resize skipped: pane extents are degenerate.")
+      return .none
+    }
     do {
       state.layout.tree = try state.layout.tree.resizing(
         node: node,
@@ -801,10 +909,12 @@ extension LayoutFeature {
       state.layout.tree = state.layout.tree.removing(node)
     }
     state.layout.panes.remove(id: paneID)
+    state.windowedPaneIDs.remove(paneID)
     // The alert host unmounts with the last pane; a surviving alert would
     // re-present as a phantom on the next mount.
     if state.layout.panes.isEmpty {
       state.alert = nil
+      state.alertPaneID = nil
     }
     let focusSurvives = state.layout.focusedPaneID.flatMap { state.layout.panes[id: $0] } != nil
     guard !focusSurvives else { return }
@@ -826,10 +936,19 @@ extension LayoutFeature {
       focus(&state, paneID: paneID)
     case .direction(let direction):
       guard let focusedID = state.layout.focusedPaneID,
-        let node = state.layout.tree.find(id: focusedID.rawValue),
-        let resolved = state.layout.tree.focusTarget(for: direction, from: node)
+        var node = state.layout.tree.find(id: focusedID.rawValue)
       else { break }
-      focus(&state, paneID: resolved)
+      // Windowed leaves are placeholders; walk past them so a windowed
+      // neighbor never becomes an absorbing wall. Bounded by the leaf count.
+      for _ in 0..<state.layout.panes.count {
+        guard let resolved = state.layout.tree.focusTarget(for: direction, from: node) else { break }
+        guard state.windowedPaneIDs.contains(resolved) else {
+          focus(&state, paneID: resolved)
+          break
+        }
+        guard let next = state.layout.tree.find(id: resolved.rawValue) else { break }
+        node = next
+      }
     }
     return .none
   }
@@ -841,6 +960,9 @@ extension LayoutFeature {
     guard state.layout.panes[id: paneID] != nil, state.layout.focusedPaneID != paneID else { return }
     state.layout.focusedPaneID = paneID
     guard state.layout.tree.zoomed != nil else { return }
+    // Focusing a windowed pane happens in its own window; the main tree's
+    // zoom must neither follow onto the placeholder nor clear.
+    guard !state.windowedPaneIDs.contains(paneID) else { return }
     guard splitZoomPolicy.preservesZoomOnNavigation(), let node = state.layout.tree.find(id: paneID.rawValue) else {
       state.layout.tree = state.layout.tree.settingZoomed(nil)
       return
@@ -852,6 +974,11 @@ extension LayoutFeature {
     // Mirror toggleSplitZoom: zooming a lone leaf is meaningless, and the
     // toggled pane takes focus either way.
     guard state.layout.tree.isSplit, let node = state.layout.tree.find(id: paneID.rawValue) else { return .none }
+    // Zooming a windowed pane would fill the layout with its placeholder.
+    guard !state.windowedPaneIDs.contains(paneID) else {
+      Self.logger.info("toggleZoom refused: pane \(paneID.rawValue) is windowed")
+      return .none
+    }
     state.layout.focusedPaneID = paneID
     state.layout.tree = state.layout.tree.settingZoomed(state.layout.tree.zoomed == node ? nil : node)
     return .none

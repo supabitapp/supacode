@@ -43,7 +43,10 @@ struct WorktreeLayoutView: View {
           surfaceState: { [weak manager] surfaceID in
             manager?.hostIfExists(for: worktree.id)?.surfaceStates[surfaceID]
           },
-          isLifecycleBusy: isLifecycleBusy
+          isLifecycleBusy: isLifecycleBusy,
+          showWindowedPane: { [weak manager] paneID in
+            manager?.paneWindows.orderFront(worktreeID: worktree.id, paneID: paneID)
+          }
         )
       } else {
         // No strip is mounted here, so the default "+" hint would point at a
@@ -112,6 +115,13 @@ private struct LayoutAlertHost: View {
   let unfocusedOverlay: (fill: Color?, opacity: Double)
   let surfaceState: (UUID) -> WorktreeSurfaceState?
   let isLifecycleBusy: Bool
+  let showWindowedPane: (PaneID) -> Void
+
+  /// Alerts raised from a windowed pane present in that pane's window; this
+  /// host owns the rest.
+  private var presentsAlert: Bool {
+    store.alertPaneID.map { !store.windowedPaneIDs.contains($0) } ?? true
+  }
 
   var body: some View {
     LayoutContentView(
@@ -121,8 +131,13 @@ private struct LayoutAlertHost: View {
       stripFill: stripFill,
       unfocusedOverlay: unfocusedOverlay,
       surfaceState: surfaceState,
-      isLifecycleBusy: isLifecycleBusy
+      isLifecycleBusy: isLifecycleBusy,
+      showWindowedPane: showWindowedPane
     )
-    .alert($store.scope(state: \.alert, action: \.alert))
+    .background {
+      if presentsAlert {
+        Color.clear.alert($store.scope(state: \.alert, action: \.alert))
+      }
+    }
   }
 }

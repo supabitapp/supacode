@@ -198,6 +198,13 @@ struct LayoutFeatureTests {
     return (tabID, contentID)
   }
 
+  /// Puts the pane in window mode, asserting only the flag flip.
+  private func enterWindowMode(_ harness: Harness, paneID: PaneID) async {
+    await harness.store.send(.enterWindowMode(paneID: paneID)) {
+      $0.windowedPaneIDs.insert(paneID)
+    }
+  }
+
   private struct SplitResult {
     let paneID: PaneID
     let tabID: TabID
@@ -632,6 +639,357 @@ struct LayoutFeatureTests {
     #expect(harness.store.state.layout.isConsistent)
   }
 
+  // MARK: - Move to split (drag-to-split drop zones).
+
+  @Test func moveTabToSplitCreatesAPaneWithTheMovedTab() async {
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let split = await splitPane(harness, anchor: harness.paneID)
+    let newPaneID = PaneID(rawValue: UUID(1))
+    await harness.store.send(.moveTabToSplit(id: second.tabID, anchor: split.paneID, direction: .down)) {
+      $0.layout.tree = try $0.layout.tree.inserting(view: newPaneID, at: split.paneID, direction: .down)
+      $0.layout.panes[id: harness.paneID]?.tabs.remove(id: second.tabID)
+      $0.layout.panes[id: harness.paneID]?.selectedTabID = harness.tabID
+      $0.layout.panes.append(
+        Pane(
+          id: newPaneID,
+          tabs: [Self.tab(id: second.tabID, contentID: second.contentID, title: "Two")],
+          selectedTabID: second.tabID
+        )
+      )
+      $0.layout.focusedPaneID = newPaneID
+    }
+    // The moved content keeps its live session; nothing reaps.
+    #expect(harness.runtime.content(for: second.contentID) != nil)
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func moveTabToSplitEmptyingSourceCollapsesIt() async {
+    let harness = await makeHarness()
+    let split = await splitPane(harness, anchor: harness.paneID)
+    let newPaneID = PaneID(rawValue: UUID(1))
+    await harness.store.send(.moveTabToSplit(id: harness.tabID, anchor: split.paneID, direction: .right)) {
+      var tree = try $0.layout.tree.inserting(view: newPaneID, at: split.paneID, direction: .right)
+      if let node = tree.find(id: harness.paneID.rawValue) {
+        tree = tree.removing(node)
+      }
+      $0.layout.tree = tree
+      $0.layout.panes.remove(id: harness.paneID)
+      $0.layout.panes.append(
+        Pane(
+          id: newPaneID,
+          tabs: [Self.tab(id: harness.tabID, contentID: harness.contentID, title: "One")],
+          selectedTabID: harness.tabID
+        )
+      )
+      $0.layout.focusedPaneID = newPaneID
+    }
+    #expect(harness.runtime.content(for: harness.contentID) != nil)
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func moveTabToSplitOfThePanesOnlyTabOntoItselfIsRefused() async {
+    let harness = await makeHarness()
+    await harness.store.send(.moveTabToSplit(id: harness.tabID, anchor: harness.paneID, direction: .left))
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func moveTabToSplitAtAWindowedAnchorIsRefused() async {
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let split = await splitPane(harness, anchor: harness.paneID)
+    await enterWindowMode(harness, paneID: split.paneID)
+    await harness.store.send(.moveTabToSplit(id: second.tabID, anchor: split.paneID, direction: .down))
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  // MARK: - Window mode.
+
+  @Test func enterWindowModeMarksThePaneAndDropsItsZoom() async {
+    let harness = await makeHarness()
+    _ = await splitPane(harness, anchor: harness.paneID)
+    await harness.store.send(.toggleZoom(paneID: harness.paneID)) {
+      $0.layout.focusedPaneID = harness.paneID
+      $0.layout.tree = $0.layout.tree.settingZoomed($0.layout.tree.find(id: harness.paneID.rawValue))
+    }
+    await harness.store.send(.enterWindowMode(paneID: harness.paneID)) {
+      $0.layout.tree = $0.layout.tree.settingZoomed(nil)
+      $0.windowedPaneIDs = [harness.paneID]
+    }
+    // Window mode relocates the surface; it never touches the session.
+    #expect(harness.runtime.content(for: harness.contentID) != nil)
+    #expect(harness.runtime.pendingKill.isEmpty)
+    #expect(harness.mock?.startCalls == 1)
+    // The windowed pane keeps focus, which is what makes the split and zoom
+    // guards load-bearing.
+    #expect(harness.store.state.layout.focusedPaneID == harness.paneID)
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func exitWindowModeClearsTheFlag() async {
+    let harness = await makeHarness()
+    await enterWindowMode(harness, paneID: harness.paneID)
+    await harness.store.send(.exitWindowMode(paneID: harness.paneID)) {
+      $0.windowedPaneIDs = []
+    }
+    #expect(harness.runtime.content(for: harness.contentID) != nil)
+    #expect(harness.runtime.pendingKill.isEmpty)
+    #expect(harness.mock?.startCalls == 1)
+  }
+
+  @Test func exitWindowModeForAPaneThatIsNotWindowedIsANoOp() async {
+    let harness = await makeHarness()
+    // A stray window-close callback for an already-reattached pane is
+    // harmless, whether the pane exists or not.
+    await harness.store.send(.exitWindowMode(paneID: harness.paneID))
+    await harness.store.send(.exitWindowMode(paneID: PaneID()))
+  }
+
+  @Test func enterWindowModeForAnUnknownPaneIsRefused() async {
+    let harness = await makeHarness()
+    await harness.store.send(.enterWindowMode(paneID: PaneID()))
+  }
+
+  @Test func splitPaneAtAWindowedAnchorIsRefusedBeforeProvisioning() async {
+    let harness = await makeHarness()
+    await enterWindowMode(harness, paneID: harness.paneID)
+    await harness.store.send(.splitPane(id: harness.paneID, direction: .right, spec: Self.spec()))
+    // Refused before the factory ran: only the harness bootstrap exists.
+    #expect(harness.recorder.requests.count == 1)
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func toggleZoomOnAWindowedPaneIsRefused() async {
+    let harness = await makeHarness()
+    _ = await splitPane(harness, anchor: harness.paneID)
+    await enterWindowMode(harness, paneID: harness.paneID)
+    await harness.store.send(.toggleZoom(paneID: harness.paneID))
+    #expect(harness.store.state.layout.tree.zoomed == nil)
+  }
+
+  @Test func closingAWindowedPanesLastTabClearsTheFlag() async {
+    let harness = await makeHarness()
+    let split = await splitPane(harness, anchor: harness.paneID)
+    await enterWindowMode(harness, paneID: split.paneID)
+    await harness.store.send(.closeTab(id: split.tabID)) {
+      $0.layout.tree = SplitTree(view: harness.paneID)
+      $0.layout.panes.remove(id: split.paneID)
+      $0.layout.focusedPaneID = harness.paneID
+      $0.windowedPaneIDs = []
+    }
+    await harness.store.receive(.runtime(.killConfirmed(id: split.contentID)))
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func moveTabToSplitOffItsOwnPaneKeepsTheRemainingTabs() async {
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let newPaneID = PaneID(rawValue: UUID(0))
+    await harness.store.send(.moveTabToSplit(id: second.tabID, anchor: harness.paneID, direction: .right)) {
+      $0.layout.tree = try $0.layout.tree.inserting(view: newPaneID, at: harness.paneID, direction: .right)
+      $0.layout.panes[id: harness.paneID]?.tabs.remove(id: second.tabID)
+      $0.layout.panes[id: harness.paneID]?.selectedTabID = harness.tabID
+      $0.layout.panes.append(
+        Pane(
+          id: newPaneID,
+          tabs: [Self.tab(id: second.tabID, contentID: second.contentID, title: "Two")],
+          selectedTabID: second.tabID
+        )
+      )
+      $0.layout.focusedPaneID = newPaneID
+    }
+    #expect(harness.store.state.layout.tree.visibleLeaves() == [harness.paneID, newPaneID])
+    #expect(harness.runtime.content(for: second.contentID) != nil)
+  }
+
+  @Test func movingABackgroundTabToASplitKeepsSourceSelection() async {
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let split = await splitPane(harness, anchor: harness.paneID)
+    let newPaneID = PaneID(rawValue: UUID(1))
+    // Moving unselected "One" must leave the source selection on "Two".
+    await harness.store.send(.moveTabToSplit(id: harness.tabID, anchor: split.paneID, direction: .down)) {
+      $0.layout.tree = try $0.layout.tree.inserting(view: newPaneID, at: split.paneID, direction: .down)
+      $0.layout.panes[id: harness.paneID]?.tabs.remove(id: harness.tabID)
+      $0.layout.panes.append(
+        Pane(
+          id: newPaneID,
+          tabs: [Self.tab(id: harness.tabID, contentID: harness.contentID, title: "One")],
+          selectedTabID: harness.tabID
+        )
+      )
+      $0.layout.focusedPaneID = newPaneID
+    }
+    #expect(harness.store.state.layout.panes[id: harness.paneID]?.selectedTabID == second.tabID)
+  }
+
+  @Test func movingTheSelectedFirstTabToASplitRetargetsToTheNextTab() async {
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let paneID = harness.paneID
+    await harness.store.send(.selectTab(id: harness.tabID)) {
+      $0.layout.panes[id: paneID]?.selectedTabID = harness.tabID
+    }
+    let newPaneID = PaneID(rawValue: UUID(0))
+    // Removing index 0 retargets the source selection to the first survivor.
+    await harness.store.send(.moveTabToSplit(id: harness.tabID, anchor: paneID, direction: .down)) {
+      $0.layout.tree = try $0.layout.tree.inserting(view: newPaneID, at: paneID, direction: .down)
+      $0.layout.panes[id: paneID]?.tabs.remove(id: harness.tabID)
+      $0.layout.panes[id: paneID]?.selectedTabID = second.tabID
+      $0.layout.panes.append(
+        Pane(
+          id: newPaneID,
+          tabs: [Self.tab(id: harness.tabID, contentID: harness.contentID, title: "One")],
+          selectedTabID: harness.tabID
+        )
+      )
+      $0.layout.focusedPaneID = newPaneID
+    }
+    #expect(harness.store.state.layout.panes[id: paneID]?.selectedTabID == second.tabID)
+  }
+
+  @Test func moveTabToSplitLeftPlacesTheNewPaneBeforeTheAnchor() async {
+    let harness = await makeHarness()
+    let second = await addTab(harness, title: "Two")
+    let newPaneID = PaneID(rawValue: UUID(0))
+    await harness.store.send(.moveTabToSplit(id: second.tabID, anchor: harness.paneID, direction: .left)) {
+      $0.layout.tree = try $0.layout.tree.inserting(view: newPaneID, at: harness.paneID, direction: .left)
+      $0.layout.panes[id: harness.paneID]?.tabs.remove(id: second.tabID)
+      $0.layout.panes[id: harness.paneID]?.selectedTabID = harness.tabID
+      $0.layout.panes.append(
+        Pane(
+          id: newPaneID,
+          tabs: [Self.tab(id: second.tabID, contentID: second.contentID, title: "Two")],
+          selectedTabID: second.tabID
+        )
+      )
+      $0.layout.focusedPaneID = newPaneID
+    }
+    // Leaves read in layout order; a leading drop must precede its anchor.
+    #expect(harness.store.state.layout.tree.visibleLeaves() == [newPaneID, harness.paneID])
+  }
+
+  @Test func moveTabToSplitClearsZoomSoTheNewPaneIsVisible() async {
+    // Zoom must drop even under the preserve-on-navigation policy.
+    let harness = await makeHarness(preserveZoom: true)
+    let second = await addTab(harness, title: "Two")
+    let split = await splitPane(harness, anchor: harness.paneID)
+    await harness.store.send(.toggleZoom(paneID: split.paneID)) {
+      $0.layout.tree = $0.layout.tree.settingZoomed($0.layout.tree.find(id: split.paneID.rawValue))
+    }
+    let newPaneID = PaneID(rawValue: UUID(1))
+    await harness.store.send(.moveTabToSplit(id: second.tabID, anchor: split.paneID, direction: .down)) {
+      $0.layout.tree = try $0.layout.tree.settingZoomed(nil)
+        .inserting(view: newPaneID, at: split.paneID, direction: .down)
+      $0.layout.panes[id: harness.paneID]?.tabs.remove(id: second.tabID)
+      $0.layout.panes[id: harness.paneID]?.selectedTabID = harness.tabID
+      $0.layout.panes.append(
+        Pane(
+          id: newPaneID,
+          tabs: [Self.tab(id: second.tabID, contentID: second.contentID, title: "Two")],
+          selectedTabID: second.tabID
+        )
+      )
+      $0.layout.focusedPaneID = newPaneID
+    }
+    #expect(harness.store.state.layout.tree.zoomed == nil)
+  }
+
+  @Test(.dependencies) func exitWindowModeCancelsThePanesPendingConfirmation() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .always }
+    let harness = await makeHarness()
+    await enterWindowMode(harness, paneID: harness.paneID)
+    await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .tab)) {
+      $0.alertPaneID = harness.paneID
+      $0.alert = self.closeConfirmAlert(tabs: [harness.tabID], interrupts: false)
+    }
+    // The presenting window closes with the exit; a surviving alert would
+    // re-materialize as a phantom.
+    await harness.store.send(.exitWindowMode(paneID: harness.paneID)) {
+      $0.windowedPaneIDs = []
+      $0.alertPaneID = nil
+      $0.alert = nil
+    }
+    #expect(harness.store.state.layout.panes[id: harness.paneID]?.tabs[id: harness.tabID] != nil)
+  }
+
+  @Test(.dependencies) func enterWindowModeCancelsThePanesPendingConfirmation() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.confirmCloseTab = .always }
+    let harness = await makeHarness()
+    await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .tab)) {
+      $0.alertPaneID = harness.paneID
+      $0.alert = self.closeConfirmAlert(tabs: [harness.tabID], interrupts: false)
+    }
+    // The alert host swaps windows with the pane; the confirmation cancels
+    // rather than strand.
+    await harness.store.send(.enterWindowMode(paneID: harness.paneID)) {
+      $0.windowedPaneIDs = [harness.paneID]
+      $0.alertPaneID = nil
+      $0.alert = nil
+    }
+    #expect(harness.store.state.layout.panes[id: harness.paneID]?.tabs[id: harness.tabID] != nil)
+  }
+
+  @Test func directionalFocusSkipsWindowedLeavesToTheNextEmbeddedPane() async {
+    let harness = await makeHarness()
+    let middle = await splitPane(harness, anchor: harness.paneID, mintIndex: 0)
+    let far = await splitPane(harness, anchor: middle.paneID, mintIndex: 1, title: "Third")
+    await enterWindowMode(harness, paneID: middle.paneID)
+    // Focus sits on the far pane; walking back must skip the windowed
+    // placeholder and land on the first pane, not dead-end.
+    await harness.store.send(.focusPane(.direction(.previous))) {
+      $0.layout.focusedPaneID = harness.paneID
+    }
+  }
+
+  @Test func focusingAWindowedPaneLeavesTheMainTreesZoomAlone() async {
+    // Preserve-on-navigation would otherwise retarget the zoom onto the
+    // windowed placeholder, filling the main window with it.
+    let harness = await makeHarness(preserveZoom: true)
+    let split = await splitPane(harness, anchor: harness.paneID)
+    await enterWindowMode(harness, paneID: harness.paneID)
+    await harness.store.send(.toggleZoom(paneID: split.paneID)) {
+      $0.layout.tree = $0.layout.tree.settingZoomed($0.layout.tree.find(id: split.paneID.rawValue))
+    }
+    // The pane window taking key focuses its pane; the embedded zoom stays.
+    await harness.store.send(.focusPane(.pane(harness.paneID))) {
+      $0.layout.focusedPaneID = harness.paneID
+    }
+    #expect(harness.store.state.layout.tree.zoomed != nil)
+  }
+
+  @Test func focusSplitFromAWindowedPaneIsRefused() async {
+    let harness = await makeHarness()
+    _ = await splitPane(harness, anchor: harness.paneID)
+    await enterWindowMode(harness, paneID: harness.paneID)
+    // A pane window has no neighbors; the request must not walk the main tree.
+    await harness.store.send(.contentRequestedFocusSplit(content: harness.contentID, direction: .next))
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
+  @Test func directionalFocusOntoAWindowedPaneIsRefused() async {
+    let harness = await makeHarness()
+    let split = await splitPane(harness, anchor: harness.paneID)
+    await enterWindowMode(harness, paneID: harness.paneID)
+    // Focus sits on the split pane; walking toward the windowed placeholder
+    // must not land on it.
+    await harness.store.send(.focusPane(.direction(.previous)))
+    #expect(harness.store.state.layout.focusedPaneID == split.paneID)
+  }
+
+  @Test func resizeFromAWindowedPaneIsRefused() async {
+    let harness = await makeHarness()
+    let split = await splitPane(harness, anchor: harness.paneID)
+    // Real extents, so the refusal is the guard and not a degenerate total.
+    harness.recorder.contents[harness.contentID]?.renderer?.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+    harness.recorder.contents[split.contentID]?.renderer?.frame = NSRect(x: 800, y: 0, width: 800, height: 600)
+    await enterWindowMode(harness, paneID: harness.paneID)
+    // A pane window has no dividers; the request must not resize the main tree.
+    await harness.store.send(.contentRequestedResize(content: harness.contentID, direction: .right, amount: 10))
+  }
+
   // MARK: - Selection, focus, and zoom.
 
   @Test func selectTabSelectsAndFocusesItsPane() async {
@@ -1037,10 +1395,12 @@ struct LayoutFeatureTests {
     let harness = await makeHarness()
     // Not busy, but `.always` still raises the confirmation.
     await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .tab)) {
+      $0.alertPaneID = harness.paneID
       $0.alert = self.closeConfirmAlert(tabs: [harness.tabID], interrupts: false)
     }
     // Confirming closes the tab and reaps the session.
     await harness.store.send(.alert(.presented(.confirmClose(tabs: [harness.tabID])))) {
+      $0.alertPaneID = nil
       $0.alert = nil
       $0.layout.tree = SplitTree()
       $0.layout.panes = []
@@ -1055,9 +1415,11 @@ struct LayoutFeatureTests {
     $settingsFile.withLock { $0.global.confirmCloseTab = .always }
     let harness = await makeHarness()
     await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .tab)) {
+      $0.alertPaneID = harness.paneID
       $0.alert = self.closeConfirmAlert(tabs: [harness.tabID], interrupts: false)
     }
     await harness.store.send(.alert(.dismiss)) {
+      $0.alertPaneID = nil
       $0.alert = nil
     }
     #expect(harness.store.state.layout.panes[id: harness.paneID]?.tabs[id: harness.tabID] != nil)
@@ -1085,6 +1447,7 @@ struct LayoutFeatureTests {
     let harness = await makeHarness()
     harness.mock?.isBusy = true
     await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .tab)) {
+      $0.alertPaneID = harness.paneID
       $0.alert = self.closeConfirmAlert(tabs: [harness.tabID])
     }
   }
@@ -1113,6 +1476,7 @@ struct LayoutFeatureTests {
       $0.renderEpoch = 1
     }
     await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .tab)) {
+      $0.alertPaneID = harness.paneID
       $0.alert = self.closeConfirmAlert(tabs: [harness.tabID])
     }
   }
@@ -1197,6 +1561,7 @@ struct LayoutFeatureTests {
     // Literal copy pinned on purpose: the helper elsewhere mirrors the
     // production switch, which would hide a swapped branch.
     await harness.store.send(.contentRequestedClose(content: harness.contentID, scope: .otherTabs)) {
+      $0.alertPaneID = harness.paneID
       $0.alert = AlertState {
         TextState("Close 2 Tabs?")
       } actions: {

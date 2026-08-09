@@ -16,6 +16,8 @@ final class WorktreeTerminalManager {
   @ObservationIgnored private let surfaceBindingActionPerformer: ((GhosttySurfaceView, String) -> Void)?
   private(set) var socketServer: AgentHookSocketServer?
   private var hosts: [Worktree.ID: WorktreeContentHost] = [:]
+  /// The windowed-pane windows, reconciled after every layout change.
+  @ObservationIgnored let paneWindows = PaneWindowManager()
   /// The app store; topology commands route into `TerminalsFeature` through it.
   /// Set once from the app shell right after store creation.
   weak var appStore: Store<AppFeature.State, AppFeature.Action>?
@@ -168,6 +170,7 @@ final class WorktreeTerminalManager {
     self.clock = clock
     @Dependency(\.settingsFileStorage) var settingsFileStorage
     self.layoutsWriter = LayoutsIncrementalWriter(storage: settingsFileStorage)
+    paneWindows.terminalManager = self
     // A theme reload changes the fallback and every non-OSC surface background.
     runtimeObservers.append(
       NotificationCenter.default.addObserver(
@@ -606,6 +609,7 @@ final class WorktreeTerminalManager {
     host.socketPath = socketServer?.socketPath
     host.notificationsEnabled = notificationsEnabled
     host.layout = { [weak self] in self?.layoutState(for: worktree.id)?.layout }
+    host.windowedPaneIDs = { [weak self] in self?.layoutState(for: worktree.id)?.windowedPaneIDs ?? [] }
     host.sendLayoutAction = { [weak self] action in self?.sendLayout(worktree.id, action) }
     host.setWorktreeSelected(selectedWorktreeID == worktree.id)
     host.hibernationAgentsBySurface = { [weak self] in self?.currentAgentsBySurface?() ?? [:] }
@@ -678,9 +682,9 @@ final class WorktreeTerminalManager {
     return host
   }
 
-  /// Fires the layout-changed side effects the reducer cannot: persistence
-  /// debounce and the sidebar projection. Called by the app shell whenever a
-  /// worktree's layout value changes.
+  /// Fires the layout-changed side effects the reducer cannot: persistence,
+  /// content lifecycle, surface activity, the pane windows, and the sidebar
+  /// projection. Called for every layout action, not only topology changes.
   func handleLayoutChanged(for worktreeID: Worktree.ID) {
     markLayoutDirty(worktreeID: worktreeID)
     hosts[worktreeID]?.reconcileContentLifecycle()
@@ -688,6 +692,7 @@ final class WorktreeTerminalManager {
     // occlusion and focus so hidden panes stop drawing.
     hosts[worktreeID]?.reassertSurfaceActivity()
     scheduleDeferredActivityReassert(for: worktreeID)
+    paneWindows.reconcile(worktreeID: worktreeID)
     emitProjection(for: worktreeID)
     emitHasAnyTerminalSurfaceIfNeeded()
   }
@@ -1067,6 +1072,7 @@ final class WorktreeTerminalManager {
     let surfaceIDs =
       hosts[worktreeID]?.allSurfaceIDs
       ?? layoutState(for: worktreeID)?.layout.allContentIDs.map(\.rawValue) ?? []
+    paneWindows.closeAll(for: worktreeID)
     deleteLayoutSnapshot(worktreeID: worktreeID)
     if let host = hosts.removeValue(forKey: worktreeID) {
       // Watchers stop before the kill.
@@ -1109,6 +1115,7 @@ final class WorktreeTerminalManager {
       // no trace in `layouts.json`. The explicit delete bypasses the debounce
       // and cancels any queued positive save so a pruned worktree can't be
       // resurrected by an in-flight snapshot.
+      paneWindows.closeAll(for: id)
       deleteLayoutSnapshot(worktreeID: id)
       // Watchers stop before the kill; the contents drop from the runtime.
       host.tearDown()

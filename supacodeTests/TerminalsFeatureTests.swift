@@ -255,6 +255,87 @@ struct TerminalsFeatureTests {
     await harness.store.finish()
   }
 
+  @Test(.dependencies) func windowedPaneKeepsItsSelectionAwakeWhileTheWorktreeIsUnselected() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = true }
+    let harness = makeHibernationHarness()
+    await harness.store.send(
+      .layouts(.element(id: harness.worktreeID, action: .enterWindowMode(paneID: harness.paneID)))
+    ) {
+      $0.layouts[id: harness.worktreeID]?.windowedPaneIDs = [harness.paneID]
+      // The pane's unselected tab still hides behind its strip and arms.
+      $0.hibernationArmedTabs = [harness.hiddenTab]
+    }
+    // The window floats over any worktree; leaving this one must not arm its
+    // selection.
+    await harness.store.send(.selectedWorktreeChanged(Worktree.ID("/tmp/other"))) {
+      $0.selectedWorktreeID = Worktree.ID("/tmp/other")
+    }
+    await harness.clock.advance(by: TerminalsFeature.hibernationGraceWindow)
+    await harness.store.receive(\.hibernationGraceElapsed) {
+      $0.hibernationArmedTabs = []
+    }
+    await harness.store.receive(\.layouts) {
+      $0.layouts[id: harness.worktreeID]?.renderEpoch = 1
+    }
+    #expect(harness.selectedContent.renderer != nil)
+    #expect(harness.hiddenContent.renderer == nil)
+  }
+
+  @Test(.dependencies) func leavingWindowModeArmsTheSelectionOfAnUnselectedWorktree() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = true }
+    let harness = makeHibernationHarness()
+    await harness.store.send(
+      .layouts(.element(id: harness.worktreeID, action: .enterWindowMode(paneID: harness.paneID)))
+    ) {
+      $0.layouts[id: harness.worktreeID]?.windowedPaneIDs = [harness.paneID]
+      $0.hibernationArmedTabs = [harness.hiddenTab]
+    }
+    await harness.store.send(.selectedWorktreeChanged(Worktree.ID("/tmp/other"))) {
+      $0.selectedWorktreeID = Worktree.ID("/tmp/other")
+    }
+    // Re-attaching withdraws the exemption: the selection is hidden again.
+    await harness.store.send(
+      .layouts(.element(id: harness.worktreeID, action: .exitWindowMode(paneID: harness.paneID)))
+    ) {
+      $0.layouts[id: harness.worktreeID]?.windowedPaneIDs = []
+      $0.hibernationArmedTabs = [harness.selectedTab, harness.hiddenTab]
+    }
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = false }
+    await harness.store.send(.hibernationPolicyChanged) {
+      $0.hibernationArmedTabs = []
+    }
+    await harness.store.finish()
+  }
+
+  @Test(.dependencies) func windowedPaneWakesItsHibernatedSelectionWhileTheWorktreeIsUnselected() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = true }
+    let harness = makeHibernationHarness()
+    harness.selectedContent.hibernate()
+    // Windowing a pane whose selection is hibernated must re-provision it,
+    // or the window opens dead.
+    await harness.store.send(
+      .layouts(.element(id: harness.worktreeID, action: .enterWindowMode(paneID: harness.paneID)))
+    ) {
+      $0.layouts[id: harness.worktreeID]?.windowedPaneIDs = [harness.paneID]
+      $0.hibernationArmedTabs = [harness.hiddenTab]
+      $0.wakeRequestedTabs = [harness.selectedTab]
+    }
+    await harness.store.receive(\.layouts) {
+      $0.layouts[id: harness.worktreeID]?.renderEpoch = 1
+      $0.wakeRequestedTabs = []
+    }
+    #expect(harness.selectedContent.renderer != nil)
+    // Drain the armed timer so the store finishes clean.
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = false }
+    await harness.store.send(.hibernationPolicyChanged) {
+      $0.hibernationArmedTabs = []
+    }
+    await harness.store.finish()
+  }
+
   @Test(.dependencies) func zoomedPaneHidesTheOtherPanesSelectedTab() async throws {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global.terminalHibernationEnabled = true }

@@ -21,6 +21,9 @@ final class WorktreeContentHost {
   @ObservationIgnored var isSelected: () -> Bool = { false }
   /// The worktree's current pane topology; nil before hydration.
   @ObservationIgnored var layout: () -> PaneLayout? = { nil }
+  /// Panes rendering in their own windows; their surfaces' activity keys off
+  /// those windows, not the main one.
+  @ObservationIgnored var windowedPaneIDs: () -> Set<PaneID> = { [] }
   /// Routes a topology mutation into the worktree's `LayoutFeature`.
   @ObservationIgnored var sendLayoutAction: (LayoutFeature.Action) -> Void = { _ in }
   @ObservationIgnored var onNotificationReceived: ((UUID, String, String, Bool) -> Void)?
@@ -193,10 +196,17 @@ final class WorktreeContentHost {
     focusedContentID == surfaceID
   }
 
-  /// All five must hold for an arriving notification to be born read.
+  /// All five must hold for an arriving notification to be born read. A
+  /// windowed pane's surface keys off its own window, not the main one.
   private func isViewedSurface(_ surfaceID: UUID) -> Bool {
-    isSelected()
-      && isFocusedSurface(surfaceID)
+    guard isFocusedSurface(surfaceID) else { return false }
+    if let pane = layout()?.panes.first(where: { $0.selectedTab?.content.id.rawValue == surfaceID }),
+      windowedPaneIDs().contains(pane.id)
+    {
+      guard let window = liveSurface(surfaceID)?.window else { return false }
+      return window.isKeyWindow && window.occlusionState.contains(.visible)
+    }
+    return isSelected()
       && isVisibleSurface(surfaceID)
       && lastWindowIsKey == true
       && lastWindowIsVisible == true
@@ -586,22 +596,39 @@ final class WorktreeContentHost {
     applySurfaceActivity()
   }
 
-  /// Re-derives per-content occlusion and focus. Unknown window visibility
-  /// FAILS OPEN: occluding a visible surface freezes it, rendering a briefly
+  /// Re-derives per-content occlusion and focus from the main-window
+  /// observer, or from a windowed pane's own window. Unknown visibility FAILS
+  /// OPEN: occluding a visible surface freezes it, rendering a briefly
   /// occluded one only costs frames.
   func applySurfaceActivity() {
     guard let layout = layout() else { return }
     let selected = isWorktreeSelected
     let visiblePanes = Set(layout.tree.visibleLeaves())
+    let windowedPanes = windowedPaneIDs()
     var focusTarget: GhosttySurfaceView?
     for pane in layout.panes {
       for tab in pane.tabs {
         guard let surface = liveSurface(tab.content.id.rawValue) else { continue }
-        let isVisible =
-          selected && visiblePanes.contains(pane.id) && pane.selectedTabID == tab.id
-          && lastWindowIsVisible != false
-        let isFocused =
-          isVisible && lastWindowIsKey == true && focusedContentID == tab.content.id.rawValue
+        let isSelectedTab = pane.selectedTabID == tab.id
+        let isVisible: Bool
+        let isKeyed: Bool
+        if windowedPanes.contains(pane.id) {
+          // A windowed pane floats over any worktree; its own window drives
+          // visibility and key state, not the main-window observer. A surface
+          // not yet mounted fails open; the occlusion notification corrects
+          // the first-display transient.
+          let windowShowsContent = surface.window.map {
+            $0.isVisible && $0.occlusionState.contains(.visible)
+          }
+          isVisible = isSelectedTab && windowShowsContent != false
+          isKeyed = surface.window?.isKeyWindow == true
+        } else {
+          isVisible =
+            selected && visiblePanes.contains(pane.id) && isSelectedTab
+            && lastWindowIsVisible != false
+          isKeyed = lastWindowIsKey == true
+        }
+        let isFocused = isVisible && isKeyed && focusedContentID == tab.content.id.rawValue
         surface.setOcclusion(isVisible)
         surface.focusDidChange(isFocused)
         if isFocused {
@@ -621,7 +648,10 @@ final class WorktreeContentHost {
 
   func setAllSurfacesOccluded() {
     guard let layout = layout() else { return }
+    let windowedPanes = windowedPaneIDs()
     for pane in layout.panes {
+      // A windowed pane keeps rendering across worktree switches.
+      guard !windowedPanes.contains(pane.id) else { continue }
       for tab in pane.tabs {
         guard let surface = liveSurface(tab.content.id.rawValue) else { continue }
         surface.setOcclusion(false)
