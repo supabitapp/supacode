@@ -1492,10 +1492,9 @@ final class WorktreeTerminalManager {
   /// remote (15s) plus one local (5s) timeout regardless of N. Detached and
   /// unbudgeted; a quit inside that window leaves local survivors to the
   /// next-launch orphan reap (a host-side survivor has no reaper).
-  /// `clearingTombstones` are content ids removed with a tombstone: their
-  /// re-provisioning stays blocked until this kill lands, so a reused id can't
-  /// be provisioned into a session this teardown would then kill. Confirmed on
-  /// every path (including the empty early-return) so a tombstone never leaks.
+  /// `clearingTombstones` ids stay blocked from re-provisioning until this kill
+  /// lands (so a reused id can't land in a session this then kills); confirmed on
+  /// every path so a tombstone never leaks.
   private func killZmxSessions(
     _ sessionIDs: [String],
     remoteSessions: [(host: RemoteHost, sessionID: String)] = [],

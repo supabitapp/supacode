@@ -323,14 +323,7 @@ private nonisolated enum DeeplinkParser {
     pathSegments: [String],
     queryItems: [URLQueryItem]
   ) -> Deeplink? {
-    // "pane/equalize" → equalize every split ratio.
-    // "pane/focus?direction=…" → move focus to a neighboring pane.
-    // "pane/<token>" → focus that pane.
-    // "pane/<token>/split?direction=…&input=…&id=…" → split the pane.
-    // "pane/<token>/destroy" → close the pane and its tabs.
-    // "pane/<token>/zoom" → toggle the pane's zoom.
-    // "pane/<token>/window" → toggle the pane's window mode.
-    // `token` is a pane id, or the id of a tab / content the pane hosts.
+    // A pane token is a pane id, or the id of a tab / content the pane hosts.
     guard pathSegments.count >= 3 else {
       logger.warning("Pane deeplink missing sub-action or pane token")
       return nil
