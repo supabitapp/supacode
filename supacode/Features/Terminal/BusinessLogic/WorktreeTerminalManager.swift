@@ -1317,8 +1317,10 @@ final class WorktreeTerminalManager {
       // Watchers stop before the kill.
       host.tearDown()
     }
+    // Tombstone until the async kill lands, so reusing an id elsewhere can't be
+    // provisioned into a session this teardown would then kill.
     for surfaceID in surfaceIDs {
-      ContentRuntime.liveValue.remove(ContentID(rawValue: surfaceID), tombstone: false)
+      ContentRuntime.liveValue.remove(ContentID(rawValue: surfaceID), tombstone: true)
     }
     // Global agent presence is keyed by surface id; retract these or the
     // removed worktree's agents linger in the presence UI.
@@ -1336,7 +1338,9 @@ final class WorktreeTerminalManager {
     let remoteSessions = remoteHost.map { host in
       surfaceIDs.map { (host: host, sessionID: ZmxSessionID.make(surfaceID: $0)) }
     }
-    killZmxSessions(surfaceIDs.map(ZmxSessionID.make(surfaceID:)), remoteSessions: remoteSessions ?? [])
+    killZmxSessions(
+      surfaceIDs.map(ZmxSessionID.make(surfaceID:)), remoteSessions: remoteSessions ?? [],
+      clearingTombstones: surfaceIDs.map { ContentID(rawValue: $0) })
   }
 
   func prune(
@@ -1365,8 +1369,10 @@ final class WorktreeTerminalManager {
       let closedSurfaceIDs = Set(host.allSurfaceIDs)
       // Watchers stop before the kill; the contents drop from the runtime.
       host.tearDown()
+      // Tombstone until the async kill lands, so reusing an id elsewhere can't be
+      // provisioned into a session this teardown would then kill.
       for surfaceID in closedSurfaceIDs {
-        ContentRuntime.liveValue.remove(ContentID(rawValue: surfaceID), tombstone: false)
+        ContentRuntime.liveValue.remove(ContentID(rawValue: surfaceID), tombstone: true)
       }
       // Global agent presence is keyed by surface id; retract the pruned
       // surfaces or archived / deleted agents linger in the presence UI.
@@ -1386,7 +1392,9 @@ final class WorktreeTerminalManager {
     emitNotificationIndicatorCountIfNeeded()
     emitHasAnyTerminalSurfaceIfNeeded()
     refreshFocusedSurfaceBackground()
-    killZmxSessions(prunedSessionIDs, remoteSessions: prunedRemoteSessions)
+    killZmxSessions(
+      prunedSessionIDs, remoteSessions: prunedRemoteSessions,
+      clearingTombstones: prunedSurfaceIDs.map { ContentID(rawValue: $0) })
   }
 
   /// Host-side zmx sessions owned by the given states, one entry per surface
@@ -1484,11 +1492,19 @@ final class WorktreeTerminalManager {
   /// remote (15s) plus one local (5s) timeout regardless of N. Detached and
   /// unbudgeted; a quit inside that window leaves local survivors to the
   /// next-launch orphan reap (a host-side survivor has no reaper).
+  /// `clearingTombstones` are content ids removed with a tombstone: their
+  /// re-provisioning stays blocked until this kill lands, so a reused id can't
+  /// be provisioned into a session this teardown would then kill. Confirmed on
+  /// every path (including the empty early-return) so a tombstone never leaks.
   private func killZmxSessions(
     _ sessionIDs: [String],
-    remoteSessions: [(host: RemoteHost, sessionID: String)] = []
+    remoteSessions: [(host: RemoteHost, sessionID: String)] = [],
+    clearingTombstones contentIDs: [ContentID] = []
   ) {
-    guard !sessionIDs.isEmpty || !remoteSessions.isEmpty else { return }
+    guard !sessionIDs.isEmpty || !remoteSessions.isEmpty else {
+      for id in contentIDs { ContentRuntime.liveValue.confirmKill(id) }
+      return
+    }
     let client = zmxClient
     analyticsClient.capture(
       "terminal_persistence_session_killed",
@@ -1503,6 +1519,11 @@ final class WorktreeTerminalManager {
               sessionID: entry.sessionID, remoteHost: entry.host, killLocal: entry.killLocal)
           }
         }
+      }
+      // The sessions are provably dead; clear the tombstones so the ids can be
+      // reused without a late kill hitting a freshly provisioned session.
+      await MainActor.run {
+        for id in contentIDs { ContentRuntime.liveValue.confirmKill(id) }
       }
     }
   }
