@@ -66,6 +66,7 @@ struct CommandPaletteFeature {
     case refreshWorktrees
     case ghosttyCommand(String)
     case toggleWindowMode
+    case layoutCommand(LayoutPaletteCommand)
     case openPullRequest(Worktree.ID)
     case markPullRequestReady(Worktree.ID)
     case mergePullRequest(Worktree.ID)
@@ -288,6 +289,16 @@ struct CommandPaletteFeature {
           kind: .toggleWindowMode
         )
       )
+      for command in LayoutPaletteCommand.allCases {
+        items.append(
+          CommandPaletteItem(
+            id: CommandPaletteItemID.layoutCommand(command),
+            title: command.title,
+            subtitle: nil,
+            kind: .layoutCommand(command)
+          )
+        )
+      }
     }
     if let selectedWorktreeID = repositories.selectedWorktreeID,
       let repositoryID = repositories.repositoryID(containing: selectedWorktreeID),
@@ -421,6 +432,7 @@ struct CommandPaletteFeature {
   ) -> [CommandPaletteItem.ID] {
     var ids = CommandPaletteItemID.globalIDs
     ids.append(CommandPaletteItemID.toggleWindowMode)
+    ids.append(contentsOf: LayoutPaletteCommand.allCases.map(CommandPaletteItemID.layoutCommand))
     for repository in repositories {
       ids.append(contentsOf: CommandPaletteItemID.pullRequestIDs(repositoryID: repository.id))
       ids.append(CommandPaletteItemID.customizeRepositoryAppearance(repository.id))
@@ -728,6 +740,10 @@ private enum CommandPaletteItemID {
   static let globalViewArchivedWorktrees = "global.view-archived-worktrees"
   static let toggleWindowMode = "worktree.toggle-window-mode"
 
+  static func layoutCommand(_ command: LayoutPaletteCommand) -> CommandPaletteItem.ID {
+    "worktree.layout.\(command.rawValue)"
+  }
+
   static var globalIDs: [CommandPaletteItem.ID] {
     [
       globalCheckForUpdates,
@@ -864,7 +880,8 @@ private func delegateAction(for kind: CommandPaletteItem.Kind) -> CommandPalette
     return .removeWorktree(worktreeID, repositoryID)
   case .archiveWorktree(let worktreeID, let repositoryID):
     return .archiveWorktree(worktreeID, repositoryID)
-  case .renameBranch, .customizeRepositoryAppearance, .customizeWorktreeAppearance, .toggleWindowMode:
+  case .renameBranch, .customizeRepositoryAppearance, .customizeWorktreeAppearance, .toggleWindowMode,
+    .layoutCommand:
     return selectedEntryDelegateAction(for: kind)!
   case .viewArchivedWorktrees:
     return .viewArchivedWorktrees
@@ -905,11 +922,13 @@ private func selectedEntryDelegateAction(
     return .customizeWorktreeAppearance(worktreeID, repositoryID)
   case .toggleWindowMode:
     return .toggleWindowMode
+  case .layoutCommand(let command):
+    return .layoutCommand(command)
   case .checkForUpdates, .openRepository, .addRemoteRepository, .worktreeSelect, .openSettings,
     .newWorktree, .removeWorktree, .archiveWorktree, .viewArchivedWorktrees, .refreshWorktrees,
-    .ghosttyCommand, .openPullRequest, .markPullRequestReady, .mergePullRequest, .closePullRequest,
-    .copyFailingJobURL, .copyCiFailureLogs, .rerunFailedJobs, .openFailingCheckDetails,
-    .runScript, .stopScript:
+    .ghosttyCommand, .openPullRequest, .markPullRequestReady, .mergePullRequest,
+    .closePullRequest, .copyFailingJobURL, .copyCiFailureLogs, .rerunFailedJobs,
+    .openFailingCheckDetails, .runScript, .stopScript:
     return nil
   #if DEBUG
     case .debugTestToast:
@@ -951,7 +970,8 @@ private func pullRequestDelegateAction(
     return .rerunFailedJobs(worktreeID)
   case .openFailingCheckDetails(let worktreeID):
     return .openFailingCheckDetails(worktreeID)
-  case .worktreeSelect,
+  case .layoutCommand,
+    .worktreeSelect,
     .checkForUpdates,
     .openSettings,
     .newWorktree,
@@ -1020,16 +1040,24 @@ private func scriptItems(
 }
 
 private func ghosttyCommandItems(_ commands: [GhosttyCommand]) -> [CommandPaletteItem] {
-  commands.map { command in
+  var items: [CommandPaletteItem] = []
+  items.reserveCapacity(commands.count)
+  for command in commands {
+    // Topology entries are replaced by the app's own layout commands; their
+    // surface-emitted actions are ignored by the conduit anyway.
+    guard !command.isTopologyCommand else { continue }
     let subtitle = command.description.trimmingCharacters(in: .whitespacesAndNewlines)
-    return CommandPaletteItem(
-      id: CommandPaletteItemID.ghosttyCommand(command),
-      title: command.title,
-      subtitle: subtitle.isEmpty ? nil : subtitle,
-      kind: .ghosttyCommand(command.action),
-      priorityTier: CommandPaletteItem.defaultPriorityTier + 100
+    items.append(
+      CommandPaletteItem(
+        id: CommandPaletteItemID.ghosttyCommand(command),
+        title: command.title,
+        subtitle: subtitle.isEmpty ? nil : subtitle,
+        kind: .ghosttyCommand(command.action),
+        priorityTier: CommandPaletteItem.defaultPriorityTier + 100
+      )
     )
   }
+  return items
 }
 
 extension CommandPaletteFeature.State {

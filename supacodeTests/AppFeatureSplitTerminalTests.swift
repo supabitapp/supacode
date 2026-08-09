@@ -11,27 +11,30 @@ import Testing
 struct AppFeatureSplitTerminalTests {
   @Test(
     arguments: [
-      (TerminalSplitMenuDirection.right, "new_split:right"),
-      (.left, "new_split:left"),
-      (.down, "new_split:down"),
-      (.up, "new_split:up"),
+      (TerminalSplitMenuDirection.right, SplitTree<PaneID>.NewDirection.right),
+      (.left, .left),
+      (.down, .down),
+      // The split tree names the upward insertion `top`.
+      (.up, .top),
     ]
   )
-  func ghosttyBindingMapsToActionSuffix(direction: TerminalSplitMenuDirection, expected: String) {
-    #expect(direction.ghosttyBinding == expected)
+  func newSplitDirectionMapsLiterally(direction: TerminalSplitMenuDirection, expected: SplitTree<PaneID>.NewDirection) {
+    #expect(direction.newSplitDirection == expected)
   }
 
   @Test(
     arguments: [
-      (TerminalSplitMenuDirection.right, "goto_split:right"),
-      (.left, "goto_split:left"),
-      // Ghostty's goto_split argument names differ from new_split's here.
-      (.down, "goto_split:bottom"),
-      (.up, "goto_split:top"),
+      (TerminalSplitMenuDirection.right, SplitTree<PaneID>.FocusDirection.spatial(.right)),
+      (.left, .spatial(.left)),
+      (.down, .spatial(.down)),
+      (.up, .spatial(.top)),
     ]
   )
-  func gotoSplitBindingMapsToActionSuffix(direction: TerminalSplitMenuDirection, expected: String) {
-    #expect(direction.gotoSplitBinding == expected)
+  func focusSplitDirectionMapsLiterally(
+    direction: TerminalSplitMenuDirection,
+    expected: SplitTree<PaneID>.FocusDirection
+  ) {
+    #expect(direction.focusSplitDirection == expected)
   }
 
   @Test(
@@ -52,7 +55,7 @@ struct AppFeatureSplitTerminalTests {
   }
 
   @Test(.dependencies, arguments: TerminalSplitMenuDirection.allCases)
-  func splitTerminalForwardsGhosttyBinding(direction: TerminalSplitMenuDirection) async {
+  func splitTerminalForwardsTheLayoutCommand(direction: TerminalSplitMenuDirection) async {
     let worktree = makeWorktree()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
@@ -70,7 +73,7 @@ struct AppFeatureSplitTerminalTests {
 
     await store.send(.splitTerminal(direction))
     await store.finish()
-    #expect(sent.value == [.performBindingAction(worktree, action: direction.ghosttyBinding)])
+    #expect(sent.value == [.splitFocusedPane(worktree, direction: direction)])
   }
 
   @Test(.dependencies) func splitTerminalWithoutSelectionIsNoop() async {
@@ -92,7 +95,7 @@ struct AppFeatureSplitTerminalTests {
   }
 
   @Test(.dependencies, arguments: TerminalSplitMenuDirection.allCases)
-  func focusSplitForwardsTheGotoBinding(direction: TerminalSplitMenuDirection) async {
+  func focusSplitForwardsTheLayoutCommand(direction: TerminalSplitMenuDirection) async {
     let worktree = makeWorktree()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
@@ -110,10 +113,10 @@ struct AppFeatureSplitTerminalTests {
 
     await store.send(.focusSplit(direction))
     await store.finish()
-    #expect(sent.value == [.performBindingAction(worktree, action: direction.gotoSplitBinding)])
+    #expect(sent.value == [.focusSplit(worktree, direction: direction)])
   }
 
-  @Test(.dependencies) func toggleSplitZoomForwardsTheBinding() async {
+  @Test(.dependencies) func toggleSplitZoomForwardsTheLayoutCommand() async {
     let worktree = makeWorktree()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
@@ -131,10 +134,10 @@ struct AppFeatureSplitTerminalTests {
 
     await store.send(.toggleSplitZoom)
     await store.finish()
-    #expect(sent.value == [.performBindingAction(worktree, action: "toggle_split_zoom")])
+    #expect(sent.value == [.toggleSplitZoom(worktree)])
   }
 
-  @Test(.dependencies) func equalizeSplitsForwardsTheBinding() async {
+  @Test(.dependencies) func equalizeSplitsForwardsTheLayoutCommand() async {
     let worktree = makeWorktree()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
@@ -152,7 +155,7 @@ struct AppFeatureSplitTerminalTests {
 
     await store.send(.equalizeSplits)
     await store.finish()
-    #expect(sent.value == [.performBindingAction(worktree, action: "equalize_splits")])
+    #expect(sent.value == [.equalizeSplits(worktree)])
   }
 
   @Test(.dependencies) func toggleWindowModeForwardsToTheTerminalClient() async {

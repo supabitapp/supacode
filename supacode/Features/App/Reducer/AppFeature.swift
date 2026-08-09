@@ -947,7 +947,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.performBindingAction(worktree, action: direction.ghosttyBinding))
+          await terminalClient.send(.splitFocusedPane(worktree, direction: direction))
         }
 
       case .toggleWindowModeForFocusedPane:
@@ -967,7 +967,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.performBindingAction(worktree, action: "toggle_split_zoom"))
+          await terminalClient.send(.toggleSplitZoom(worktree))
         }
 
       case .equalizeSplits:
@@ -977,7 +977,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.performBindingAction(worktree, action: "equalize_splits"))
+          await terminalClient.send(.equalizeSplits(worktree))
         }
 
       case .focusSplit(let direction):
@@ -987,7 +987,7 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.performBindingAction(worktree, action: direction.gotoSplitBinding))
+          await terminalClient.send(.focusSplit(worktree, direction: direction))
         }
 
       case .jumpToLatestUnread:
@@ -1522,6 +1522,26 @@ struct AppFeature {
 
       case .commandPalette(.delegate(.toggleWindowMode)):
         return .send(.toggleWindowModeForFocusedPane)
+
+      case .commandPalette(.delegate(.layoutCommand(let command))):
+        switch command {
+        case .newTerminalTab:
+          return .send(.newTerminal)
+        case .closeTab:
+          return .send(.closeTab)
+        case .splitRight:
+          return .send(.splitTerminal(.right))
+        case .splitLeft:
+          return .send(.splitTerminal(.left))
+        case .splitDown:
+          return .send(.splitTerminal(.down))
+        case .splitUp:
+          return .send(.splitTerminal(.up))
+        case .toggleSplitZoom:
+          return .send(.toggleSplitZoom)
+        case .equalizeSplits:
+          return .send(.equalizeSplits)
+        }
 
       case .commandPalette(.delegate(.checkForUpdates)):
         return .send(.updates(.checkForUpdates))

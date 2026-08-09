@@ -27,3 +27,17 @@ struct GhosttyCommand: Equatable, Sendable {
     )
   }
 }
+
+extension GhosttyCommand {
+  private static let topologyActionPrefixes = [
+    "new_tab", "close_tab", "goto_tab", "move_tab",
+    "new_split", "goto_split", "resize_split", "equalize_splits", "toggle_split_zoom",
+    "new_window", "close_window", "close_all_windows", "toggle_tab_overview",
+  ]
+
+  /// Whether the command would drive layout topology; the app owns those
+  /// commands, and the conduit ignores their surface-emitted actions.
+  var isTopologyCommand: Bool {
+    Self.topologyActionPrefixes.contains { action == $0 || action.hasPrefix($0 + ":") }
+  }
+}

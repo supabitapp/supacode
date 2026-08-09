@@ -1,6 +1,9 @@
 import AppKit
 import Foundation
 import GhosttyKit
+import SupacodeSettingsShared
+
+private nonisolated let conduitLogger = SupaLogger("LayoutConduit")
 
 /// Wires a freshly built terminal surface's callbacks: topology requests
 /// route into the worktree's `LayoutFeature` as content-addressed actions,
@@ -28,46 +31,26 @@ struct LayoutSurfaceConduit {
     host.liveSurface(view.id) === view
   }
 
+  /// Consumes a surface-emitted topology action without acting on it.
+  private static func ignoreTopologyAction(_ name: String) -> Bool {
+    conduitLogger.debug("Ignored Ghostty topology action \(name).")
+    return true
+  }
+
   private func wireTopologyCallbacks(_ view: GhosttySurfaceView, contentID: ContentID, surfaceID: UUID) {
     let host = host
     view.bridge.onTitleChange = { [weak view] title in
       guard let view, isLive(view) else { return }
       host.sendLayoutAction(.runtime(.titleChanged(id: contentID, title: title)))
     }
-    view.bridge.onNewTab = { [weak view] in
-      guard let view, isLive(view) else { return false }
-      host.sendLayoutAction(.contentRequestedNewTab(content: contentID))
-      return true
-    }
-    view.bridge.onCloseTab = { [weak view] mode in
-      guard let view, isLive(view) else { return false }
-      // Ghostty's palette / keybind close-tab carries the scope; honor each so
-      // "close others" / "close to the right" route through confirmation too.
-      let scope: LayoutFeature.CloseScope =
-        switch mode {
-        case GHOSTTY_ACTION_CLOSE_TAB_MODE_OTHER: .otherTabs
-        case GHOSTTY_ACTION_CLOSE_TAB_MODE_RIGHT: .tabsToTheRight
-        default: .tab
-        }
-      host.sendLayoutAction(.contentRequestedClose(content: contentID, scope: scope))
-      return true
-    }
-    view.bridge.onSplitAction = { [weak view] action in
-      guard let view, isLive(view) else { return false }
-      host.sendLayoutAction(Self.layoutAction(for: action, content: contentID))
-      return true
-    }
-    view.bridge.onGotoTab = { [weak view] target in
-      guard let view, isLive(view) else { return false }
-      guard let tabTarget = Self.tabTarget(target) else { return false }
-      host.sendLayoutAction(.contentRequestedGotoTab(content: contentID, target: tabTarget))
-      return true
-    }
-    view.bridge.onMoveTab = { [weak view] move in
-      guard let view, isLive(view) else { return false }
-      host.sendLayoutAction(.contentRequestedMoveTab(content: contentID, amount: Int(move.amount)))
-      return true
-    }
+    // Layout topology belongs to the app's own chords, menus, and palette;
+    // a Ghostty keybind for it is consumed and ignored so the terminal can
+    // never drive the layout.
+    view.bridge.onNewTab = { Self.ignoreTopologyAction("new_tab") }
+    view.bridge.onCloseTab = { _ in Self.ignoreTopologyAction("close_tab") }
+    view.bridge.onSplitAction = { _ in Self.ignoreTopologyAction("split") }
+    view.bridge.onGotoTab = { _ in Self.ignoreTopologyAction("goto_tab") }
+    view.bridge.onMoveTab = { _ in Self.ignoreTopologyAction("move_tab") }
     view.bridge.onCommandPaletteToggle = { [weak view] in
       guard let view, isLive(view) else { return false }
       host.onCommandPaletteToggle?()
@@ -156,73 +139,5 @@ struct LayoutSurfaceConduit {
       return
     }
     host.sendLayoutAction(.contentRequestedClose(content: contentID, scope: .tab))
-  }
-
-  // MARK: - Ghostty mappings.
-
-  private static func layoutAction(
-    for action: GhosttySplitAction,
-    content contentID: ContentID
-  ) -> LayoutFeature.Action {
-    switch action {
-    case .newSplit(let direction):
-      .contentRequestedSplit(content: contentID, direction: newDirection(direction))
-    case .gotoSplit(let direction):
-      .contentRequestedFocusSplit(content: contentID, direction: focusDirection(direction))
-    case .resizeSplit(let direction, let amount):
-      .contentRequestedResize(content: contentID, direction: spatialDirection(direction), amount: amount)
-    case .equalizeSplits:
-      .equalizePanes
-    case .toggleSplitZoom:
-      .contentRequestedToggleZoom(content: contentID)
-    }
-  }
-
-  private static func newDirection(
-    _ direction: GhosttySplitAction.NewDirection
-  ) -> SplitTree<PaneID>.NewDirection {
-    switch direction {
-    case .left: .left
-    case .right: .right
-    case .top: .top
-    case .down: .down
-    }
-  }
-
-  private static func focusDirection(
-    _ direction: GhosttySplitAction.FocusDirection
-  ) -> SplitTree<PaneID>.FocusDirection {
-    switch direction {
-    case .previous: .previous
-    case .next: .next
-    case .left: .spatial(.left)
-    case .right: .spatial(.right)
-    case .top: .spatial(.top)
-    case .down: .spatial(.down)
-    }
-  }
-
-  private static func spatialDirection(
-    _ direction: GhosttySplitAction.ResizeDirection
-  ) -> SplitTree<PaneID>.SpatialDirection {
-    switch direction {
-    case .left: .left
-    case .right: .right
-    case .top: .top
-    case .down: .down
-    }
-  }
-
-  private static func tabTarget(_ target: ghostty_action_goto_tab_e) -> LayoutFeature.TabTarget? {
-    let raw = Int(target.rawValue)
-    if raw > 0 {
-      return .position(raw)
-    }
-    switch raw {
-    case Int(GHOSTTY_GOTO_TAB_PREVIOUS.rawValue): return .previous
-    case Int(GHOSTTY_GOTO_TAB_NEXT.rawValue): return .next
-    case Int(GHOSTTY_GOTO_TAB_LAST.rawValue): return .last
-    default: return nil
-    }
   }
 }

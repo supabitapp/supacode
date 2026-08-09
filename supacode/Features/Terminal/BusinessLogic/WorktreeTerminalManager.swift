@@ -459,7 +459,8 @@ final class WorktreeTerminalManager {
       .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .focusSurface, .splitSurface,
       .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .removeWorktreeLayout,
       .setNotificationsEnabled, .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
-      .setTerminalHibernationEnabled, .toggleWindowModeForFocusedPane:
+      .setTerminalHibernationEnabled, .toggleWindowModeForFocusedPane,
+      .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits:
       return false
     }
     return true
@@ -467,6 +468,18 @@ final class WorktreeTerminalManager {
 
   private func handleBindingActionCommand(_ command: TerminalClient.Command) -> Bool {
     switch command {
+    case .splitFocusedPane(let worktree, let direction):
+      sendFocusedContentLayoutAction(worktree.id) {
+        .contentRequestedSplit(content: $0, direction: direction.newSplitDirection)
+      }
+    case .focusSplit(let worktree, let direction):
+      sendFocusedContentLayoutAction(worktree.id) {
+        .contentRequestedFocusSplit(content: $0, direction: direction.focusSplitDirection)
+      }
+    case .toggleSplitZoom(let worktree):
+      sendFocusedContentLayoutAction(worktree.id) { .contentRequestedToggleZoom(content: $0) }
+    case .equalizeSplits(let worktree):
+      sendLayout(worktree.id, .equalizePanes)
     case .performBindingAction(let worktree, let action):
       host(for: worktree).performBindingActionOnFocusedSurface(action)
     case .performBindingActionOnSurface(let worktree, let surfaceID, let action):
@@ -478,7 +491,8 @@ final class WorktreeTerminalManager {
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex,
       .focusSurface, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .removeWorktreeLayout,
       .setNotificationsEnabled, .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
-      .setTerminalHibernationEnabled, .toggleWindowModeForFocusedPane:
+      .setTerminalHibernationEnabled, .toggleWindowModeForFocusedPane,
+      .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits:
       return false
     }
     return true
@@ -527,7 +541,8 @@ final class WorktreeTerminalManager {
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex, .focusSurface,
-      .splitSurface, .destroyTab, .destroySurface, .renameTab, .beginTabRename:
+      .splitSurface, .destroyTab, .destroySurface, .renameTab, .beginTabRename,
+      .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits:
       assertionFailure("Unhandled terminal command reached management handler: \(command)")
     }
   }
@@ -617,6 +632,19 @@ final class WorktreeTerminalManager {
   /// Routes an action into the worktree's `LayoutFeature`.
   func sendLayout(_ worktreeID: Worktree.ID, _ action: LayoutFeature.Action) {
     appStore?.send(.terminals(.layouts(.element(id: worktreeID, action: action))))
+  }
+
+  /// Routes a layout action targeting the focused pane's selected content.
+  private func sendFocusedContentLayoutAction(
+    _ worktreeID: Worktree.ID,
+    _ action: (ContentID) -> LayoutFeature.Action
+  ) {
+    guard
+      let layout = layoutState(for: worktreeID)?.layout,
+      let contentID = layout.focusedPaneID
+        .flatMap({ layout.panes[id: $0]?.selectedTab?.content.id })
+    else { return }
+    sendLayout(worktreeID, action(contentID))
   }
 
   private func sendTerminals(_ action: TerminalsFeature.Action) {

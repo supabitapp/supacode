@@ -30,12 +30,23 @@ enum TerminalSplitMenuDirection: Equatable, Sendable, CaseIterable {
   case down
   case up
 
-  var ghosttyBinding: String {
+  /// The split-tree insertion direction for this menu direction.
+  var newSplitDirection: SplitTree<PaneID>.NewDirection {
     switch self {
-    case .right: "new_split:right"
-    case .left: "new_split:left"
-    case .down: "new_split:down"
-    case .up: "new_split:up"
+    case .right: .right
+    case .left: .left
+    case .down: .down
+    case .up: .top
+    }
+  }
+
+  /// The spatial focus direction for this menu direction.
+  var focusSplitDirection: SplitTree<PaneID>.FocusDirection {
+    switch self {
+    case .right: .spatial(.right)
+    case .left: .spatial(.left)
+    case .down: .spatial(.down)
+    case .up: .spatial(.top)
     }
   }
 
@@ -84,16 +95,6 @@ enum TerminalSplitMenuDirection: Equatable, Sendable, CaseIterable {
     case .left: "Focus Split Left"
     case .down: "Focus Split Down"
     case .up: "Focus Split Up"
-    }
-  }
-
-  /// Ghostty's `goto_split` argument for this direction.
-  var gotoSplitBinding: String {
-    switch self {
-    case .right: "goto_split:right"
-    case .left: "goto_split:left"
-    case .down: "goto_split:bottom"
-    case .up: "goto_split:top"
     }
   }
 

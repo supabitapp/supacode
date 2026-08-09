@@ -188,6 +188,11 @@ final class PaneWindowManager {
       controllers.removeValue(forKey: key)
       controller.tearDown()
     }
+    // With no windows left the cascade restarts from center, or repeated
+    // window-mode round trips would drift every new window down-right.
+    if controllers.isEmpty {
+      cascadePoint = .zero
+    }
   }
 
   func orderFront(worktreeID: Worktree.ID, paneID: PaneID) {
