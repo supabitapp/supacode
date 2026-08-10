@@ -3217,19 +3217,8 @@ struct RepositoriesFeature {
         return .send(.loadPersistedRepositories)
 
       case .sidebarGroupingTogglesChanged:
-        // The post-reduce hook below picks up the toggle state and rebuilds.
-        // Auto-dismiss the highlight onboarding card when both toggles end up
-        // off; the `SidebarCommands` menu setters fire the same dismiss so
-        // toggling while the sidebar column is collapsed is also covered.
-        @Shared(.sidebarGroupPinnedRows) var groupPinned
-        @Shared(.sidebarGroupActiveRows) var groupActive
-        if !groupPinned, !groupActive {
-          @Shared(.appStorage("highlightRelevantOnboardingDismissedAt"))
-          var dismissedAt: Date = .distantPast
-          if !HighlightRelevantOnboardingCardView.isDismissed(at: dismissedAt) {
-            $dismissedAt.withLock { $0 = now }
-          }
-        }
+        // No-op handler: the post-reduce hook reads the grouping toggles and
+        // rebuilds `sidebarStructure`.
         return .none
 
       case .sidebarNestByBranchChanged:
