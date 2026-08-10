@@ -97,6 +97,45 @@ struct WorktreeEnvironmentTests {
     )
   }
 
+  @Test func commandInputTerminatesSoTheCommandAutoSubmits() {
+    // Without the terminator the command reaches the pty via initial_input and just sits at the prompt.
+    #expect(BlockingScriptRunner.makeCommandInput(script: "echo hi") == "echo hi\n")
+  }
+
+  @Test func commandInputTrimsSurroundingWhitespaceBeforeTerminating() {
+    #expect(BlockingScriptRunner.makeCommandInput(script: "  echo hi \n") == "echo hi\n")
+  }
+
+  @Test func commandInputReturnsNilForWhitespaceOnlyScripts() {
+    #expect(BlockingScriptRunner.makeCommandInput(script: " \n\t ") == nil)
+  }
+
+  @Test func combinedInitialInputTerminatesACommandOnlyTab() {
+    // #786 regressed tab-new -i by joining the command raw; it must be terminated to auto-submit.
+    #expect(
+      BlockingScriptRunner.combinedInitialInput(setupInput: nil, command: "echo hi") == "echo hi\n"
+    )
+  }
+
+  @Test func combinedInitialInputAppendsTheCommandAfterTheSetupScript() {
+    #expect(
+      BlockingScriptRunner.combinedInitialInput(setupInput: "make setup\n", command: "echo hi")
+        == "make setup\necho hi\n"
+    )
+  }
+
+  @Test func combinedInitialInputPassesThroughASetupScriptWithNoCommand() {
+    #expect(
+      BlockingScriptRunner.combinedInitialInput(setupInput: "make setup\n", command: nil)
+        == "make setup\n"
+    )
+  }
+
+  @Test func combinedInitialInputReturnsNilWhenNothingToRun() {
+    #expect(BlockingScriptRunner.combinedInitialInput(setupInput: nil, command: "  ") == nil)
+    #expect(BlockingScriptRunner.combinedInitialInput(setupInput: nil, command: nil) == nil)
+  }
+
   @Test func userScriptSurfaceEnvironmentCarriesIDKindAndScope() {
     let definition = ScriptDefinition(id: UUID(), kind: .test, name: "Unit", command: "make test")
     let env = BlockingScriptKind.script(definition).surfaceEnvironmentVariables(scope: .repo)

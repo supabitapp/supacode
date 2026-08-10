@@ -891,9 +891,9 @@ final class WorktreeTerminalManager {
       return
     }
     let setupInput = consumeSetupScriptInput(for: worktree, host: host)
-    let combinedInput = [setupInput, initialInput].compactMap { $0 }.joined()
-    let launch: LaunchOverride? =
-      combinedInput.isEmpty ? nil : LaunchOverride(initialInput: combinedInput)
+    // Route the user command through the terminator too; #786 joined it raw, so it sat unterminated at the prompt.
+    let combinedInput = BlockingScriptRunner.combinedInitialInput(setupInput: setupInput, command: initialInput)
+    let launch: LaunchOverride? = combinedInput.map { LaunchOverride(initialInput: $0) }
     // A pane-addressed create anchors on the resolved pane (a pane id, or a tab
     // or content it hosts) and inherits its selected content; otherwise the
     // focused pane and surface anchor as before.
