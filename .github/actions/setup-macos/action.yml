@@ -68,7 +68,7 @@ runs:
       uses: actions/cache@v5
       with:
         path: .build/zmx
-        key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.XCODE_VERSION }}-zmx-v1-${{ env.ZMX_SHA }}-${{ hashFiles('scripts/build-zmx.sh', 'mise.toml', '.gitmodules') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.XCODE_VERSION }}-zmx-v1-${{ env.ZMX_SHA }}-${{ hashFiles('scripts/build-zmx.sh', 'mise.toml', '.gitmodules', 'patches/zmx/*.patch') }}
     - name: Build zmx
       if: steps.zmx_cache.outputs.cache-hit != 'true'
       shell: bash

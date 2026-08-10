@@ -1,0 +1,316 @@
+diff --git a/src/main.zig b/src/main.zig
+index 89abdbc..33b1330 100644
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -590,6 +590,7 @@ const Daemon = struct {
+     has_pty_output: bool = false,
+     has_had_client: bool = false,
+     has_terminal_client: bool = false, // true only after a real attach (.Init received)
++    cursor_tracker: util.CursorShapeTracker = .{}, // last DECSCUSR, replayed on reattach.
+     created_at: u64, // unix timestamp (ns)
+     is_task_mode: bool = false, // flag for when session is run as a task
+     task_exit_code: ?u8 = null, // null = running or n/a, set when task completes
+@@ -950,6 +951,20 @@ const Daemon = struct {
+                 "cursor before serialize: x={d} y={d} pending_wrap={}",
+                 .{ cursor.x, cursor.y, cursor.pending_wrap },
+             );
++            // Replay the last DECSCUSR shape before the serialized state: the
++            // formatter never emits the shape, and sending it first lets the
++            // serialized mode 12 win so an independently changed blink survives.
++            // Per-screen shape is not tracked, so an alt-screen shape can linger.
++            if (self.cursor_tracker.sequence()) |cursor_seq| {
++                ipc.appendMessage(self.alloc, &client.write_buf, .Output, cursor_seq) catch |err| {
++                    std.log.warn(
++                        "failed to buffer cursor shape for client err={s}",
++                        .{@errorName(err)},
++                    );
++                };
++                client.has_pending_output = true;
++            }
++
+             if (util.serializeTerminalState(self.alloc, term)) |term_output| {
+                 std.log.debug("serialize terminal state", .{});
+                 // Rewrite OSC 133;A to include redraw=0 so the outer terminal
+@@ -1169,6 +1184,7 @@ const Daemon = struct {
+     ) !void {
+         const state_payload = try osc8_stripper.strip(self.alloc, payload);
+         vt_stream.nextSlice(state_payload);
++        self.cursor_tracker.track(payload);
+         self.has_pty_output = true;
+         for (self.clients.items) |client| {
+             try ipc.appendMessage(self.alloc, &client.write_buf, .Output, payload);
+@@ -2591,6 +2607,7 @@ fn daemonLoop(daemon: *Daemon, server_sock_fd: i32, pty_fd: i32) !void {
+                 } else {
+                     const state_payload = try osc8_stripper.strip(daemon.alloc, buf[0..n]);
+                     vt_stream.nextSlice(state_payload);
++                    daemon.cursor_tracker.track(buf[0..n]);
+                     daemon.has_pty_output = true;
+ 
+                     // When no real terminal client has attached yet, respond to
+diff --git a/src/util.zig b/src/util.zig
+index 1ead461..01d17c6 100644
+--- a/src/util.zig
++++ b/src/util.zig
+@@ -94,6 +94,120 @@ pub const Osc8Stripper = struct {
+     }
+ };
+ 
++/// Captures the most recent DECSCUSR (`CSI Ps SP q`) cursor shape from the PTY
++/// stream and replays it on reattach, since the ghostty-vt formatter restores
++/// SGR style and modes but never the cursor shape. The literal bytes are kept
++/// (parsed state can't tell an explicit steady block from the default) and
++/// cleared on a hard reset (RIS or DECSTR). Allocation-free; fixed buffer.
++pub const CursorShapeTracker = struct {
++    state: State = .ground,
++    body: [max_body]u8 = undefined,
++    body_len: usize = 0,
++    overflow: bool = false,
++    captured: [max_seq]u8 = undefined,
++    captured_len: usize = 0,
++
++    // A DECSCUSR body is a short numeric parameter plus one space intermediate.
++    const max_body = 16;
++    // `\x1b[` + body + final byte.
++    const max_seq = max_body + 3;
++
++    const State = enum { ground, esc, csi };
++
++    /// The replay sequence for the current cursor shape, or null if none seen.
++    /// Borrowed from internal storage: invalid after the next `track()`, so copy
++    /// it before tracking more input.
++    pub fn sequence(self: *const CursorShapeTracker) ?[]const u8 {
++        if (self.captured_len == 0) return null;
++        return self.captured[0..self.captured_len];
++    }
++
++    pub fn track(self: *CursorShapeTracker, input: []const u8) void {
++        // Fast path: nothing to parse while idle and free of an ESC. Only the
++        // 7-bit `ESC [` introducer is honored; the 8-bit C1 CSI (0x9b) is a UTF-8
++        // continuation byte, so treating it as a control would mis-parse text.
++        if (self.state == .ground and std.mem.indexOfScalar(u8, input, 0x1b) == null) {
++            return;
++        }
++        for (input) |byte| self.step(byte);
++    }
++
++    fn step(self: *CursorShapeTracker, byte: u8) void {
++        switch (self.state) {
++            .ground => switch (byte) {
++                0x1b => self.state = .esc,
++                else => {},
++            },
++            .esc => switch (byte) {
++                '[' => self.beginCsi(),
++                'c' => self.reset(), // RIS resets the cursor to the terminal default.
++                0x1b => {}, // ESC ESC: stay armed on the trailing ESC.
++                else => self.state = .ground,
++            },
++            .csi => self.stepCsi(byte),
++        }
++    }
++
++    fn beginCsi(self: *CursorShapeTracker) void {
++        self.body_len = 0;
++        self.overflow = false;
++        self.state = .csi;
++    }
++
++    fn reset(self: *CursorShapeTracker) void {
++        self.captured_len = 0;
++        self.state = .ground;
++    }
++
++    fn stepCsi(self: *CursorShapeTracker, byte: u8) void {
++        // Parameter (0x30-0x3f) and intermediate (0x20-0x2f) bytes form the body.
++        if (byte >= 0x20 and byte <= 0x3f) {
++            if (self.body_len < max_body) {
++                self.body[self.body_len] = byte;
++                self.body_len += 1;
++            } else {
++                self.overflow = true;
++            }
++            return;
++        }
++        // A final byte (0x40-0x7e) terminates the sequence.
++        if (byte >= 0x40 and byte <= 0x7e) {
++            if (!self.overflow) self.finishCsi(byte);
++            self.state = .ground;
++            return;
++        }
++        // Any other byte aborts; a fresh ESC re-arms the parser.
++        self.state = if (byte == 0x1b) .esc else .ground;
++    }
++
++    fn finishCsi(self: *CursorShapeTracker, final: u8) void {
++        const body = self.body[0..self.body_len];
++        // DECSTR (`CSI ! p`) resets the terminal, including the cursor shape.
++        if (final == 'p' and body.len == 1 and body[0] == '!') {
++            self.captured_len = 0;
++            return;
++        }
++        // DECSCUSR (`CSI Ps SP q`) takes 0 or 1 numeric parameter with value 0-6
++        // then one space. Validate numerically (matching ghostty-vt, which accepts
++        // leading zeros like `05`) so a stray ` q`, DECSCA `"q`, multi-param, or
++        // out-of-range final can't overwrite a valid capture.
++        if (final != 'q') return;
++        if (body.len == 0 or body[body.len - 1] != ' ') return;
++        var value: u16 = 0;
++        for (body[0 .. body.len - 1]) |c| {
++            if (c < '0' or c > '9') return; // non-digit, e.g. `;` multi-param or `"`.
++            value = value * 10 + (c - '0');
++            if (value > 6) return; // out of the DECSCUSR range.
++        }
++        // Build the replay in the canonical `\x1b[` form.
++        self.captured[0] = 0x1b;
++        self.captured[1] = '[';
++        @memcpy(self.captured[2 .. 2 + body.len], body);
++        self.captured[2 + body.len] = 'q';
++        self.captured_len = 2 + body.len + 1;
++    }
++};
++
+ pub const SessionEntry = struct {
+     name: []const u8,
+     pid: ?i32,
+@@ -613,6 +727,9 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
+     if (had_synchronized_output) {
+         term.modes.set(.synchronized_output, false);
+     }
++    // Restore on every exit path, including the early returns below that would
++    // otherwise leave the daemon terminal permanently desynchronized.
++    defer if (had_synchronized_output) term.modes.set(.synchronized_output, true);
+ 
+     const pages = &term.screens.active.pages;
+     const screen_top = pages.getTopLeft(.screen);
+@@ -698,11 +815,6 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
+     const output = builder.writer.buffered();
+     if (output.len == 0) return null;
+ 
+-    // Restore the original synchronized_output mode before returning
+-    if (had_synchronized_output) {
+-        term.modes.set(.synchronized_output, true);
+-    }
+-
+     return alloc.dupe(u8, output) catch |err| {
+         std.log.warn("failed to allocate terminal state err={s}", .{@errorName(err)});
+         return null;
+@@ -1147,6 +1259,119 @@ fn expectStripped(chunks: []const []const u8, expected: []const u8) !void {
+     try testing.expectEqualStrings(expected, actual.items);
+ }
+ 
++test "CursorShapeTracker captures the last DECSCUSR" {
++    var tracker = CursorShapeTracker{};
++    tracker.track("\x1b[5 q"); // blinking bar
++    try testing.expectEqualStrings("\x1b[5 q", tracker.sequence().?);
++    tracker.track("text \x1b[4 q more"); // steady underline wins
++    try testing.expectEqualStrings("\x1b[4 q", tracker.sequence().?);
++}
++
++test "CursorShapeTracker reassembles a split DECSCUSR" {
++    var tracker = CursorShapeTracker{};
++    tracker.track("\x1b[6"); // steady bar, split mid-sequence
++    tracker.track(" q");
++    try testing.expectEqualStrings("\x1b[6 q", tracker.sequence().?);
++}
++
++test "CursorShapeTracker captures a default-reset DECSCUSR" {
++    var tracker = CursorShapeTracker{};
++    tracker.track("\x1b[0 q"); // reset the cursor to the terminal default
++    try testing.expectEqualStrings("\x1b[0 q", tracker.sequence().?);
++}
++
++test "CursorShapeTracker accepts a zero-padded parameter" {
++    var tracker = CursorShapeTracker{};
++    tracker.track("\x1b[05 q"); // ghostty parses 05 as style 5 (blinking bar)
++    try testing.expectEqualStrings("\x1b[05 q", tracker.sequence().?);
++}
++
++test "CursorShapeTracker ignores non-DECSCUSR sequences" {
++    var tracker = CursorShapeTracker{};
++    tracker.track("\x1b[0m\x1b[1\"q\x1b[2J"); // SGR reset, DECSCA, erase
++    try testing.expect(tracker.sequence() == null);
++    tracker.track("\x1b[42 q\x1b[5;3 q"); // out-of-range and multi-param are rejected
++    try testing.expect(tracker.sequence() == null);
++}
++
++test "CursorShapeTracker keeps its capture across later escapes and text" {
++    var tracker = CursorShapeTracker{};
++    tracker.track("\x1b[5 q");
++    // Unrelated escapes arriving after the capture must not disturb it.
++    tracker.track("\x1b[0m\x1b[2J\x1b[1\"q\x1b[10;5H"); // SGR, erase, DECSCA, CUP
++    try testing.expectEqualStrings("\x1b[5 q", tracker.sequence().?);
++    // Plain output takes the ground-state fast path and must not disturb it either.
++    tracker.track("a line of ordinary text with no escapes\n");
++    try testing.expectEqualStrings("\x1b[5 q", tracker.sequence().?);
++}
++
++test "CursorShapeTracker overflow drops the runt without wiping a capture" {
++    var tracker = CursorShapeTracker{};
++    tracker.track("\x1b[5 q");
++    // A parameter body longer than the buffer overflows and is discarded.
++    tracker.track("\x1b[00000000000000000 q");
++    try testing.expectEqualStrings("\x1b[5 q", tracker.sequence().?);
++
++    var fresh = CursorShapeTracker{};
++    fresh.track("\x1b[00000000000000000 q");
++    try testing.expect(fresh.sequence() == null);
++}
++
++test "CursorShapeTracker clears on RIS and DECSTR" {
++    var tracker = CursorShapeTracker{};
++    tracker.track("\x1b[5 q");
++    try testing.expect(tracker.sequence() != null);
++    tracker.track("\x1bc"); // RIS
++    try testing.expect(tracker.sequence() == null);
++
++    tracker.track("\x1b[5 q");
++    try testing.expect(tracker.sequence() != null);
++    tracker.track("\x1b[!p"); // DECSTR
++    try testing.expect(tracker.sequence() == null);
++}
++
++test "CursorShapeTracker replay restores the shape in a fresh terminal" {
++    const alloc = testing.allocator;
++
++    // DECSCUSR 5 selects a blinking bar cursor.
++    var tracker = CursorShapeTracker{};
++    tracker.track("\x1b[5 q");
++
++    var client = try ghostty_vt.Terminal.init(alloc, .{
++        .cols = 80,
++        .rows = 24,
++        .max_scrollback = 0,
++    });
++    defer client.deinit(alloc);
++    var stream = client.vtStream();
++    defer stream.deinit();
++    stream.nextSlice(tracker.sequence().?);
++
++    try testing.expect(client.screens.active.cursor.cursor_style == .bar);
++    try testing.expect(client.modes.get(.cursor_blinking));
++}
++
++test "CursorShapeTracker replay restores a steady shape with blink off" {
++    const alloc = testing.allocator;
++
++    // DECSCUSR 2 selects a steady block cursor (blink off).
++    var tracker = CursorShapeTracker{};
++    tracker.track("\x1b[2 q");
++
++    var client = try ghostty_vt.Terminal.init(alloc, .{
++        .cols = 80,
++        .rows = 24,
++        .max_scrollback = 0,
++    });
++    defer client.deinit(alloc);
++    var stream = client.vtStream();
++    defer stream.deinit();
++    stream.nextSlice(tracker.sequence().?);
++
++    try testing.expect(client.screens.active.cursor.cursor_style == .block);
++    try testing.expect(!client.modes.get(.cursor_blinking));
++}
++
+ fn testCreateTerminal(alloc: std.mem.Allocator, cols: u16, rows: u16, vt_data: []const u8) !ghostty_vt.Terminal {
+     var term = try ghostty_vt.Terminal.init(alloc, .{
+         .cols = cols,
