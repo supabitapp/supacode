@@ -15,7 +15,16 @@ enum BlockingScriptRunner {
   static func makeCommandInput(script: String) -> String? {
     let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
+    // Terminate so the command auto-submits as ghostty initial_input; unterminated, it just sits at the prompt.
     return trimmed + "\n"
+  }
+
+  /// Combines an already-terminated setup-script input with a raw user command
+  /// into a tab's initial input, terminating the command so it auto-submits.
+  static func combinedInitialInput(setupInput: String?, command: String?) -> String? {
+    let userInput = command.flatMap { makeCommandInput(script: $0) }
+    let combined = [setupInput, userInput].compactMap { $0 }.joined()
+    return combined.isEmpty ? nil : combined
   }
 
   static func makeLaunch(
