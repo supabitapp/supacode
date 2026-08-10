@@ -476,6 +476,7 @@ struct RepositoriesFeature {
     case archiveWorktreeConfirmed(Worktree.ID, Repository.ID, background: Bool = false)
     case archiveScriptCompleted(worktreeID: Worktree.ID, exitCode: Int?, tabId: TerminalTabID?)
     case archiveWorktreeApply(Worktree.ID, Repository.ID)
+    case archiveWorktreeCommit(Worktree.ID, Repository.ID)
     case archiveWorktreeApplied(Worktree.ID)
     case archiveWorktreeApplyFailed(Worktree.ID)
     case unarchiveWorktree(Worktree.ID)
@@ -940,6 +941,14 @@ struct RepositoriesFeature {
         }
 
       case .archiveWorktreeApply(let worktreeID, let repositoryID):
+        // Deliver the commit from a Task so the teardown never runs on a
+        // synchronous UI send: the departing surface's isolated deinit, freed
+        // inside the still-live TCA task-local scope during the commit's
+        // `withAnimation` flush, aborts with an invalid free (issue #784). Keep
+        // this a pure forward; mutating here re-arms the crash.
+        return .run { send in await send(.archiveWorktreeCommit(worktreeID, repositoryID)) }
+
+      case .archiveWorktreeCommit(let worktreeID, let repositoryID):
         guard state.removingRepositoryIDs[repositoryID] == nil else {
           // Repo removal began while the archive ran; the archived end state would
           // vanish with it, so fail the ack instead of recording a false success.
@@ -949,7 +958,7 @@ struct RepositoriesFeature {
           let worktree = repository.worktrees[id: worktreeID]
         else {
           repositoriesLogger.warning(
-            "archiveWorktreeApply: worktree \(worktreeID) not found in repository \(repositoryID)"
+            "archiveWorktreeCommit: worktree \(worktreeID) not found in repository \(repositoryID)"
           )
           state.alert = messageAlert(
             title: "Archive failed",
@@ -4256,8 +4265,8 @@ struct RepositoriesFeature {
         return .send(.sidebarItems(.element(id: id, action: .focusTerminalConsumed)))
 
       case .requestArchiveWorktree, .requestArchiveWorktrees, .scriptCompleted, .archiveWorktreeConfirmed,
-        .archiveScriptCompleted, .archiveWorktreeApply, .archiveWorktreeApplied, .archiveWorktreeApplyFailed,
-        .unarchiveWorktree, .requestDeleteSidebarItems:
+        .archiveScriptCompleted, .archiveWorktreeApply, .archiveWorktreeCommit, .archiveWorktreeApplied,
+        .archiveWorktreeApplyFailed, .unarchiveWorktree, .requestDeleteSidebarItems:
         // Real handling lives in `worktreeRemovalReducer` (combined below) so `body` stays under the
         // type-checker's complexity limit; the `.alert(.presented(.confirm…))` arms there are matched
         // here by the trailing `.alert` catch-all returning `.none`.

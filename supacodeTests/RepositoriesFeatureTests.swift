@@ -3842,6 +3842,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.requestArchiveWorktree(featureWorktree.id, repository.id))
     await store.receive(\.archiveWorktreeApply)
+    await store.receive(\.archiveWorktreeCommit)
     #expect(
       store.state.sidebar.sections[repository.id]?
         .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
@@ -4166,6 +4167,7 @@ struct RepositoriesFeatureTests {
 
     await store.send(.archiveScriptCompleted(worktreeID: featureWorktree.id, exitCode: 0, tabId: nil))
     await store.receive(\.archiveWorktreeApply)
+    await store.receive(\.archiveWorktreeCommit)
     #expect(
       store.state.sidebar.sections[repository.id]?
         .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
@@ -4222,6 +4224,7 @@ struct RepositoriesFeatureTests {
     store.exhaustivity = .off
 
     await store.send(.archiveWorktreeApply(featureWorktree.id, repository.id))
+    await store.receive(\.archiveWorktreeCommit)
     await store.receive(\.archiveWorktreeApplied)
     #expect(store.state.archivedWorktreeIDs.contains(featureWorktree.id))
   }
@@ -4238,6 +4241,7 @@ struct RepositoriesFeatureTests {
     store.exhaustivity = .off
 
     await store.send(.archiveWorktreeApply(WorktreeID("\(repoRoot)/gone"), repository.id))
+    await store.receive(\.archiveWorktreeCommit)
     await store.receive(\.archiveWorktreeApplyFailed)
     #expect(store.state.alert != nil)
   }
@@ -4427,6 +4431,78 @@ struct RepositoriesFeatureTests {
 
     await store.send(.archiveWorktreeConfirmed(featureWorktree.id, repository.id))
     await store.receive(\.archiveWorktreeApply)
+    await store.receive(\.archiveWorktreeCommit)
+    #expect(
+      store.state.sidebar.sections[repository.id]?
+        .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
+    )
+  }
+
+  @Test(.dependencies) func archiveApplyDefersTeardownThroughCommit() async {
+    // Regression lock for #784: archiving the selected worktree must reach state
+    // through the deferred `archiveWorktreeCommit`, never inline in apply (see the
+    // reducer comment for the invalid free it prevents). Folding it back drops the
+    // commit action and fails the `receive` below. The TestStore can't reproduce
+    // the AppKit re-entrancy, so verify manually from the menu.
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.selection = .worktree(featureWorktree.id)
+    state.reconcileSidebarForTesting()
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+    // The archive chain rewrites derived sidebar caches, too noisy for exhaustive
+    // receive closures. Assert the action chain + end state instead.
+    store.exhaustivity = .off
+
+    // Apply carries the teardown only through the deferred commit action.
+    await store.send(.archiveWorktreeApply(featureWorktree.id, repository.id))
+    await store.receive(\.archiveWorktreeCommit)
+    await store.receive(\.archiveWorktreeApplied)
+
+    #expect(
+      store.state.sidebar.sections[repository.id]?
+        .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
+    )
+    #expect(store.state.sidebar.sections[repository.id]?.buckets[.unpinned]?.items[featureWorktree.id] == nil)
+    #expect(store.state.selection == .worktree(mainWorktree.id))
+  }
+
+  @Test(.dependencies) func archiveCommitOnAlreadyArchivedResolvesAsApplied() async {
+    // The commit re-validates after the async hop: a worktree already archived
+    // in the gap resolves the ack as success without a second re-bucket.
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    let fixedDate = Date(timeIntervalSince1970: 1_000_000)
+    state.$sidebar.withLock { sidebar in
+      sidebar.archive(worktree: featureWorktree.id, in: repository.id, from: .unpinned, at: fixedDate)
+    }
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.dependencies.date = .constant(fixedDate)
+    store.exhaustivity = .off
+
+    await store.send(.archiveWorktreeApply(featureWorktree.id, repository.id))
+    await store.receive(\.archiveWorktreeCommit)
+    await store.receive(\.archiveWorktreeApplied)
     #expect(
       store.state.sidebar.sections[repository.id]?
         .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
@@ -5605,6 +5681,7 @@ struct RepositoriesFeatureTests {
       )
     )
     await store.receive(\.archiveWorktreeApply)
+    await store.receive(\.archiveWorktreeCommit)
     #expect(
       store.state.sidebar.sections[repository.id]?
         .buckets[.archived]?.items[featureWorktree.id]?.archivedAt == fixedDate
@@ -7843,6 +7920,7 @@ struct RepositoriesFeatureTests {
     store.exhaustivity = .off
 
     await store.send(.archiveWorktreeApply(featureWorktree.id, repository.id))
+    await store.receive(\.archiveWorktreeCommit)
     #expect(store.state.worktreeHistoryBackStack == [mainWorktree.id])
     #expect(store.state.worktreeHistoryForwardStack.isEmpty)
   }
