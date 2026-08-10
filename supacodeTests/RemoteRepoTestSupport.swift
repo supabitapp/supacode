@@ -42,6 +42,9 @@ extension RepositoriesFeature {
     repoID: Repository.ID,
     shell: ShellClient? = nil
   ) async -> (repository: Repository, failure: LoadFailure?) {
-    await loadRemoteRepository(host: config.host, remotePath: config.remotePath, repoID: repoID, shell: shell)
+    // No wall-clock bound: these tests assert resolution outcomes, and a real
+    // timeout races the (instant) stub under a saturated parallel runner.
+    await loadRemoteRepository(
+      host: config.host, remotePath: config.remotePath, repoID: repoID, shell: shell, timeout: nil)
   }
 }

@@ -68,152 +68,142 @@ struct SplitTreeTests {
     #expect(visibleLeaves.first === second)
   }
 
-  @Test func gotoSplitPreservesZoomWhenConfigured() throws {
-    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: true)
-    let first = fixture.first
-    let second = try #require(fixture.second)
-
-    #expect(fixture.state.performSplitAction(.toggleSplitZoom, for: first.id))
-    #expect(fixture.state.performSplitAction(.gotoSplit(direction: .next), for: first.id))
-
-    let visibleLeaves = fixture.state.splitTree(for: fixture.tabId).visibleLeaves()
-    #expect(visibleLeaves.count == 1)
-    #expect(visibleLeaves.first === second)
+  @Test func insertingADuplicateLeafThrows() throws {
+    let tree = try SplitTree(view: IDLeaf(id: 1))
+      .inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .right)
+    #expect(throws: SplitTree<IDLeaf>.SplitError.duplicateLeaf) {
+      try tree.inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .down)
+    }
   }
 
-  @Test func gotoSplitClearsZoomWhenNotConfigured() throws {
-    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
-    let first = fixture.first
+  @Test func codableRoundTripsLeafOnlyTree() throws {
+    let tree = SplitTree(view: IDLeaf(id: 1))
 
-    #expect(fixture.state.performSplitAction(.toggleSplitZoom, for: first.id))
-    #expect(fixture.state.performSplitAction(.gotoSplit(direction: .next), for: first.id))
+    let data = try JSONEncoder().encode(tree)
+    let decoded = try JSONDecoder().decode(SplitTree<IDLeaf>.self, from: data)
 
-    let visibleLeaves = fixture.state.splitTree(for: fixture.tabId).visibleLeaves()
-    #expect(visibleLeaves.count == 2)
+    #expect(decoded == tree)
   }
 
-  @Test func dismissSplitZoomClearsZoomedNodeAndFocusesPreviouslyZoomedSurface() throws {
-    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
-    let first = fixture.first
-    let second = try #require(fixture.second)
+  @Test func codableRoundTripsNestedSplitsWithRatios() throws {
+    let tree = try SplitTree(view: IDLeaf(id: 1))
+      .inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .right, ratio: 0.25)
+      .inserting(view: IDLeaf(id: 3), at: IDLeaf(id: 2), direction: .down, ratio: 0.75)
 
-    #expect(fixture.state.performSplitAction(.toggleSplitZoom, for: first.id))
-    #expect(fixture.state.isSplitZoomed(forTabID: fixture.tabId))
-    #expect(fixture.state.activeSurfaceID(for: fixture.tabId) == first.id)
+    let data = try JSONEncoder().encode(tree)
+    let decoded = try JSONDecoder().decode(SplitTree<IDLeaf>.self, from: data)
 
-    // Move focus to the other surface while zoomed so the dismiss path has
-    // something to override.
-    _ = fixture.state.focusSurface(id: second.id)
-    #expect(fixture.state.activeSurfaceID(for: fixture.tabId) == second.id)
-
-    fixture.state.dismissSplitZoom(for: fixture.tabId)
-    #expect(!fixture.state.isSplitZoomed(forTabID: fixture.tabId))
-    #expect(fixture.state.splitTree(for: fixture.tabId).visibleLeaves().count == 2)
-    #expect(fixture.state.activeSurfaceID(for: fixture.tabId) == first.id)
+    #expect(decoded == tree)
   }
 
-  @Test func dismissSplitZoomOnNonZoomedTabIsNoop() throws {
-    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
-    #expect(!fixture.state.isSplitZoomed(forTabID: fixture.tabId))
-
-    fixture.state.dismissSplitZoom(for: fixture.tabId)
-    #expect(!fixture.state.isSplitZoomed(forTabID: fixture.tabId))
+  @Test func parentSplitInfoReportsAxisAndSide() throws {
+    let leafA = IDLeaf(id: 1)
+    let leafB = IDLeaf(id: 2)
+    let tree = try SplitTree(view: leafA).inserting(view: leafB, at: leafA, direction: .right)
+    #expect(tree.parentSplitInfo(ofLeaf: leafA)?.axis == .horizontal)
+    #expect(tree.parentSplitInfo(ofLeaf: leafA)?.isLeadingChild == true)
+    #expect(tree.parentSplitInfo(ofLeaf: leafB)?.isLeadingChild == false)
+    // The root leaf shares no divider.
+    #expect(SplitTree(view: leafA).parentSplitInfo(ofLeaf: leafA) == nil)
   }
 
-  @Test func tabProjectionMirrorsSplitZoomedFlag() throws {
-    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
-    let first = fixture.first
-
-    var lastProjection: WorktreeTabProjection?
-    fixture.state.onTabProjectionChanged = { lastProjection = $0 }
-
-    #expect(fixture.state.performSplitAction(.toggleSplitZoom, for: first.id))
-    #expect(lastProjection?.isSplitZoomed == true)
-
-    fixture.state.dismissSplitZoom(for: fixture.tabId)
-    #expect(lastProjection?.isSplitZoomed == false)
+  @Test func insertingSpanningParentWrapsTheImmediateParentSplit() throws {
+    let leafA = IDLeaf(id: 1)
+    let leafB = IDLeaf(id: 2)
+    let leafC = IDLeaf(id: 3)
+    // A | B is a horizontal split; spanning C upward over A's divider must wrap
+    // the whole H(A,B) in a vertical split: V(C, H(A,B)).
+    let tree = try SplitTree(view: leafA).inserting(view: leafB, at: leafA, direction: .right)
+    let spanned = try tree.insertingSpanningParent(view: leafC, ofLeaf: leafA, direction: .top)
+    guard case .split(let outer) = spanned.root else {
+      Issue.record("expected a spanning outer split, got \(String(describing: spanned.root))")
+      return
+    }
+    #expect(outer.direction == .vertical)
+    #expect(outer.left == .leaf(view: leafC))
+    guard case .split(let inner) = outer.right else {
+      Issue.record("expected the wrapped H(A,B) split")
+      return
+    }
+    #expect(inner.direction == .horizontal)
+    #expect(inner.left == .leaf(view: leafA))
+    #expect(inner.right == .leaf(view: leafB))
   }
 
-  // Locks in that both the AppKit responder path (clicks -> onFocusChange)
-  // and the explicit focus path (goto_split / focusSurface) route through
-  // the same choke point and produce one focus-changed emission per real
-  // transition.
-  @Test func recordActiveSurfaceSymmetryAcrossClickAndGotoSplitPaths() throws {
-    let fixture = makeWorktreeFixture(preserveZoomOnNavigation: false)
-    let first = fixture.first
-    let second = try #require(fixture.second)
-    let state = fixture.state
-    let tabId = fixture.tabId
-
-    var emissions: [UUID] = []
-    state.onFocusChanged = { emissions.append($0) }
-
-    // Creating the split already focused `second`, but `onFocusChanged`
-    // wasn't wired yet; establish the baseline.
-    #expect(state.activeSurfaceID(for: tabId) == second.id)
-
-    // Simulates the AppKit responder path (a user clicking a pane).
-    first.onFocusChange?(true)
-    #expect(state.activeSurfaceID(for: tabId) == first.id)
-
-    // Same surface reported twice should dedup.
-    first.onFocusChange?(true)
-    #expect(state.activeSurfaceID(for: tabId) == first.id)
-
-    // Simulates the explicit focus path (keybinding / palette / goto_split).
-    #expect(state.performSplitAction(.gotoSplit(direction: .next), for: first.id))
-    #expect(state.activeSurfaceID(for: tabId) == second.id)
-
-    // Explicit-path idempotence: re-focusing the already-active surface
-    // must not re-emit.
-    #expect(state.focusSurface(id: second.id))
-    #expect(state.activeSurfaceID(for: tabId) == second.id)
-
-    // Focus loss (e.g. window resign) must not wipe the active pane or emit
-    // a stray focus-changed event — the overlay needs to remember the last
-    // active surface across window key transitions.
-    second.onFocusChange?(false)
-    #expect(state.activeSurfaceID(for: tabId) == second.id)
-
-    #expect(emissions == [first.id, second.id])
+  @Test func insertingSpanningParentPlacesTheNewLeafOnTheTrailingSide() throws {
+    let leafA = IDLeaf(id: 1)
+    let leafB = IDLeaf(id: 2)
+    let leafC = IDLeaf(id: 3)
+    // Spanning C rightward over A's divider wraps H(A,B) on the leading side and
+    // puts C on the trailing side: H(H(A,B), C).
+    let tree = try SplitTree(view: leafA).inserting(view: leafB, at: leafA, direction: .right)
+    let spanned = try tree.insertingSpanningParent(view: leafC, ofLeaf: leafA, direction: .right)
+    guard case .split(let outer) = spanned.root else {
+      Issue.record("expected a spanning outer split, got \(String(describing: spanned.root))")
+      return
+    }
+    #expect(outer.direction == .horizontal)
+    #expect(outer.right == .leaf(view: leafC))
+    guard case .split(let inner) = outer.left else {
+      Issue.record("expected the wrapped H(A,B) split on the leading side")
+      return
+    }
+    #expect(inner.left == .leaf(view: leafA))
+    #expect(inner.right == .leaf(view: leafB))
   }
 
-  private func makeWorktreeFixture(preserveZoomOnNavigation: Bool) -> WorktreeFixture {
-    let state = WorktreeTerminalState(
-      runtime: GhosttyRuntime(),
-      worktree: makeWorktree(),
-      splitPreserveZoomOnNavigation: { preserveZoomOnNavigation }
-    )
-    let tabId = state.createTab()!
-    let first = state.splitTree(for: tabId).root!.leftmostLeaf()
-    _ = state.performSplitAction(.newSplit(direction: .right), for: first.id)
-    let leaves = state.splitTree(for: tabId).leaves()
-    return WorktreeFixture(
-      state: state,
-      tabId: tabId,
-      first: first,
-      second: leaves.first { $0.id != first.id }
-    )
+  @Test func insertingSpanningParentOnARootLeafThrows() throws {
+    let leafA = IDLeaf(id: 1)
+    let tree = SplitTree(view: leafA)
+    #expect(throws: SplitTree<IDLeaf>.SplitError.viewNotFound) {
+      try tree.insertingSpanningParent(view: IDLeaf(id: 2), ofLeaf: leafA, direction: .top)
+    }
   }
 
-  private func makeWorktree() -> Worktree {
-    Worktree(
-      id: "/tmp/repo/wt-1",
-      name: "wt-1",
-      detail: "detail",
-      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-1"),
-      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
-    )
-  }
-}
+  @Test func codableRoundTripsZoomedNodePath() throws {
+    let tree = try SplitTree(view: IDLeaf(id: 1))
+      .inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .right)
+      .inserting(view: IDLeaf(id: 3), at: IDLeaf(id: 2), direction: .down)
+    let zoomedNode = try #require(tree.find(id: 3))
+    let zoomed = tree.settingZoomed(zoomedNode)
 
-private struct WorktreeFixture {
-  let state: WorktreeTerminalState
-  let tabId: TerminalTabID
-  let first: GhosttySurfaceView
-  let second: GhosttySurfaceView?
+    let data = try JSONEncoder().encode(zoomed)
+    let decoded = try JSONDecoder().decode(SplitTree<IDLeaf>.self, from: data)
+
+    #expect(decoded == zoomed)
+    #expect(decoded.zoomed == zoomedNode)
+  }
+
+  @Test func codableDropsZoomedPathThatNoLongerResolves() throws {
+    let json = #"{"root":{"kind":"leaf","leaf":{"id":1}},"zoomedPath":["left","right"]}"#
+
+    let decoded = try JSONDecoder().decode(SplitTree<IDLeaf>.self, from: Data(json.utf8))
+
+    #expect(decoded.zoomed == nil)
+    #expect(decoded.root == .leaf(view: IDLeaf(id: 1)))
+  }
+
+  @Test func codableWireFormatIsPinned() throws {
+    let tree = try SplitTree(view: IDLeaf(id: 1))
+      .inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .right, ratio: 0.25)
+    let zoomed = tree.settingZoomed(try #require(tree.find(id: 1)))
+
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let json = try #require(String(bytes: encoder.encode(zoomed), encoding: .utf8))
+
+    let expected =
+      #"{"root":{"direction":"horizontal","kind":"split","left":{"kind":"leaf","leaf":{"id":1}},"#
+      + #""ratio":0.25,"right":{"kind":"leaf","leaf":{"id":2}}},"zoomedPath":["left"]}"#
+    #expect(json == expected)
+  }
+
 }
 
 private final class SplitTreeTestView: NSView, Identifiable {
   let id = UUID()
+}
+
+nonisolated private struct IDLeaf: Identifiable, Hashable, Codable {
+  let id: Int
 }

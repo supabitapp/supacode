@@ -41,6 +41,8 @@ struct GitClientCreateWorktreeStreamTests {
     ) {}
 
     let snapshot = recorder.snapshot()
+    // The cwd asked for, not the one the process ends up in; the shell is mocked.
+    // `ShellClientWorkingDirectoryProbeTests` covers that half (#776).
     #expect(snapshot.currentDirectoryURL == repoRoot)
     #expect(snapshot.arguments.contains("sw"))
     if let baseDirFlagIndex = snapshot.arguments.firstIndex(of: "--base-dir") {

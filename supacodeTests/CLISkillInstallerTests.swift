@@ -32,7 +32,7 @@ final class CLISkillInstallerTests {
     #expect(FileManager.default.fileExists(atPath: skillFile(.claude, "supacode-cli").path))
     #expect(FileManager.default.fileExists(atPath: skillFile(.claude, "supacode-deeplinks").path))
     #expect(FileManager.default.fileExists(atPath: strayAgentsMd.path))
-    #expect(installer.installState(.claude) == .installed)
+    #expect(try installer.installState(.claude) == .installed)
   }
 
   @Test func uninstallIsIdempotent() throws {
@@ -44,7 +44,7 @@ final class CLISkillInstallerTests {
     try installer.uninstall(.claude)
     try installer.uninstall(.claude)
 
-    #expect(installer.installState(.claude) == .notInstalled)
+    #expect(try installer.installState(.claude) == .notInstalled)
   }
 
   @Test func installPrunesLegacyCodexAgentsMd() throws {
@@ -54,16 +54,16 @@ final class CLISkillInstallerTests {
     try FileManager.default.createDirectory(
       at: legacyAgentsMd.deletingLastPathComponent(), withIntermediateDirectories: true)
     try "legacy sidecar".write(to: legacyAgentsMd, atomically: true, encoding: .utf8)
-    #expect(installer.installState(.codex) == .notInstalled)
+    #expect(try installer.installState(.codex) == .notInstalled)
 
     try installer.install(.codex)
 
     #expect(!FileManager.default.fileExists(atPath: legacyAgentsMd.path))
-    #expect(installer.installState(.codex) == .installed)
+    #expect(try installer.installState(.codex) == .installed)
   }
 
-  @Test func stateIsNotInstalledWhenNothingExists() {
-    #expect(installer.installState(.claude) == .notInstalled)
+  @Test func stateIsNotInstalledWhenNothingExists() throws {
+    #expect(try installer.installState(.claude) == .notInstalled)
   }
 
   @Test func stateIsOutdatedWhenDeeplinksSkillIsMissing() throws {
@@ -71,17 +71,17 @@ final class CLISkillInstallerTests {
     try FileManager.default.removeItem(
       at: skillFile(.claude, "supacode-deeplinks").deletingLastPathComponent())
 
-    #expect(installer.installState(.claude) == .outdated)
+    #expect(try installer.installState(.claude) == .outdated)
   }
 
   @Test func stateIsOutdatedWhenContentDrifts() throws {
     try installer.install(.claude)
     try "stale content".write(
       to: skillFile(.claude, "supacode-cli"), atomically: true, encoding: .utf8)
-    #expect(installer.installState(.claude) == .outdated)
+    #expect(try installer.installState(.claude) == .outdated)
 
     try installer.install(.claude)
-    #expect(installer.installState(.claude) == .installed)
+    #expect(try installer.installState(.claude) == .installed)
   }
 
   @Test func uninstallRemovesBothSkillDirectories() throws {
@@ -90,7 +90,7 @@ final class CLISkillInstallerTests {
 
     #expect(!FileManager.default.fileExists(atPath: skillFile(.claude, "supacode-cli").path))
     #expect(!FileManager.default.fileExists(atPath: skillFile(.claude, "supacode-deeplinks").path))
-    #expect(installer.installState(.claude) == .notInstalled)
+    #expect(try installer.installState(.claude) == .notInstalled)
   }
 
   @Test func cliSkillWarnsAboutArchiveAndDelete() throws {

@@ -494,15 +494,15 @@ private struct SidebarItemBody: View {
       highlightSubtitle: highlightSubtitle
     )
     .environment(\.focusNotificationAction) { notification in
-      guard let terminalState = terminalManager.stateIfExists(for: rowID) else {
+      guard let host = terminalManager.hostIfExists(for: rowID) else {
         notificationLogger.warning(
-          "No terminal state for worktree \(rowID) when focusing notification \(notification.surfaceID).")
+          "No terminal host for worktree \(rowID) when focusing notification \(notification.surfaceID).")
         return
       }
       // Without selecting the row first the jump lands in an off-screen worktree,
       // marking the notification read on a pane the user never sees.
       parentStore.send(.selectWorktree(rowID, focusTerminal: true))
-      if !terminalState.focusSurface(id: notification.surfaceID) {
+      if !host.focusSurface(id: notification.surfaceID) {
         notificationLogger.warning("Failed to focus surface \(notification.surfaceID) for worktree \(rowID).")
       }
     }

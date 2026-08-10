@@ -88,7 +88,7 @@ private struct WorktreeMainMenu: Commands {
       .disabled(snapshot.selectedPullRequestURL == nil || !snapshot.githubIntegrationEnabled)
       Divider()
       Button("Refresh Worktrees", systemImage: "arrow.clockwise") {
-        store.send(.repositories(.refreshWorktrees))
+        store.send(.refreshWorktreesRequested)
       }
       .appKeyboardShortcut(refresh)
       .help("Refresh (\(refresh?.display ?? "none"))")

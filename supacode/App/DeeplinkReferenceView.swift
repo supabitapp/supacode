@@ -8,7 +8,7 @@ struct DeeplinkReferenceView: View {
       Section {
         Text(
           // swiftlint:disable:next line_length
-          "Each terminal session exposes \(code("SUPACODE_REPO_ID")), \(code("SUPACODE_WORKTREE_ID")), \(code("SUPACODE_TAB_ID")), and \(code("SUPACODE_SURFACE_ID")) as environment variables. Run \(code("env | grep SUPACODE_")) to discover the IDs for the current session."
+          "Each terminal session still exposes \(code("SUPACODE_REPO_ID")), \(code("SUPACODE_WORKTREE_ID")), \(code("SUPACODE_TAB_ID")), and \(code("SUPACODE_SURFACE_ID")), but these id variables are deprecated and will be removed in the next release, along with the surface routes. Prefer the \(code("supacode")) CLI, whose pane / tab commands resolve the focused target for you. Only \(code("SUPACODE_SOCKET_PATH")) is non-deprecated."
         )
         .foregroundStyle(.secondary)
         Text(
@@ -33,7 +33,9 @@ struct DeeplinkReferenceView: View {
 
       DeeplinkSection(title: "General", rows: Self.generalRows)
       DeeplinkSection(title: "Worktree Actions", rows: Self.worktreeRows)
-      DeeplinkSection(title: "Tab & Surface", rows: Self.tabSurfaceRows)
+      DeeplinkSection(title: "Tab", rows: Self.tabRows)
+      DeeplinkSection(title: "Pane", rows: Self.paneRows)
+      DeeplinkSection(title: "Surface (deprecated)", rows: Self.surfaceRows)
       DeeplinkSection(title: "Repository", rows: Self.repoRows)
       DeeplinkSection(title: "Settings", rows: Self.settingsRows)
     }
@@ -80,37 +82,78 @@ struct DeeplinkReferenceView: View {
     ),
   ]
 
-  private static let tabSurfaceRows: [DeeplinkEntry] = [
+  private static let tabRows: [DeeplinkEntry] = [
     .init(
       url: "supacode://worktree/<worktree_id>/tab/<tab_id>",
       description: "Focus a tab."
     ),
     .init(
       url: "supacode://worktree/<worktree_id>/tab/new",
-      description: "Create a new tab.",
-      params: "?input=<cmd>&id=<uuid>&title=<title>"
+      description: "Create a new tab; pane= anchors it in a pane (a pane, tab, or content id).",
+      params: "?input=<cmd>&id=<uuid>&title=<title>&pane=<pane_token>"
     ),
     .init(
       url: "supacode://worktree/<worktree_id>/tab/<tab_id>/rename?title=<title>",
       description: "Set the persistent title override; an empty title clears it."
     ),
     .init(
+      url: "supacode://worktree/<worktree_id>/tab/<tab_id>/move",
+      description: "Move a tab into a new split neighboring its pane.",
+      params: "?direction=left|right|up|down"
+    ),
+    .init(
       url: "supacode://worktree/<worktree_id>/tab/<tab_id>/destroy",
       description: "Close a tab."
     ),
+  ]
+
+  private static let paneRows: [DeeplinkEntry] = [
+    .init(
+      url: "supacode://worktree/<worktree_id>/pane/<pane_id>",
+      description: "Focus a pane by id."
+    ),
+    .init(
+      url: "supacode://worktree/<worktree_id>/pane/focus",
+      description: "Move focus to a neighboring pane.",
+      params: "?direction=left|right|up|down"
+    ),
+    .init(
+      url: "supacode://worktree/<worktree_id>/pane/<token>/split",
+      description: "Split a pane. token is a pane, tab, or content id. Defaults to horizontal.",
+      params: "?direction=horizontal|vertical&input=<cmd>&id=<uuid>"
+    ),
+    .init(
+      url: "supacode://worktree/<worktree_id>/pane/<token>/destroy",
+      description: "Close a pane and all its tabs."
+    ),
+    .init(
+      url: "supacode://worktree/<worktree_id>/pane/<token>/zoom",
+      description: "Toggle a pane's zoom."
+    ),
+    .init(
+      url: "supacode://worktree/<worktree_id>/pane/<token>/window",
+      description: "Toggle a pane's window mode."
+    ),
+    .init(
+      url: "supacode://worktree/<worktree_id>/pane/equalize",
+      description: "Equalize every split ratio."
+    ),
+  ]
+
+  private static let surfaceRows: [DeeplinkEntry] = [
     .init(
       url: "supacode://worktree/<worktree_id>/tab/<tab_id>/surface/<surface_id>",
-      description: "Focus a surface.",
+      description: "Deprecated (focus a surface). Use tab focus.",
       params: "?input=<cmd>"
     ),
     .init(
       url: "supacode://worktree/<worktree_id>/tab/<tab_id>/surface/<surface_id>/split",
-      description: "Split a surface. Defaults to horizontal.",
+      description: "Deprecated. Use pane split.",
       params: "?direction=horizontal|vertical&input=<cmd>&id=<uuid>"
     ),
     .init(
       url: "supacode://worktree/<worktree_id>/tab/<tab_id>/surface/<surface_id>/destroy",
-      description: "Close a surface."
+      description: "Deprecated (close a surface). Use tab destroy."
     ),
   ]
 

@@ -65,8 +65,8 @@ enum WindowTitle {
       fallback: repository.name,
       repositories: repositories
     )
-    let tabTitle = terminalManager.stateIfExists(for: worktreeID).flatMap { state in
-      tabDisplayTitle(in: state)
+    let tabTitle = terminalManager.hostIfExists(for: worktreeID)?.focusedTab.flatMap { tab in
+      sanitize(tab.customTitle ?? tab.title)
     }
     return format(repo: repoTitle, tab: tabTitle)
   }
@@ -81,14 +81,6 @@ enum WindowTitle {
       custom: repositories.sidebar.sections[repositoryID]?.title,
       fallback: fallback
     )
-  }
-
-  @MainActor
-  private static func tabDisplayTitle(in state: WorktreeTerminalState) -> String? {
-    guard let id = state.tabManager.selectedTabId,
-      let tab = state.tabManager.tabs.first(where: { $0.id == id })
-    else { return nil }
-    return sanitize(tab.displayTitle)
   }
 
   /// Strips control characters (incl. embedded `\n` that would

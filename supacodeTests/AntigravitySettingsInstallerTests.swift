@@ -19,7 +19,7 @@ struct AntigravitySettingsInstallerTests {
     defer { try? fileManager.removeItem(at: homeURL) }
 
     let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
   @Test func installWritesHookSettingsWhenMissing() throws {
@@ -27,10 +27,10 @@ struct AntigravitySettingsInstallerTests {
     defer { try? fileManager.removeItem(at: homeURL) }
 
     let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
 
     try installer.installAllHooks()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
 
     let settingsURL = AntigravitySettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
     let mainSettingsURL = AntigravitySettingsInstaller.mainSettingsURL(homeDirectoryURL: homeURL)
@@ -79,7 +79,7 @@ struct AntigravitySettingsInstallerTests {
 
     let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
     try installer.installAllHooks()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
 
     let mainSettingsURL = AntigravitySettingsInstaller.mainSettingsURL(homeDirectoryURL: homeURL)
     let disabledFlags: [String: JSONValue] = [
@@ -89,7 +89,7 @@ struct AntigravitySettingsInstallerTests {
     let disabledData = try JSONEncoder().encode(JSONValue.object(disabledFlags))
     try disabledData.write(to: mainSettingsURL)
 
-    #expect(installer.installState() == .outdated)
+    #expect(try installer.installState() == .outdated)
   }
 
   @Test func installStateReturnsInstalledWhenOnlyOneFeatureToggleIsEnabled() throws {
@@ -105,13 +105,13 @@ struct AntigravitySettingsInstallerTests {
     let snakeCaseOnly: [String: JSONValue] = ["enable_json_hooks": .bool(true)]
     let snakeData = try JSONEncoder().encode(JSONValue.object(snakeCaseOnly))
     try snakeData.write(to: mainSettingsURL)
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
 
     // Test enableJsonHooks only
     let camelCaseOnly: [String: JSONValue] = ["enableJsonHooks": .bool(true)]
     let camelData = try JSONEncoder().encode(JSONValue.object(camelCaseOnly))
     try camelData.write(to: mainSettingsURL)
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
   }
 
   @Test func installStateReturnsOutdatedWhenLegacyRootHooksExist() throws {
@@ -132,7 +132,7 @@ struct AntigravitySettingsInstallerTests {
     let updatedData = try JSONEncoder().encode(JSONValue.object(settingsJson))
     try updatedData.write(to: settingsURL)
 
-    #expect(installer.installState() == .outdated)
+    #expect(try installer.installState() == .outdated)
   }
 
   @Test func installPreservesUserRootHooksAndCustomSupacodeHooks() throws {
@@ -157,7 +157,7 @@ struct AntigravitySettingsInstallerTests {
     let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
     try installer.installAllHooks()
 
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
     #expect(fileManager.fileExists(atPath: mainSettingsURL.path))
 
     let settingsData = try Data(contentsOf: mainSettingsURL)
@@ -244,12 +244,12 @@ struct AntigravitySettingsInstallerTests {
     let mainSettingsURL = AntigravitySettingsInstaller.mainSettingsURL(homeDirectoryURL: homeURL)
 
     try installer.installAllHooks()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
     #expect(fileManager.fileExists(atPath: settingsURL.path))
     #expect(fileManager.fileExists(atPath: mainSettingsURL.path))
 
     try installer.uninstallAllHooks()
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
     #expect(!fileManager.fileExists(atPath: settingsURL.path))
     #expect(!fileManager.fileExists(atPath: mainSettingsURL.path))
   }
@@ -349,11 +349,11 @@ struct AntigravitySettingsInstallerTests {
     try encode(userConfig, to: settingsURL)
 
     let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
 
     // An empty-object hooks.json is likewise notInstalled.
     try encode([:], to: settingsURL)
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
   @Test func installStateReturnsOutdatedWhenAManagedEventIsRemoved() throws {
@@ -362,7 +362,7 @@ struct AntigravitySettingsInstallerTests {
 
     let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
     try installer.installAllHooks()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
 
     // PreToolUse shares its managed busy command with PreInvocation. A flattened command-set check
     // would still see busy and report installed; per-event detection must flag the missing event.
@@ -375,7 +375,7 @@ struct AntigravitySettingsInstallerTests {
     root["supacode-hooks"] = .object(supacodeHooks)
     try encode(root, to: settingsURL)
 
-    #expect(installer.installState() == .outdated)
+    #expect(try installer.installState() == .outdated)
   }
 
   @Test func installStateReturnsOutdatedWhenAnEventUsesAnotherEventsCommand() throws {
@@ -384,7 +384,7 @@ struct AntigravitySettingsInstallerTests {
 
     let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
     try installer.installAllHooks()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
 
     // Swap PreToolUse's managed command for PostInvocation's (idle). The flattened command set is
     // unchanged, so only a per-event comparison can tell PreToolUse now carries the wrong command.
@@ -397,20 +397,21 @@ struct AntigravitySettingsInstallerTests {
     root["supacode-hooks"] = .object(supacodeHooks)
     try encode(root, to: settingsURL)
 
-    #expect(installer.installState() == .outdated)
+    #expect(try installer.installState() == .outdated)
   }
 
-  @Test func installStateIsNotInstalledForCorruptHooksJson() throws {
+  @Test func installStateThrowsForCorruptHooksJson() throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
-    // A corrupt hooks.json must degrade gracefully to notInstalled, not trap.
+    // A corrupt hooks.json is a determinate fault the user has to fix, so it
+    // surfaces as an error rather than reading as a fresh, uninstalled machine.
     let settingsURL = AntigravitySettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
     try fileManager.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
     try Data("{ not json".utf8).write(to: settingsURL)
 
     let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
-    #expect(installer.installState() == .notInstalled)
+    #expect(throws: (any Error).self) { try installer.installState() }
   }
 
   @Test func installStateIsNotInstalledWhenAnEventEntryIsMalformed() throws {
@@ -419,7 +420,7 @@ struct AntigravitySettingsInstallerTests {
 
     let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
     try installer.installAllHooks()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
 
     // A scalar entry alongside the canonical hooks is a shape install/uninstall reject, so the
     // state must stop reporting installed.
@@ -430,7 +431,7 @@ struct AntigravitySettingsInstallerTests {
     root["supacode-hooks"] = .object(supacodeHooks)
     try encode(root, to: settingsURL)
 
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
   // MARK: - Legacy migration
@@ -462,7 +463,7 @@ struct AntigravitySettingsInstallerTests {
 
     // Canonical hooks now live under supacode-hooks and the migrated config reads as installed.
     #expect(root["supacode-hooks"]?.objectValue?["SessionStart"] != nil)
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
   }
 
   // MARK: - Malformed shape rejection
@@ -538,6 +539,25 @@ struct AntigravitySettingsInstallerTests {
     #expect(fileManager.fileExists(atPath: mainSettingsURL.path))
     let raw = String(data: try Data(contentsOf: mainSettingsURL), encoding: .utf8)
     #expect(raw == "{ corrupt")
+  }
+
+  @Test func uninstallSucceedsWhenMainSettingsWasDeletedByHand() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let installer = AntigravitySettingsInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    try installer.installAllHooks()
+
+    let mainSettingsURL = AntigravitySettingsInstaller.mainSettingsURL(homeDirectoryURL: homeURL)
+    try fileManager.removeItem(at: mainSettingsURL)
+
+    // There are no flags left to strip, so the sweep must no-op rather than
+    // trying to remove a file that isn't there and failing the uninstall.
+    try installer.uninstallAllHooks()
+
+    let settingsURL = AntigravitySettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
+    #expect(!fileManager.fileExists(atPath: settingsURL.path))
+    #expect(!fileManager.fileExists(atPath: mainSettingsURL.path))
   }
 
   // MARK: - Helpers

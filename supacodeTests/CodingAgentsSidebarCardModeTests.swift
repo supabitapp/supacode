@@ -150,6 +150,19 @@ struct CodingAgentsSidebarCardModeTests {
     #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .hidden)
   }
 
+  @Test(arguments: [nil, AgentIntegrationState.installed])
+  func undeterminedStateSuppressesPromptInstall(lastKnown: AgentIntegrationState?) {
+    // An unreadable probe must not read as "nobody has it installed": the card
+    // would nag a user to install an integration that is already in place, and
+    // its Install path would throw against the same unreadable file. Covers the
+    // cold launch (no prior verdict) too.
+    var states: [SkillAgent: AgentIntegrationRowState] = [:]
+    for agent in SkillAgent.allCases { states[agent] = .ready(.notInstalled) }
+    states[.claude] = .undetermined(lastKnown: lastKnown, reason: "Couldn't read it.")
+
+    #expect(CodingAgentsSidebarCardView.mode(for: states, dismissed: false) == .hidden)
+  }
+
   @Test func dismissedAtBeforeCutoffReEngages() {
     // Stamps older than `cardRelevantSinceDate` are stale; re-engagement is
     // bumping the cutoff at material changes, no key sprawl required.

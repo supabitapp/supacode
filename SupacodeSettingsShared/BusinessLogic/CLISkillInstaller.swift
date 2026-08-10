@@ -40,41 +40,17 @@ nonisolated struct CLISkillInstaller {
 
   // MARK: - Check.
 
-  private enum OnDiskFile {
-    case missing
-    case unreadable
-    case content(String)
-
-    var isMissing: Bool {
-      if case .missing = self { return true }
-      return false
-    }
-  }
-
-  private static func onDiskFile(at url: URL) -> OnDiskFile {
-    do {
-      return .content(try String(contentsOf: url, encoding: .utf8))
-    } catch {
-      let path = url.path(percentEncoded: false)
-      guard FileManager.default.fileExists(atPath: path) else { return .missing }
-      skillInstallerLogger.error("Skill file at \(path) exists but is unreadable: \(error)")
-      return .unreadable
-    }
-  }
-
-  func installState(_ agent: SkillAgent) -> ComponentInstallState {
+  func installState(_ agent: SkillAgent) throws -> ComponentInstallState {
     let files = plannedFiles(for: agent)
-    let onDisk = files.map { Self.onDiskFile(at: $0.url) }
-    if onDisk.allSatisfy(\.isMissing) { return .notInstalled }
-    let upToDate = zip(files, onDisk).allSatisfy { file, disk in
-      guard case .content(let disk) = disk else { return false }
-      guard let expected = try? file.content() else {
-        // Never silent: a broken bundle would otherwise hide behind "Installed".
-        skillInstallerLogger.error(
-          "Bundled markdown unreadable for \(file.url.lastPathComponent); falling back to existence-only state.")
-        return true
-      }
-      return disk == expected
+    // Throws when a file exists but can't be read, so a denied read is never
+    // reported as a missing skill.
+    let onDisk = try files.map { try AgentFileProbe.text(at: $0.url) }
+    if onDisk.allSatisfy({ $0 == nil }) { return .notInstalled }
+    // A bundled resource we can't read leaves the state undeterminable, same as
+    // an unreadable file on disk. `install` throws on it too.
+    let upToDate = try zip(files, onDisk).allSatisfy { file, disk in
+      guard let disk else { return false }
+      return try disk == file.content()
     }
     return upToDate ? .installed : .outdated
   }

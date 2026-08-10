@@ -1,7 +1,7 @@
 import Foundation
 import SupacodeSettingsShared
 
-struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
+nonisolated struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
   let tabs: [TabSnapshot]
   let selectedTabIndex: Int
 

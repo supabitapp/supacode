@@ -4,7 +4,7 @@ import Testing
 @testable import SupacodeSettingsShared
 
 struct AgentIntegrationTests {
-  @Test func stateIsInstalledWhenAllComponentsReportInstalled() {
+  @Test func stateIsInstalledWhenAllComponentsReportInstalled() throws {
     let integration = AgentIntegration(
       agent: .claude,
       components: [
@@ -12,10 +12,10 @@ struct AgentIntegrationTests {
         component(kind: .skills, installed: true),
       ]
     )
-    #expect(integration.state() == .installed)
+    #expect(try integration.state() == .installed)
   }
 
-  @Test func stateIsNotInstalledWhenAllComponentsAbsent() {
+  @Test func stateIsNotInstalledWhenAllComponentsAbsent() throws {
     let integration = AgentIntegration(
       agent: .claude,
       components: [
@@ -23,10 +23,10 @@ struct AgentIntegrationTests {
         component(kind: .skills, installed: false),
       ]
     )
-    #expect(integration.state() == .notInstalled)
+    #expect(try integration.state() == .notInstalled)
   }
 
-  @Test func stateIsOutdatedWhenSomeMissing() {
+  @Test func stateIsOutdatedWhenSomeMissing() throws {
     let integration = AgentIntegration(
       agent: .claude,
       components: [
@@ -34,10 +34,10 @@ struct AgentIntegrationTests {
         component(kind: .skills, state: .notInstalled),
       ]
     )
-    #expect(integration.state() == .outdated)
+    #expect(try integration.state() == .outdated)
   }
 
-  @Test func stateIsOutdatedWhenAnyComponentReportsOutdated() {
+  @Test func stateIsOutdatedWhenAnyComponentReportsOutdated() throws {
     let integration = AgentIntegration(
       agent: .claude,
       components: [
@@ -45,7 +45,21 @@ struct AgentIntegrationTests {
         component(kind: .skills, state: .installed),
       ]
     )
-    #expect(integration.state() == .outdated)
+    #expect(try integration.state() == .outdated)
+  }
+
+  @Test func stateThrowsWhenAnyComponentCannotBeDetermined() {
+    // The central invariant: a partially readable integration must not
+    // aggregate to `.outdated`, which would arm an unattended rewrite of the
+    // very files that could not be read.
+    let integration = AgentIntegration(
+      agent: .claude,
+      components: [
+        undeterminableComponent(kind: .hooks),
+        component(kind: .skills, state: .installed),
+      ]
+    )
+    #expect(throws: AgentFileUnreadableError.self) { try integration.state() }
   }
 
   @Test func installRunsComponentsFrontToBack() async throws {
@@ -127,7 +141,7 @@ struct AgentIntegrationTests {
     }
   }
 
-  @Test func installRefusesWhenRequiredDirectoryMissingAndSkipsComponents() async {
+  @Test func installRefusesWhenRequiredDirectoryMissingAndSkipsComponents() async throws {
     let order = OrderRecorder()
     let missing = URL(fileURLWithPath: NSTemporaryDirectory())
       .appending(path: "supacode-missing-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -188,6 +202,17 @@ struct AgentIntegrationTests {
     kind: AgentIntegration.Component.Kind, installed: Bool
   ) -> AgentIntegration.Component {
     component(kind: kind, state: installed ? .installed : .notInstalled)
+  }
+
+  private func undeterminableComponent(
+    kind: AgentIntegration.Component.Kind
+  ) -> AgentIntegration.Component {
+    AgentIntegration.Component(
+      kind: kind,
+      state: { throw AgentFileUnreadableError(displayPath: "~/.claude/settings.json", reason: "nope") },
+      install: {},
+      uninstall: {}
+    )
   }
 
   private func component(

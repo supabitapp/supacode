@@ -705,7 +705,7 @@ enum SidebarPersistenceMigrator {
     return String(id[..<slash]) + RepositoryLocation.normalizedRemotePath(String(id[slash...]))
   }
 
-  /// Re-key `layouts.json` (terminal snapshots keyed by worktree id) through
+  /// Re-key `layouts.json` (worktree-id keyed, v1 flat dict or v2 file) through
   /// `transform` so remote/folder tabs still restore. Returns `false` when a present
   /// file can't be read/written, so the caller bails and retries. Written directly
   /// because `LayoutsKey.save` is a no-op.
@@ -717,27 +717,54 @@ enum SidebarPersistenceMigrator {
   ) -> Bool {
     let layoutsURL = SupacodePaths.layoutsURL
     guard fileExists(layoutsURL) else { return true }
-    guard let data = readFile(layoutsURL),
-      let layouts = try? JSONDecoder().decode([String: TerminalLayoutSnapshot].self, from: data)
-    else {
+    guard let data = readFile(layoutsURL) else {
       logger.warning("Layout re-key deferred: layouts.json present but unreadable.")
       return false
     }
-    var rekeyed: [String: TerminalLayoutSnapshot] = [:]
+    if var file = try? JSONDecoder().decode(LayoutsFile.self, from: data) {
+      // A newer schema likely carries fields this build's re-encode would
+      // strip; leave the re-key to the build that wrote it.
+      guard file.schemaVersion <= LayoutsFile.currentSchemaVersion else {
+        logger.warning("Skipping layout re-key of newer schema v\(file.schemaVersion).")
+        return true
+      }
+      let (rekeyed, changed) = rekeyedWorktrees(file.worktrees, using: transform)
+      guard changed else { return true }
+      file.worktrees = rekeyed
+      return writeLayouts(file, to: layoutsURL)
+    }
+    guard let layouts = try? JSONDecoder().decode([String: TerminalLayoutSnapshot].self, from: data) else {
+      logger.warning("Layout re-key deferred: layouts.json present but unreadable.")
+      return false
+    }
+    let (rekeyed, changed) = rekeyedWorktrees(layouts, using: transform)
+    guard changed else { return true }
+    return writeLayouts(rekeyed, to: layoutsURL)
+  }
+
+  private static func rekeyedWorktrees<Value>(
+    _ worktrees: [String: Value],
+    using transform: (String) -> String
+  ) -> (result: [String: Value], changed: Bool) {
+    var rekeyed: [String: Value] = [:]
     var changed = false
-    for (key, value) in layouts {
+    for (key, value) in worktrees {
       let migrated = transform(key)
       if migrated != key { changed = true }
       // The already-normalized spelling is what live builds wrote; it wins a
       // collision with a stale duplicate.
       if migrated == key || rekeyed[migrated] == nil { rekeyed[migrated] = value }
     }
-    guard changed else { return true }
+    return (rekeyed, changed)
+  }
+
+  @MainActor
+  private static func writeLayouts(_ layouts: some Encodable, to url: URL) -> Bool {
     do {
       @Dependency(\.settingsFileStorage) var storage
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-      try storage.save(try encoder.encode(rekeyed), layoutsURL)
+      try storage.save(try encoder.encode(layouts), url)
       return true
     } catch {
       logger.warning("Layout re-key deferred: failed to write layouts.json: \(error)")

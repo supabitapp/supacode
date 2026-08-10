@@ -70,6 +70,15 @@ struct WorktreeDetailView: View {
     // deferred toolbar closure) so the toolbar scheme invalidates on change.
     let toolbarScheme: ColorScheme =
       terminalManager.focusedSurfaceBackground.isLightColor ? .light : .dark
+    // Reveal in Finder is local-only; Open can target a remote worktree when the
+    // resolved editor can express the host. `resolvedSelection` (nil when it
+    // can't) drives the focused-action enablement, the menu label, and the
+    // files inspector's default Open.
+    let resolvedSelection = Self.resolvedOpenSelection(
+      hasActiveWorktree: hasActiveWorktree,
+      selectedWorktree: selectedWorktree,
+      state: state
+    )
     let content = detailContent(
       repositories: repositories,
       loadingInfo: loadingInfo,
@@ -110,28 +119,23 @@ struct WorktreeDetailView: View {
         pullRequest: inspectorPullRequest,
         repositoriesStore: repositoriesStore,
         terminalManager: terminalManager,
+        fileOpenActions: state.installedOpenActions.filter(\.canOpenFiles),
+        resolvedOpenAction: resolvedSelection,
         onSelectNotification: selectToolbarNotification,
         onSelectSurface: selectToolbarSurface,
-        onPullRequestAction: { sendPullRequestAction($0, worktree: selectedWorktree) }
+        onPullRequestAction: { sendPullRequestAction($0, worktree: selectedWorktree) },
+        onOpenFile: { store.send(.openFile($0, with: $1)) }
       )
       .inspectorColumnWidth(min: 280, ideal: 320, max: 480)
       // Match the inspector's accent to the terminal background; the appearance
       // is forced inside `WorktreeStatusInspectorContainer`.
       .tint(terminalManager.chromeOverlayTint())
     }
-    // Reveal in Finder is local-only; Open can target a remote worktree when the
-    // resolved editor can express the host. `resolvedSelection` (nil when it
-    // can't) drives both the focused-action enablement and the menu label.
-    let resolvedSelection = Self.resolvedOpenSelection(
-      hasActiveWorktree: hasActiveWorktree,
-      selectedWorktree: selectedWorktree,
-      state: state
-    )
     return applyFocusedActions(
       content: content,
+      state: state,
       hasActiveWorktree: hasActiveWorktree,
       canRevealLocally: hasActiveWorktree && selectedWorktree?.host == nil,
-      hasRunningRunScript: state.hasRunningRunScript,
       resolvedSelection: resolvedSelection
     )
   }
@@ -273,16 +277,14 @@ struct WorktreeDetailView: View {
           store.send(.repositories(.requestDeleteSidebarItems([target])))
         }
       } else if let selectedWorktree {
-        let shouldRunSetupScript = selectedSlice?.lifecycle == .pending
         let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
-        WorktreeTerminalTabsView(
+        WorktreeLayoutView(
           worktree: selectedWorktree,
           manager: terminalManager,
           terminalsStore: store.scope(state: \.terminals, action: \.terminals),
-          shouldRunSetupScript: shouldRunSetupScript,
-          isLifecycleBusy: selectedSlice?.lifecycle.isBusy ?? false,
+          runtime: ContentRuntime.liveValue,
           forceAutoFocus: shouldFocusTerminal,
-          createTab: { store.send(.newTerminal) }
+          isLifecycleBusy: selectedSlice?.lifecycle.isBusy ?? false
         )
         .id(selectedWorktree.id)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -300,14 +302,30 @@ struct WorktreeDetailView: View {
     }
   }
 
+  /// Whether the selected worktree has a focused tab to act on, so Close Tab /
+  /// Close Surface don't hold Cmd-W on an emptied layout and steal it from Close
+  /// Window.
+  static func hasFocusedTab(in state: AppFeature.State, worktreeID: Worktree.ID?) -> Bool {
+    guard let worktreeID,
+      let layout = state.terminals.layouts[id: worktreeID]?.layout,
+      let focusedPaneID = layout.focusedPaneID
+    else { return false }
+    return layout.panes[id: focusedPaneID]?.selectedTab != nil
+  }
+
   private func applyFocusedActions<Content: View>(
     content: Content,
+    state: AppFeature.State,
     hasActiveWorktree: Bool,
     canRevealLocally: Bool,
-    hasRunningRunScript: Bool,
     resolvedSelection: OpenWorktreeAction?
   ) -> some View {
-    content
+    // Reading the layout re-runs this body on its churn, but the FocusedAction
+    // (isEnabled, token) dedup keeps AppKit from rebuilding the menu.
+    let hasFocusedTab = Self.hasFocusedTab(in: state, worktreeID: state.repositories.selectedWorktreeID)
+    let hasRunningRunScript = state.hasRunningRunScript
+    return
+      content
       // Open is enabled only when the resolved editor can open the selection
       // (`resolvedSelection != nil`), which already folds in remote capability.
       .focusedSceneAction(\.openSelectedWorktreeAction, enabled: resolvedSelection != nil) {
@@ -323,13 +341,29 @@ struct WorktreeDetailView: View {
       .focusedSceneAction(\.newTerminalAction, enabled: hasActiveWorktree) {
         store.send(.newTerminal)
       }
+      // Lock and validity are enforced by the terminal model, so this only gates on an active worktree.
+      .focusedSceneAction(\.renameTabAction, enabled: hasActiveWorktree) {
+        store.send(.renameSelectedTerminalTab)
+      }
       .focusedAction(\.splitTerminalAction, enabled: hasActiveWorktree) { direction in
         store.send(.splitTerminal(direction))
       }
-      .focusedAction(\.closeTabAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.toggleWindowModeAction, enabled: hasActiveWorktree) {
+        store.send(.toggleWindowModeForFocusedPane)
+      }
+      .focusedAction(\.toggleSplitZoomAction, enabled: hasActiveWorktree) {
+        store.send(.toggleSplitZoom)
+      }
+      .focusedAction(\.equalizeSplitsAction, enabled: hasActiveWorktree) {
+        store.send(.equalizeSplits)
+      }
+      .focusedAction(\.focusSplitAction, enabled: hasActiveWorktree) { direction in
+        store.send(.focusSplit(direction))
+      }
+      .focusedAction(\.closeTabAction, enabled: hasActiveWorktree && hasFocusedTab) {
         store.send(.closeTab)
       }
-      .focusedAction(\.closeSurfaceAction, enabled: hasActiveWorktree) {
+      .focusedAction(\.closeSurfaceAction, enabled: hasActiveWorktree && hasFocusedTab) {
         store.send(.closeSurface)
       }
       .focusedSceneAction(\.startSearchAction, enabled: hasActiveWorktree) {
@@ -366,8 +400,10 @@ struct WorktreeDetailView: View {
   /// no notification object survives to carry the surface ID.
   private func selectToolbarSurface(_ worktreeID: Worktree.ID, _ surfaceID: UUID) {
     store.send(.repositories(.selectWorktree(worktreeID)))
-    if let terminalState = terminalManager.stateIfExists(for: worktreeID) {
-      _ = terminalState.focusSurface(id: surfaceID)
+    if let host = terminalManager.hostIfExists(for: worktreeID),
+      !host.focusSurface(id: surfaceID)
+    {
+      SupaLogger("Terminal").warning("Failed to focus surface \(surfaceID) for worktree \(worktreeID).")
     }
   }
 
@@ -773,6 +809,12 @@ struct WorktreeDetailView: View {
         // full-opacity tint reads as a stark solid pill against the glass.
         let chromeForeground = terminalManager.chromeOverlayTint()
         let chromeTint = chromeForeground.opacity(0.2)
+        WorktreeFilesToolbarButton(
+          isSelected: inspectorPresented && inspectorPane == .files,
+          tint: chromeTint,
+          foreground: chromeForeground,
+          onActivate: { onActivateInspector(.files) }
+        )
         WorktreeGitStatusButton(
           pullRequest: pullRequest,
           isSelected: inspectorPresented && inspectorPane == .git,
@@ -1092,7 +1134,13 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
 
     if includesStatusSkeleton {
       ToolbarItemGroup {
-        // Mirror the trailing inspector toggles (git status + notifications).
+        // Mirror the trailing inspector toggles (files + git status + notifications).
+        Button {
+        } label: {
+          Image(systemName: "list.bullet")
+        }
+        .redacted(reason: .placeholder)
+        .shimmer(isActive: true)
         Button {
         } label: {
           Image(systemName: "arrow.trianglehead.branch")

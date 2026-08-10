@@ -208,10 +208,10 @@ final class HotkeyRecorderNSView: NSView {
       return
     }
 
-    // Require at least one modifier key.
+    // Require a command-like modifier: a shift-only chord would swallow plain
+    // typing wherever shortcuts are matched ahead of the responder chain.
     let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-    let modifierOnly = flags.subtracting([.capsLock, .numericPad, .function])
-    guard !modifierOnly.isEmpty else { return }
+    guard !flags.isDisjoint(with: [.command, .control, .option]) else { return }
 
     var overrideFlags: AppShortcutOverride.ModifierFlags = []
     if flags.contains(.command) { overrideFlags.insert(.command) }

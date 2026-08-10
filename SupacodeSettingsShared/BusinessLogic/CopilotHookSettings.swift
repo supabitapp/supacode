@@ -37,20 +37,22 @@ nonisolated enum CopilotHookSettings {
       + AgentPresenceOSC.emitShell(event: .awaitingInput, agent: .copilot) + "; "
       + AgentPresenceOSC.emitNotifyShell(agent: .copilot, readsStdin: false)
     let steps =
-      #"__in=$(cat); case "$__in" in *permission_prompt*|*elicitation_dialog*) \#(needsYou) ;; esac"#
+      #"\#(AgentPresenceOSC.readStdinSnippet); "#
+      + #"case "$__in" in *permission_prompt*|*elicitation_dialog*) \#(needsYou) ;; esac"#
     return #"\#(surfaceGuard) && { \#(steps); } >/dev/null 2>&1 || true \#(ownershipMarker)"#
   }
 
   private struct Payload: Encodable {
+    static let timeout = AgentHookSettingsCommand.timeoutSeconds
     let version = 1
     let hooks: [String: [Hook]] = [
-      "sessionStart": [Hook(bash: CopilotHookSettings.command(for: [.sessionStart]), timeoutSec: 5)],
-      "userPromptSubmitted": [Hook(bash: CopilotHookSettings.command(for: [.busy]), timeoutSec: 10)],
-      "preToolUse": [Hook(bash: CopilotHookSettings.command(for: [.busy]), timeoutSec: 5)],
-      "postToolUse": [Hook(bash: CopilotHookSettings.command(for: [.busy]), timeoutSec: 5)],
-      "agentStop": [Hook(bash: CopilotHookSettings.command(for: [.idle], notify: true), timeoutSec: 10)],
-      "sessionEnd": [Hook(bash: CopilotHookSettings.command(for: [.sessionEnd]), timeoutSec: 5)],
-      "notification": [Hook(bash: CopilotHookSettings.notificationCommand, timeoutSec: 10)],
+      "sessionStart": [Hook(bash: CopilotHookSettings.command(for: [.sessionStart]), timeoutSec: Self.timeout)],
+      "userPromptSubmitted": [Hook(bash: CopilotHookSettings.command(for: [.busy]), timeoutSec: Self.timeout)],
+      "preToolUse": [Hook(bash: CopilotHookSettings.command(for: [.busy]), timeoutSec: Self.timeout)],
+      "postToolUse": [Hook(bash: CopilotHookSettings.command(for: [.busy]), timeoutSec: Self.timeout)],
+      "agentStop": [Hook(bash: CopilotHookSettings.command(for: [.idle], notify: true), timeoutSec: Self.timeout)],
+      "sessionEnd": [Hook(bash: CopilotHookSettings.command(for: [.sessionEnd]), timeoutSec: Self.timeout)],
+      "notification": [Hook(bash: CopilotHookSettings.notificationCommand, timeoutSec: Self.timeout)],
     ]
   }
 

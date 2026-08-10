@@ -268,6 +268,8 @@ private struct CommandPaletteRowView: View {
       .viewArchivedWorktrees,
       .refreshWorktrees,
       .ghosttyCommand,
+      .toggleWindowMode,
+      .layoutCommand,
       .openPullRequest, .markPullRequestReady, .mergePullRequest, .closePullRequest, .copyFailingJobURL,
       .copyCiFailureLogs,
       .rerunFailedJobs, .openFailingCheckDetails, .worktreeSelect,
@@ -308,6 +310,10 @@ private struct CommandPaletteRowView: View {
       return "arrow.clockwise"
     case .ghosttyCommand:
       return "terminal"
+    case .toggleWindowMode:
+      return "macwindow.on.rectangle"
+    case .layoutCommand(let command):
+      return command.systemImage
     case .openPullRequest:
       return "arrow.up.right.square"
     case .markPullRequestReady:
@@ -351,6 +357,8 @@ private struct CommandPaletteRowView: View {
       .viewArchivedWorktrees,
       .refreshWorktrees,
       .ghosttyCommand,
+      .toggleWindowMode,
+      .layoutCommand,
       .openPullRequest, .markPullRequestReady, .mergePullRequest, .closePullRequest, .copyFailingJobURL,
       .copyCiFailureLogs,
       .rerunFailedJobs, .openFailingCheckDetails:
@@ -487,6 +495,10 @@ private struct CommandPaletteRowView: View {
     case .refreshWorktrees:
       base = "Refresh Worktrees"
     case .ghosttyCommand:
+      base = row.title
+    case .toggleWindowMode:
+      base = "Move the focused pane to its own window, or back"
+    case .layoutCommand:
       base = row.title
     case .removeWorktree:
       base = "Remove \(row.title)"

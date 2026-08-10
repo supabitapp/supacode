@@ -568,7 +568,7 @@ private struct TrailingView: View {
         .foregroundStyle(.secondary)
         .opacity(hasHint ? 1 : 0)
     }
-    .animation(.easeInOut(duration: TerminalTabBarMetrics.fadeAnimationDuration), value: hasHint)
+    .animation(.easeInOut(duration: 0.15), value: hasHint)
   }
 }
 

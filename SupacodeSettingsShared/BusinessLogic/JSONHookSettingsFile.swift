@@ -16,11 +16,11 @@ nonisolated struct JSONHookSettingsFile {
   let errors: Errors
 
   /// Read and decode the settings file at `url`. Returns `[:]` when the
-  /// file doesn't exist (a fresh user install). Throws via `errors` for
-  /// malformed JSON or non-object roots.
+  /// file doesn't exist (a fresh user install). Throws `AgentFileUnreadableError`
+  /// when it exists but can't be read, and via `errors` for malformed JSON or
+  /// non-object roots.
   func load(at url: URL) throws -> [String: JSONValue] {
-    guard fileManager.fileExists(atPath: url.path) else { return [:] }
-    let data = try Data(contentsOf: url)
+    guard let data = try AgentFileProbe.data(at: url) else { return [:] }
     do {
       let jsonValue = try JSONDecoder().decode(JSONValue.self, from: data)
       guard let object = jsonValue.objectValue else {
@@ -47,12 +47,11 @@ nonisolated struct JSONHookSettingsFile {
     try data.write(to: url, options: .atomic)
   }
 
-  /// True for the file-not-found error that `load(at:)` will never throw
-  /// (it returns `[:]`) but that callers may surface from other reads —
-  /// e.g. probe paths that don't yet exist on a fresh machine.
+  /// True for a genuine file-not-found. `load(at:)` resolves absence to `[:]`
+  /// rather than throwing, so callers keep this only as a defensive guard on
+  /// errors reaching them from elsewhere.
   static func isFileNotFound(_ error: Error) -> Bool {
-    let nsError = error as NSError
-    return nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileReadNoSuchFileError
+    AgentFileProbe.isFileNotFound(error)
   }
 
   private enum LoadError: Error {

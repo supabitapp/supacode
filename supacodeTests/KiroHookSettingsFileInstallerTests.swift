@@ -145,11 +145,11 @@ struct KiroHookSettingsFileInstallerTests {
 
   // MARK: - Check.
 
-  @Test func containsMatchingHooksReturnsFalseForMissingFile() {
+  @Test func containsMatchingHooksReturnsFalseForMissingFile() throws {
     let url = makeTempURL()
     let installer = makeInstaller()
     #expect(
-      installer.installState(settingsURL: url, hookEntriesByEvent: sampleHookEntries())
+      try installer.installState(settingsURL: url, hookEntriesByEvent: sampleHookEntries())
         == .notInstalled)
   }
 
@@ -160,7 +160,7 @@ struct KiroHookSettingsFileInstallerTests {
     let installer = makeInstaller()
     let entries = sampleHookEntries()
     try installer.install(settingsURL: url, hookEntriesByEvent: entries)
-    #expect(installer.installState(settingsURL: url, hookEntriesByEvent: entries) == .installed)
+    #expect(try installer.installState(settingsURL: url, hookEntriesByEvent: entries) == .installed)
   }
 
   @Test func containsMatchingHooksReturnsFalseAfterUninstall() throws {
@@ -171,7 +171,7 @@ struct KiroHookSettingsFileInstallerTests {
     let entries = sampleHookEntries()
     try installer.install(settingsURL: url, hookEntriesByEvent: entries)
     try installer.uninstall(settingsURL: url, hookEntriesByEvent: entries)
-    #expect(installer.installState(settingsURL: url, hookEntriesByEvent: entries) == .notInstalled)
+    #expect(try installer.installState(settingsURL: url, hookEntriesByEvent: entries) == .notInstalled)
   }
 
   // MARK: - Error paths.

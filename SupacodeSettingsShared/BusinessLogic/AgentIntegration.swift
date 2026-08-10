@@ -42,13 +42,15 @@ nonisolated struct AgentIntegration: @unchecked Sendable {
 
   struct Component {
     let kind: Kind
-    let state: () -> ComponentInstallState
+    /// Throws when the on-disk state can't be determined, so a failed read is
+    /// never reported as a verdict.
+    let state: () throws -> ComponentInstallState
     let install: () async throws -> Void
     let uninstall: () throws -> Void
 
     init(
       kind: Kind,
-      state: @escaping () -> ComponentInstallState,
+      state: @escaping () throws -> ComponentInstallState,
       install: @escaping () async throws -> Void,
       uninstall: @escaping () throws -> Void
     ) {
@@ -100,9 +102,95 @@ public nonisolated enum AgentIntegrationError: Error, LocalizedError, Equatable 
   }
 }
 
+/// Raised when a file exists but can't be read, so no install state can be
+/// derived from it. Transient by nature (a wedged filesystem extension, fd
+/// exhaustion, a stuck vnode), so callers re-probe rather than record a failure.
+public nonisolated struct AgentFileUnreadableError: Error, LocalizedError, Equatable {
+  public let displayPath: String
+  public let reason: String
+
+  public init(displayPath: String, reason: String) {
+    self.displayPath = displayPath
+    self.reason = reason
+  }
+
+  public var errorDescription: String? {
+    "Couldn't read \(displayPath): \(reason)"
+  }
+}
+
+/// Filesystem reads that tell "genuinely absent" apart from "couldn't tell".
+/// `FileManager.fileExists` cannot: it is stat-backed and collapses every errno
+/// into `false`, so a denied stat is indistinguishable from a fresh machine.
+nonisolated enum AgentFileProbe {
+  /// `nil` when the file genuinely doesn't exist (a fresh install); throws
+  /// `AgentFileUnreadableError` for every other read failure.
+  static func data(at url: URL) throws -> Data? {
+    do {
+      return try Data(contentsOf: url)
+    } catch {
+      guard isFileNotFound(error) else { throw unreadable(url, error) }
+      return nil
+    }
+  }
+
+  /// UTF-8 counterpart of `data(at:)`. A file that exists but isn't valid
+  /// UTF-8 is unreadable, not absent.
+  static func text(at url: URL) throws -> String? {
+    guard let data = try data(at: url) else { return nil }
+    guard let text = String(data: data, encoding: .utf8) else {
+      throw AgentFileUnreadableError(displayPath: displayPath(url), reason: "The file isn't valid UTF-8.")
+    }
+    return text
+  }
+
+  /// Throws rather than answering `false` when the absence can't be confirmed,
+  /// so a wedge never reads as "the agent isn't installed".
+  static func directoryExists(at url: URL, fileManager: FileManager) throws -> Bool {
+    var isDirectory: ObjCBool = false
+    if fileManager.fileExists(atPath: url.path(percentEncoded: false), isDirectory: &isDirectory) {
+      return isDirectory.boolValue
+    }
+    do {
+      return try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true
+    } catch {
+      guard isFileNotFound(error) else { throw unreadable(url, error) }
+      return false
+    }
+  }
+
+  /// Only a genuine "no such file" counts as absence; everything else (EPERM,
+  /// EIO, EMFILE) means the answer is unknown.
+  static func isFileNotFound(_ error: Error) -> Bool {
+    let nsError = error as NSError
+    switch nsError.domain {
+    case NSCocoaErrorDomain:
+      return nsError.code == NSFileReadNoSuchFileError || nsError.code == NSFileNoSuchFileError
+    case NSPOSIXErrorDomain:
+      return nsError.code == Int(ENOENT)
+    default:
+      return false
+    }
+  }
+
+  private static func unreadable(_ url: URL, _ error: Error) -> AgentFileUnreadableError {
+    AgentFileUnreadableError(
+      displayPath: displayPath(url),
+      reason: (error as NSError).localizedFailureReason ?? error.localizedDescription
+    )
+  }
+
+  /// Home-relative so the message names the file the way the user would.
+  private static func displayPath(_ url: URL) -> String {
+    (url.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
+  }
+}
+
 nonisolated extension AgentIntegration {
-  func state() -> AgentIntegrationState {
-    let states = components.map { $0.state() }
+  /// Throws when any component can't determine its state: aggregating a partial
+  /// read to `.outdated` would arm an unattended rewrite of files we can't read.
+  func state() throws -> AgentIntegrationState {
+    let states = try components.map { try $0.state() }
     if states.allSatisfy({ $0 == .installed }) { return .installed }
     if states.allSatisfy({ $0 == .notInstalled }) { return .notInstalled }
     return .outdated
@@ -113,10 +201,9 @@ nonisolated extension AgentIntegration {
   /// where some hooks are present and others aren't.
   func install() async throws {
     if let requiredDirectory {
-      var isDirectory: ObjCBool = false
-      let exists = fileManager.fileExists(
-        atPath: requiredDirectory.path(percentEncoded: false), isDirectory: &isDirectory)
-      guard exists, isDirectory.boolValue else {
+      // Throws rather than reporting absence, so a wedge never tells the user
+      // to install an agent they already have.
+      guard try AgentFileProbe.directoryExists(at: requiredDirectory, fileManager: fileManager) else {
         throw AgentIntegrationError.notInstalled(agent)
       }
     }

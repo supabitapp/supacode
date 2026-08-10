@@ -355,14 +355,26 @@ struct AgentPresenceFeature {
     let activity: Activity
   }
 
+  /// Build the staged-restore dict from the persisted v2 layouts file. No
+  /// `kill(2)` here; liveness check is the caller's responsibility in `.run`.
+  nonisolated static func stageRestore(from file: LayoutsFile) -> [PresenceKey: StagedRestore] {
+    stageRestore(fromAgentRecords: file.worktrees.values.map { $0.layout.allAgentRecords() })
+  }
+
   /// Build the staged-restore dict from persisted layouts. No `kill(2)` here;
   /// liveness check is the caller's responsibility in `.run`.
   nonisolated static func stageRestore(
     fromLayouts layouts: some Sequence<TerminalLayoutSnapshot>
   ) -> [PresenceKey: StagedRestore] {
+    stageRestore(fromAgentRecords: layouts.map { $0.allAgentRecords() })
+  }
+
+  private nonisolated static func stageRestore(
+    fromAgentRecords all: [[(surfaceID: UUID, records: [TerminalLayoutSnapshot.SurfaceAgentRecord])]]
+  ) -> [PresenceKey: StagedRestore] {
     var staged: [PresenceKey: StagedRestore] = [:]
-    for layout in layouts {
-      for (surfaceID, records) in layout.allAgentRecords() {
+    for layout in all {
+      for (surfaceID, records) in layout {
         for record in records {
           guard let agent = SkillAgent(rawValue: record.agent) else { continue }
           // Pid-less OSC records aren't restore-durable: they persist with no

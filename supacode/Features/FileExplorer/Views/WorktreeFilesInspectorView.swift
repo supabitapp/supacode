@@ -1,0 +1,255 @@
+import AppKit
+import ComposableArchitecture
+import QuickLook
+import SupacodeSettingsShared
+import SwiftUI
+
+/// Inspector pane rendering the selected worktree's file tree via the
+/// outline bridge; all structure lives in `FileExplorerFeature`.
+struct WorktreeFilesInspectorView: View {
+  let store: StoreOf<FileExplorerFeature>
+  /// Installed editors that can open a single file, for the Open With submenu.
+  let fileOpenActions: [OpenWorktreeAction]
+  /// The toolbar's resolved editor, naming the default Open action.
+  let resolvedOpenAction: OpenWorktreeAction?
+  let onOpenFile: (URL, OpenWorktreeAction?) -> Void
+  @State private var bottomBarInset: CGFloat = 0
+
+  var body: some View {
+    FileExplorerPaneContent(
+      store: store,
+      fileOpenActions: fileOpenActions,
+      resolvedOpenAction: resolvedOpenAction,
+      onOpenFile: onOpenFile,
+      bottomBarInset: bottomBarInset
+    )
+    .safeAreaBar(edge: .bottom) {
+      FileExplorerPaneFooter(root: store.context?.root)
+        .onGeometryChange(for: CGFloat.self) {
+          $0.size.height
+        } action: {
+          bottomBarInset = $0
+        }
+    }
+  }
+}
+
+private struct FileExplorerPaneFooter: View {
+  let root: URL?
+
+  var body: some View {
+    // Only the breadcrumb, and only when there's a root: no root means the pane
+    // is showing an unavailable state, which gets no footer bar.
+    if let root {
+      HStack {
+        FileExplorerRootPathControl(url: root)
+        Spacer(minLength: 0)
+      }
+      .padding(.horizontal)
+      // No top padding: the blur fade above provides the breathing room.
+      .padding(.bottom)
+    }
+  }
+}
+
+/// Footer breadcrumb: the worktree root as a native macOS path control. It
+/// carries folder icons, elides when the pane is narrow, and reveals a clicked
+/// component in Finder.
+private struct FileExplorerRootPathControl: NSViewRepresentable {
+  let url: URL
+
+  func makeCoordinator() -> Coordinator { Coordinator() }
+
+  func makeNSView(context: Context) -> NSPathControl {
+    let control = NSPathControl()
+    control.pathStyle = .standard
+    control.isEditable = false
+    control.focusRingType = .none
+    control.backgroundColor = .clear
+    control.font = .preferredFont(forTextStyle: .callout)
+    control.target = context.coordinator
+    control.action = #selector(Coordinator.reveal(_:))
+    // Let the breadcrumb elide rather than force the pane wider.
+    control.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    control.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    return control
+  }
+
+  func updateNSView(_ control: NSPathControl, context: Context) {
+    control.url = url
+    control.toolTip = (url.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
+  }
+
+  final class Coordinator: NSObject {
+    @objc func reveal(_ sender: NSPathControl) {
+      guard let clicked = sender.clickedPathItem?.url else { return }
+      NSWorkspace.shared.activateFileViewerSelecting([clicked])
+    }
+  }
+}
+
+private struct FileExplorerPaneContent: View {
+  let store: StoreOf<FileExplorerFeature>
+  let fileOpenActions: [OpenWorktreeAction]
+  let resolvedOpenAction: OpenWorktreeAction?
+  let onOpenFile: (URL, OpenWorktreeAction?) -> Void
+  let bottomBarInset: CGFloat
+
+  var body: some View {
+    if let context = store.context {
+      switch context.unavailabilityReason {
+      case .remote:
+        FileExplorerUnavailableView(
+          title: "Files Unavailable",
+          description: "The file tree isn't available for remote worktrees yet."
+        )
+      case .missing:
+        FileExplorerUnavailableView(
+          title: "Folder Missing",
+          description: "This worktree's folder is missing on disk."
+        )
+      case nil:
+        FileExplorerTreeContent(
+          store: store,
+          fileOpenActions: fileOpenActions,
+          resolvedOpenAction: resolvedOpenAction,
+          onOpenFile: onOpenFile,
+          bottomBarInset: bottomBarInset
+        )
+      }
+    } else {
+      FileExplorerUnavailableView(
+        title: "No Selection",
+        description: "Select a worktree to browse its files."
+      )
+    }
+  }
+}
+
+private struct FileExplorerTreeContent: View {
+  @Bindable var store: StoreOf<FileExplorerFeature>
+  let fileOpenActions: [OpenWorktreeAction]
+  let resolvedOpenAction: OpenWorktreeAction?
+  let onOpenFile: (URL, OpenWorktreeAction?) -> Void
+  let bottomBarInset: CGFloat
+  @State private var quickLookURL: URL?
+  @Environment(OpenActionIconStore.self) private var iconStore: OpenActionIconStore?
+
+  var body: some View {
+    Group {
+      if let tree = store.activeTree, let rootListing = store.rootListing {
+        FileExplorerOutlineView(
+          tree: tree,
+          fileOpenActions: fileOpenActions,
+          resolvedOpenAction: resolvedOpenAction,
+          menuIcon: menuIcon(for:),
+          actions: FileExplorerOutlineActions(
+            toggleDirectory: { store.send(.directoryToggled($0)) },
+            select: { store.send(.rowSelected($0)) },
+            openFile: onOpenFile,
+            showMore: { store.send(.showMoreTapped(directory: $0)) },
+            quickLook: { quickLookURL = $0 },
+            stageToggle: { store.send(.stageToggled(path: $0)) },
+            discard: { store.send(.discardRequested(path: $0)) },
+            trash: { store.send(.trashRequested(path: $0)) },
+            transferFiles: {
+              store.send(.filesTransferRequested(sources: $0, destinationDirectory: $1, operation: $2))
+            },
+            rename: { store.send(.renameRequested(path: $0, newName: $1)) },
+            createItem: { store.send(.createItemRequested(directory: $0, isDirectory: $1)) },
+            consumePendingRename: { store.send(.pendingRenameConsumed) }
+          ),
+          bottomBarInset: bottomBarInset
+        )
+        // The outline draws under the toolbar (top) and breadcrumb bar (bottom).
+        .ignoresSafeArea(.container, edges: .vertical)
+        .quickLookPreview($quickLookURL)
+        .onDisappear { quickLookURL = nil }
+        // Deletions live in the status snapshot, not the listing, so a folder
+        // whose files were all deleted still mounts the outline for tombstones.
+        // The empty hint sits behind the transparent outline, which keeps its
+        // right-click menu and drops working over the empty area.
+        .background {
+          if rootListing.entries.isEmpty, !rootListing.isTruncated, tree.gitStatus.statuses.isEmpty {
+            FileExplorerUnavailableView(
+              title: "Empty Folder",
+              description: "This worktree has no files."
+            )
+          }
+        }
+      } else if let failure = store.rootFailure {
+        FileExplorerRootFailureView(
+          failure: failure,
+          onRetry: { store.send(.refreshRequested) }
+        )
+      } else {
+        ProgressView()
+          .controlSize(.small)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+    }
+    // A held-over URL would re-present Quick Look on reattach, or preview a
+    // file from a previously selected worktree.
+    .onChange(of: store.activeWorktreeID) { _, _ in
+      quickLookURL = nil
+    }
+    // Finder behavior: while the preview is open, it follows the selection.
+    .onChange(of: store.selectedPath) { _, newPath in
+      guard quickLookURL != nil else { return }
+      guard let newPath, let root = store.context?.root else {
+        quickLookURL = nil
+        return
+      }
+      quickLookURL = root.appending(path: newPath)
+    }
+    .alert($store.scope(state: \.alert, action: \.alert))
+  }
+
+  /// Mirrors `OpenWorktreeActionIcon`: an SF Symbol when the action defines
+  /// one, otherwise the baked app icon; read, never resolved.
+  private func menuIcon(for action: OpenWorktreeAction) -> NSImage? {
+    if let symbolName = action.menuSymbolName {
+      return NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+    }
+    return iconStore?.icon(for: action)
+  }
+}
+
+private struct FileExplorerUnavailableView: View {
+  let title: String
+  let description: String
+
+  var body: some View {
+    ContentUnavailableView(
+      title,
+      systemImage: "folder.badge.questionmark",
+      description: Text(description)
+    )
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+}
+
+private struct FileExplorerRootFailureView: View {
+  let failure: FileExplorerListingError
+  let onRetry: () -> Void
+
+  var body: some View {
+    ContentUnavailableView {
+      Label("Can't Read Folder", systemImage: "folder.badge.questionmark")
+    } description: {
+      Text(description)
+    } actions: {
+      Button("Try Again", action: onRetry)
+        .help("Reload this folder.")
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var description: String {
+    switch failure {
+    case .notFound: "This folder no longer exists on disk."
+    case .permissionDenied: "Supacode doesn't have permission to read this folder."
+    case .unreadable: "This folder can't be read."
+    }
+  }
+}

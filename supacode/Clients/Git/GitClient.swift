@@ -20,6 +20,10 @@ enum GitOperation: String {
   case symbolicHeadRef = "symbolic_head_ref"
   case ignoredFileCount = "ignored_file_count"
   case untrackedFileCount = "untracked_file_count"
+  case fileStatus = "file_status"
+  case stageFile = "stage_file"
+  case unstageFile = "unstage_file"
+  case discardFile = "discard_file"
   case branchDelete = "branch_delete"
   case branchRename = "branch_rename"
   case lineChanges = "line_changes"
@@ -1053,6 +1057,65 @@ struct GitClient {
     }
   }
 
+  /// One-shot uncommitted status for the files inspector. `nil` on a probe
+  /// failure so the caller keeps its last-good snapshot; an empty snapshot is
+  /// genuinely clean. `--no-optional-locks` keeps the poll lock-free, and
+  /// `--ignored=matching` reports a wholly-ignored directory as one entry.
+  nonisolated func fileStatus(at worktreeURL: URL) async -> GitStatusSnapshot? {
+    let path = worktreeURL.path(percentEncoded: false)
+    guard
+      let output = try? await runGit(
+        operation: .fileStatus,
+        arguments: [
+          "-C", path, "--no-optional-locks", "status", "--porcelain=v2", "-z",
+          "--untracked-files=all", "--ignored=matching", "--no-renames",
+        ],
+        localePinned: true
+      )
+    else {
+      return nil
+    }
+    return GitStatusSnapshot.parse(porcelainV2: output)
+  }
+
+  // Mutations pin the C locale so a lock-contention failure classifies by its
+  // English stderr regardless of the user's system language, and pass
+  // `--literal-pathspecs` so a filename with pathspec magic (`*`, `?`, `[`)
+  // never matches beyond the single file the confirmation named.
+  nonisolated func stageFile(_ relativePath: String, in worktreeURL: URL) async throws {
+    let path = worktreeURL.path(percentEncoded: false)
+    // `git add` stages deletions too, so it covers every unstaged change.
+    _ = try await runGit(
+      operation: .stageFile,
+      arguments: ["--literal-pathspecs", "-C", path, "add", "--", relativePath],
+      localePinned: true
+    )
+  }
+
+  nonisolated func unstageFile(_ relativePath: String, in worktreeURL: URL) async throws {
+    let path = worktreeURL.path(percentEncoded: false)
+    // No explicit HEAD: on an unborn branch `git reset` falls back to the empty
+    // tree, where naming HEAD would fail to resolve.
+    _ = try await runGit(
+      operation: .unstageFile,
+      arguments: ["--literal-pathspecs", "-C", path, "reset", "-q", "--", relativePath],
+      localePinned: true
+    )
+  }
+
+  /// Reverts a tracked path's index and worktree to HEAD. The discarded worktree
+  /// content is not recoverable from the reflog, so callers must confirm first.
+  nonisolated func discardTrackedFile(_ relativePath: String, in worktreeURL: URL) async throws {
+    let path = worktreeURL.path(percentEncoded: false)
+    _ = try await runGit(
+      operation: .discardFile,
+      arguments: [
+        "--literal-pathspecs", "-C", path, "restore", "--source=HEAD", "--staged", "--worktree", "--", relativePath,
+      ],
+      localePinned: true
+    )
+  }
+
   nonisolated private func isWorktreeIndexLocked(_ worktreeURL: URL) async -> Bool {
     let headURL = await MainActor.run {
       GitWorktreeHeadResolver.headURL(
@@ -1266,20 +1329,6 @@ struct GitClient {
       } catch {
         throw wrapShellError(error, operation: operation, command: command)
       }
-    }
-  }
-
-  nonisolated private func runLoginShellProcess(
-    operation: GitOperation,
-    executableURL: URL,
-    arguments: [String],
-    currentDirectoryURL: URL?
-  ) async throws -> String {
-    let command = ([executableURL.path(percentEncoded: false)] + arguments).joined(separator: " ")
-    do {
-      return try await shell.runLogin(executableURL, arguments, currentDirectoryURL).stdout
-    } catch {
-      throw wrapShellError(error, operation: operation, command: command)
     }
   }
 
