@@ -858,26 +858,34 @@ private struct PaneTabStripAccessories: View {
 
   var body: some View {
     HStack(spacing: TerminalTabBarMetrics.contentTrailingSpacing) {
-      // Zoom is pane-level state, so its exit control belongs to the strip.
+      // Zoom is pane-level state, so its exit control belongs to the strip;
+      // tint it so the zoomed pane's escape hatch stands out.
       if isZoomed {
         PaneTabStripAccessoryButton(
           title: "Exit Split Zoom",
           systemImage: "arrow.down.right.and.arrow.up.left",
           shortcut: AppShortcuts.toggleSplitZoom,
-          action: { store.send(.toggleZoom(paneID: pane.id)) }
+          isProminent: true,
+          action: toggleZoom
         )
       }
       PaneTabStripNewTabControl(
         canSplit: !isWindowed && selectedLiveContentID != nil,
+        canZoom: canZoom,
         isWindowed: isWindowed,
         newTab: requestNewTab,
         split: requestSplit,
+        toggleZoom: toggleZoom,
         toggleWindowMode: toggleWindowMode
       )
       .disabled(pane.selectedTab == nil)
     }
     .frame(height: TerminalTabBarMetrics.barHeight)
     .padding(.trailing, 8)
+  }
+
+  private var canZoom: Bool {
+    !isWindowed && store.layout.tree.isSplit
   }
 
   private var selectedLiveContentID: ContentID? {
@@ -897,6 +905,10 @@ private struct PaneTabStripAccessories: View {
     store.send(.contentRequestedSplit(content: contentID, direction: direction.paneDirection))
   }
 
+  private func toggleZoom() {
+    store.send(.toggleZoom(paneID: pane.id))
+  }
+
   private func toggleWindowMode() {
     store.send(isWindowed ? .exitWindowMode(paneID: pane.id) : .enterWindowMode(paneID: pane.id))
   }
@@ -907,9 +919,11 @@ private struct PaneTabStripAccessories: View {
 /// window-mode menu on click, with no press-and-hold.
 private struct PaneTabStripNewTabControl: View {
   let canSplit: Bool
+  let canZoom: Bool
   let isWindowed: Bool
   let newTab: () -> Void
   let split: (TerminalSplitMenuDirection) -> Void
+  let toggleZoom: () -> Void
   let toggleWindowMode: () -> Void
 
   @Shared(.settingsFile) private var settingsFile
@@ -931,6 +945,9 @@ private struct PaneTabStripNewTabControl: View {
           .disabled(!canSplit)
         }
         Divider()
+        Button("Toggle Split Zoom", systemImage: "arrow.up.left.and.arrow.down.right", action: toggleZoom)
+          .appKeyboardShortcut(AppShortcuts.toggleSplitZoom.effective(from: settingsFile.global.shortcutOverrides))
+          .disabled(!canZoom)
         Button(
           isWindowed ? "Return to Main Window" : "Move to New Window",
           systemImage: "macwindow.on.rectangle",
@@ -967,6 +984,7 @@ private struct PaneTabStripAccessoryButton: View {
   let title: String
   let systemImage: String
   let shortcut: AppShortcut
+  var isProminent = false
   let action: () -> Void
 
   @Shared(.settingsFile) private var settingsFile
@@ -981,7 +999,7 @@ private struct PaneTabStripAccessoryButton: View {
         .contentShape(.rect)
     }
     .buttonStyle(.plain)
-    .foregroundStyle(.secondary)
+    .foregroundStyle(isProminent ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
     .help(helpText(shortcut: shortcut))
   }
 

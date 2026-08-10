@@ -461,7 +461,7 @@ public enum AppShortcuts {
   )
   public static let confirmWorktreeAction = AppShortcut(
     id: .confirmWorktreeAction,
-    keyEquivalent: .return, ghosttyKeyName: "return", modifiers: .command
+    keyEquivalent: .return, ghosttyKeyName: "enter", modifiers: .command
   )
   public static let selectNextWorktree = AppShortcut(
     id: .selectNextWorktree,
@@ -545,7 +545,7 @@ public enum AppShortcuts {
   )
   public static let toggleSplitZoom = AppShortcut(
     id: .toggleSplitZoom,
-    keyEquivalent: .return, ghosttyKeyName: "return", modifiers: [.command, .shift]
+    keyEquivalent: .return, ghosttyKeyName: "enter", modifiers: [.command, .shift]
   )
   public static let equalizeSplits = AppShortcut(
     id: .equalizeSplits, key: "=", modifiers: [.command, .shift], isEnabledByDefault: false

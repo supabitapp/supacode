@@ -369,7 +369,7 @@ extension AppShortcutOverride {
     case kVK_RightArrow: "arrow_right"
     case kVK_UpArrow: "arrow_up"
     case kVK_DownArrow: "arrow_down"
-    case kVK_Return: "return"
+    case kVK_Return: "enter"
     case kVK_Escape: "escape"
     case kVK_Delete: "backspace"
     case kVK_Tab: "tab"

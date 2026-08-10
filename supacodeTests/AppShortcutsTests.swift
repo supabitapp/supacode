@@ -217,6 +217,16 @@ struct AppShortcutsTests {
     )
   }
 
+  @Test func returnKeyedShortcutsUnbindWithGhosttyEnterToken() {
+    // Ghostty 1.2+ names the key `enter`; the legacy `return` token fails to
+    // parse and silently leaves the default chord bound inside Ghostty.
+    #expect(AppShortcuts.toggleSplitZoom.ghosttyUnbindConfigLine == "keybind = shift+super+enter=unbind")
+    #expect(AppShortcuts.confirmWorktreeAction.ghosttyUnbindConfigLine == "keybind = super+enter=unbind")
+    let lines = AppShortcuts.ghosttyKeybindConfigLines(from: [:])
+    #expect(lines.contains("keybind = shift+super+enter=unbind"))
+    #expect(lines.contains("keybind = super+enter=unbind"))
+  }
+
   @Test func everyShortcutKeyRoundTripsThroughTheDecodeMap() {
     // A stable key missing from the decode map does not merely drop the
     // override: the dictionary decode throws and the whole settings file
