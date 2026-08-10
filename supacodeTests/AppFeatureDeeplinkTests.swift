@@ -208,7 +208,11 @@ struct AppFeatureDeeplinkTests {
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .tabMove(tabID: UUID(), direction: .right))))
     await store.finish()
-    #expect(!sent.value.contains { if case .moveTabToSplit = $0 { return true }; return false })
+    #expect(
+      !sent.value.contains {
+        if case .moveTabToSplit = $0 { return true }
+        return false
+      })
     #expect(store.state.alert != nil)
   }
 
@@ -255,7 +259,11 @@ struct AppFeatureDeeplinkTests {
     await store.send(.deeplink(.worktree(id: worktree.id, action: .paneDestroy(token: UUID()))))
     await store.finish()
     // A destructive pane close waits for confirmation; nothing is torn down yet.
-    #expect(!sent.value.contains { if case .closePane = $0 { return true }; return false })
+    #expect(
+      !sent.value.contains {
+        if case .closePane = $0 { return true }
+        return false
+      })
   }
 
   @Test(.dependencies) func paneFocusOnMissingPaneAlertsInsteadOfAcking() async {
@@ -276,7 +284,11 @@ struct AppFeatureDeeplinkTests {
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .paneFocus(token: UUID()))))
     await store.finish()
-    #expect(!sent.value.contains { if case .focusPane = $0 { return true }; return false })
+    #expect(
+      !sent.value.contains {
+        if case .focusPane = $0 { return true }
+        return false
+      })
     #expect(store.state.alert != nil)
   }
 

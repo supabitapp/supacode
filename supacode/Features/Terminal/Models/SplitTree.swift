@@ -143,10 +143,18 @@ nonisolated struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
     let splitDirection: Direction
     let newViewOnLeft: Bool
     switch direction {
-    case .left: splitDirection = .horizontal; newViewOnLeft = true
-    case .right: splitDirection = .horizontal; newViewOnLeft = false
-    case .top: splitDirection = .vertical; newViewOnLeft = true
-    case .down: splitDirection = .vertical; newViewOnLeft = false
+    case .left:
+      splitDirection = .horizontal
+      newViewOnLeft = true
+    case .right:
+      splitDirection = .horizontal
+      newViewOnLeft = false
+    case .top:
+      splitDirection = .vertical
+      newViewOnLeft = true
+    case .down:
+      splitDirection = .vertical
+      newViewOnLeft = false
     }
     let newLeaf: Node = .leaf(view: view)
     let wrapped: Node = .split(

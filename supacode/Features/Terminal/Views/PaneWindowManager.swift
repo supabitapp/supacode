@@ -348,7 +348,8 @@ final class PaneWindowManager {
       return nil
     }
     guard
-      let layoutStore = appStore
+      let layoutStore =
+        appStore
         .scope(state: \.terminals, action: \.terminals)
         .scope(state: \.layouts[id: worktreeID], action: \.layouts[id: worktreeID])
     else {
@@ -393,7 +394,8 @@ final class PaneWindowManager {
       self?.handleShortcut(event, worktreeID: worktreeID, paneID: paneID) ?? false
     }
     window.minSize = NSSize(width: 320, height: 240)
-    window.title = terminalManager.layoutState(for: worktreeID)?.layout.panes[id: paneID]
+    window.title =
+      terminalManager.layoutState(for: worktreeID)?.layout.panes[id: paneID]
       .flatMap(WindowedPaneRootView.title(for:)) ?? "Terminal"
     window.center()
     cascadePoint = window.cascadeTopLeft(from: cascadePoint)

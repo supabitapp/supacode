@@ -461,9 +461,15 @@ private struct PaneSplitDropZones: View {
         direction: band.far, pane: pane, store: store, dragModel: dragModel)
       Group {
         if band.isVertical {
-          VStack(spacing: 0) { near; far }.frame(width: PaneSplitDropMetrics.dividerBand)
+          VStack(spacing: 0) {
+            near
+            far
+          }.frame(width: PaneSplitDropMetrics.dividerBand)
         } else {
-          HStack(spacing: 0) { near; far }.frame(height: PaneSplitDropMetrics.dividerBand)
+          HStack(spacing: 0) {
+            near
+            far
+          }.frame(height: PaneSplitDropMetrics.dividerBand)
         }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: band.alignment)

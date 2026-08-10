@@ -324,7 +324,8 @@ struct WorktreeDetailView: View {
     // (isEnabled, token) dedup keeps AppKit from rebuilding the menu.
     let hasFocusedTab = Self.hasFocusedTab(in: state, worktreeID: state.repositories.selectedWorktreeID)
     let hasRunningRunScript = state.hasRunningRunScript
-    return content
+    return
+      content
       // Open is enabled only when the resolved editor can open the selection
       // (`resolvedSelection != nil`), which already folds in remote capability.
       .focusedSceneAction(\.openSelectedWorktreeAction, enabled: resolvedSelection != nil) {
