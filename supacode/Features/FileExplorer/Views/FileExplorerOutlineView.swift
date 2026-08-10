@@ -203,6 +203,7 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     /// Suppresses delegate feedback while state is applied programmatically.
     private var isApplyingState = false
 
+    // swiftlint:disable:next function_parameter_count
     func apply(
       tree: FileExplorerFeature.TreeState,
       fileOpenActions: [OpenWorktreeAction],
@@ -1326,6 +1327,7 @@ private final class FileExplorerEntryCellView: NSTableCellView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { nil }
 
+  // swiftlint:disable:next function_parameter_count
   func configure(
     with entry: FileExplorerEntry,
     isLoading: Bool,
