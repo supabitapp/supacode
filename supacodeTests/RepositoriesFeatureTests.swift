@@ -8246,6 +8246,10 @@ struct RepositoriesFeatureTests {
       $0.shouldRestoreLastFocusedWorktree = false
       $0.isInitialLoadComplete = true
       $0.reconcileSidebarForTesting()
+      // The restored selection arms its terminal focus synchronously so the
+      // detail view mounts with it set and focus lands in the focused pane on
+      // launch instead of staying on the sidebar.
+      $0.sidebarItems[id: worktreeB.id]?.shouldFocusTerminal = true
     }
     await store.receive(\.delegate.repositoriesChanged)
     await store.receive(\.delegate.selectedWorktreeChanged)

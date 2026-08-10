@@ -54,6 +54,11 @@ final class WorktreeContentHost {
   @ObservationIgnored private var lastCustomNotificationAt: [UUID: any InstantProtocol<Duration>] = [:]
   @ObservationIgnored private var pendingAgentOSCNotifications: [UUID: Task<Void, Never>] = [:]
   @ObservationIgnored private var lastEmittedFocusSurfaceId: UUID?
+  /// A focus request that arrived before its surface was live (launch restore of
+  /// a hibernated tab). Resolved by `applySurfaceActivity` once the focused
+  /// surface is live and its window is key; it targets whatever pane is focused
+  /// then, so it follows the user, and is cleared on worktree deselection.
+  @ObservationIgnored private var pendingFocusClaim = false
   @ObservationIgnored private(set) var isWorktreeSelected = false
   private var lastWindowIsKey: Bool?
   private var lastWindowIsVisible: Bool?
@@ -640,6 +645,9 @@ final class WorktreeContentHost {
     if let focusTarget, let window = focusTarget.window, window.firstResponder is GhosttySurfaceView {
       window.makeFirstResponder(focusTarget)
     }
+    // Land a latched launch/restore focus now that the surface may be live and
+    // keyed; a cheap no-op unless a claim is pending.
+    resolvePendingFocus()
   }
 
   func reassertSurfaceActivity() {
@@ -663,6 +671,9 @@ final class WorktreeContentHost {
   func setWorktreeSelected(_ selected: Bool) {
     guard isWorktreeSelected != selected else { return }
     isWorktreeSelected = selected
+    // Leaving the worktree cancels an unresolved focus claim; re-selecting
+    // re-arms it through `focusSelectedTab`.
+    if !selected { pendingFocusClaim = false }
     reassertSurfaceActivity()
   }
 
@@ -691,8 +702,49 @@ final class WorktreeContentHost {
   }
 
   func focusSelectedTab() {
-    guard let contentID = focusedContentID, let surface = liveSurface(contentID) else { return }
-    surface.requestFocus()
+    guard let contentID = focusedContentID, let surface = liveSurface(contentID),
+      surface.window?.isKeyWindow == true
+    else {
+      // Surface not live or window not yet key (launch restore of a hibernated
+      // tab): latch the intent. `applySurfaceActivity` claims it when the
+      // window-key or layout event that satisfies it fires; nothing polls.
+      pendingFocusClaim = true
+      return
+    }
+    claimFocus(surface)
+  }
+
+  /// Makes the focused surface first responder and reconciles every surface's
+  /// focus flag, so only the focused pane shows a cursor.
+  private func claimFocus(_ surface: GhosttySurfaceView) {
+    pendingFocusClaim = false
+    if surface.window?.firstResponder !== surface {
+      surface.requestFocus()
+    }
+    // The host is created after the window-activity observer fires, so it can
+    // miss the initial key event and leave `lastWindowIsKey` nil; sync from the
+    // surface's real window so `applySurfaceActivity` marks this pane focused
+    // and clears its siblings, instead of clearing all of them.
+    guard let window = surface.window else {
+      reassertSurfaceActivity()
+      return
+    }
+    syncFocus(windowIsKey: window.isKeyWindow, windowIsVisible: window.isVisible)
+  }
+
+  /// Claims first responder for the latched focus once the focused surface is
+  /// live and its window is key. Driven by `applySurfaceActivity`, which runs on
+  /// window-key changes and layout changes, so a launch-restore claim armed
+  /// before either is met lands as soon as both are. A no-op until then.
+  @discardableResult
+  private func resolvePendingFocus() -> Bool {
+    guard pendingFocusClaim, isWorktreeSelected,
+      let contentID = focusedContentID,
+      let surface = liveSurface(contentID),
+      surface.window?.isKeyWindow == true
+    else { return false }
+    claimFocus(surface)
+    return true
   }
 
   func focusAndInsertText(_ text: String) {

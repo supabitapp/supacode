@@ -62,6 +62,10 @@ struct WorktreeLayoutView: View {
       }
       syncResolvedWindowActivity()
     }
+    // Catch a focus intent that lands after the first appearance.
+    .onChange(of: forceAutoFocus) { _, focus in
+      if focus { host?.focusSelectedTab() }
+    }
     .onChange(of: selectedContentID) {
       if shouldAutoFocusTerminal {
         host?.focusSelectedTab()

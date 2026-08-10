@@ -342,6 +342,11 @@ final class WorktreeTerminalManager {
         tabID: id, customTitle: title, focusing: focusing, anchor: anchor)
     case .ensureInitialTab(let worktree, let runSetupScriptIfNew, let focusing):
       ensureInitialTab(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, focusing: focusing)
+      // Arm terminal focus on the just-created host; it claims first responder
+      // immediately when the surface is live and keyed, else once it becomes so.
+      if focusing {
+        host(for: worktree).focusSelectedTab()
+      }
     case .stopRunScript(let worktree, let focusing):
       stopBlockingScripts(in: worktree) { host in
         self.closeBlockingTabs(in: worktree, host: host, focusing: focusing) { $0.isRunKind }

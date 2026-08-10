@@ -525,6 +525,13 @@ struct AppFeature {
         // tab already made and `enableSetupScriptIfNeeded` refuses to re-arm it.
         let runSetupScriptIfNew =
           state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
+        // `shouldFocusTerminal` may already be armed before this delegate fires
+        // (launch restore, or a sidebar selection that requested focus first),
+        // so read it here and drive focus through the activation command: the
+        // content host is created after the view appears, so view-level
+        // auto-focus races host creation and loses. The flag itself is consumed
+        // by the detail view on appear.
+        let wantsFocus = state.repositories.sidebarItems[id: worktree.id]?.shouldFocusTerminal == true
         return .merge(
           .run { _ in
             await terminalClient.send(.setSelectedWorktreeID(worktree.id))
@@ -533,7 +540,7 @@ struct AppFeature {
             // A worktree selected for the first time (fresh install, empty
             // migration) still needs its bootstrap tab; no-op when populated.
             await terminalClient.send(
-              .ensureInitialTab(worktree, runSetupScriptIfNew: runSetupScriptIfNew, focusing: false))
+              .ensureInitialTab(worktree, runSetupScriptIfNew: runSetupScriptIfNew, focusing: wantsFocus))
           },
           .run { _ in
             await worktreeInfoWatcher.send(.setSelectedWorktreeID(worktree.id))

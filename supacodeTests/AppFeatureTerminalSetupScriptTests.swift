@@ -253,6 +253,39 @@ struct AppFeatureTerminalSetupScriptTests {
     )
   }
 
+  @Test(.dependencies) func selectedWorktreeChangedArmsTerminalFocusWhenRequested() async {
+    let worktree = makeWorktree()
+    var repositoriesState = makeRepositoriesState(
+      worktree: worktree,
+      pendingSetupScript: false,
+      selected: true
+    )
+    // A launch restore (or a focus-requesting selection) arms this before the
+    // delegate fires.
+    repositoriesState.sidebarItems[id: worktree.id]?.shouldFocusTerminal = true
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let storage = SettingsTestStorage()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+      $0.worktreeInfoWatcher.send = { _ in }
+      $0.settingsFileStorage = storage.storage
+      $0.settingsFileURL = URL(fileURLWithPath: "/tmp/supacode-settings-\(UUID().uuidString).json")
+    }
+    store.exhaustivity = .off
+
+    await store.send(.repositories(.delegate(.selectedWorktreeChanged(worktree))))
+    await store.finish()
+    // The activation command carries the focus intent so the host claims focus.
+    #expect(sent.value.contains(.ensureInitialTab(worktree, runSetupScriptIfNew: false, focusing: true)))
+  }
+
   private func makeRepositoriesState(
     worktree: Worktree,
     pendingSetupScript: Bool,

@@ -5084,6 +5084,13 @@ struct RepositoriesFeature {
       state.shouldRestoreLastFocusedWorktree = false
       if state.selection == nil, state.isSelectionValid(state.sidebar.focusedWorktreeID) {
         state.selection = state.sidebar.focusedWorktreeID.map(SidebarSelection.worktree)
+        // Arm the restored worktree's terminal focus synchronously with the
+        // selection so the detail view mounts with it already set; a follow-up
+        // effect would land after the view's first appearance and be missed,
+        // leaving keyboard focus on the sidebar.
+        if let focusedID = state.sidebar.focusedWorktreeID {
+          state.sidebarItems[id: focusedID]?.shouldFocusTerminal = true
+        }
       }
     }
     if state.selection == nil, state.shouldSelectFirstAfterReload {

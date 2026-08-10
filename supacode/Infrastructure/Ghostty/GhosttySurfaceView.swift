@@ -1120,6 +1120,11 @@ final class GhosttySurfaceView: NSView, Identifiable {
     bridge.surface = surface
     lastOcclusion = nil
     lastSurfaceFocus = nil
+    // A new Ghostty surface defaults to focused (solid cursor), but `focused`
+    // starts false, so `focusDidChange(false)` would dedup and never clear it,
+    // leaving every restored pane's cursor solid. Start unfocused to agree with
+    // `focused`; the focus flow sets the truly focused pane solid.
+    setSurfaceFocus(false)
     updateSurfaceSize()
   }
 
