@@ -770,6 +770,27 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.appearanceMode == .light)
   }
 
+  @Test(.dependencies) func decodesMistypedChromeTextSizeAsDefaultWithoutDiscardingTheFile() throws {
+    // A hand-edit can produce the wrong JSON type, not just an unknown string;
+    // the `try?` on the String decode must swallow it so one bad field can't
+    // reset the file.
+    let json = """
+      {"global":{"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
+      "updatesAutomaticallyDownloadUpdates":false,"chromeTextSize":3},"repositories":{}}
+      """
+    let storage = MutableTestStorage(initialData: Data(json.utf8))
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.chromeTextSize == .default)
+    #expect(settings.global.appearanceMode == .light)
+  }
+
   @Test(.dependencies) func roundTripsExplicitChromeTextSize() throws {
     let storage = SettingsTestStorage()
 

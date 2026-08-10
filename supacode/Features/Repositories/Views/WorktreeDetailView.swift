@@ -1093,6 +1093,8 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
   // appended by the toolbar) so the group isn't doubled; cold boot keeps them.
   var includesStatusSkeleton: Bool = true
 
+  @Shared(.settingsFile) private var settingsFile
+
   var body: some ToolbarContent {
     ToolbarItem(placement: .navigation) {
       TerminalSchemeHost(scheme: scheme) {
@@ -1107,6 +1109,9 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
         }
         .redacted(reason: .placeholder)
         .shimmer(isActive: true)
+        // `TerminalSchemeHost` re-hosts in a fresh `NSHostingView`, so the size
+        // must be published inside the closure to travel with the content.
+        .appChromeTextSize(settingsFile.global.chromeTextSize)
       }
     }
     .sharedBackgroundVisibility(.hidden)

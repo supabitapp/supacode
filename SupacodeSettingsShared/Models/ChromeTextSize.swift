@@ -1,13 +1,9 @@
 import Foundation
 
-/// Size of the app chrome's text: the sidebar, tab bar, toolbars, and Settings.
-/// A fixed set of sizes rather than a free-form scale, so the layout only has to
-/// hold at three known points.
-///
-/// The size is applied by resolving each semantic font explicitly (see
-/// `View.appFont`), because macOS SwiftUI does not resize text in response to
-/// `dynamicTypeSize`. The Ghostty terminal surface is NSView-backed with its own
-/// font system and is unaffected.
+/// Accessibility size for the app chrome's text. A fixed set of sizes rather
+/// than a free-form scale, so the layout only has to hold at three known points.
+/// Applied by resolving each semantic font explicitly (see `View.appFont`),
+/// because macOS SwiftUI does not resize text for Dynamic Type.
 public nonisolated enum ChromeTextSize: String, CaseIterable, Codable, Identifiable, Sendable {
   case standard
   case large

@@ -19,8 +19,11 @@ public struct AccessibilitySettingsView: View {
             Text(size.label).tag(size)
           }
         } label: {
+          // Scale the control's own label so the pane previews the chosen size.
           Text("Text size")
+            .appFont(.body)
           Text("Sizes the sidebar, tab bar, toolbars, and Settings text. The terminal has its own font size.")
+            .appFontInheriting(.footnote)
         }
       }
     }

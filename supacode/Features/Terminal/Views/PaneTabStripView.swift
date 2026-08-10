@@ -330,7 +330,7 @@ private struct PaneTabDragPreview: View {
 
   var body: some View {
     Text(title)
-      .font(.callout)
+      .appFont(.callout)
       .lineLimit(1)
       .padding(.horizontal, 10)
       .padding(.vertical, 5)
@@ -616,7 +616,7 @@ private struct PaneTabView: View {
   private var renameField: some View {
     TextField("", text: $editingTitle)
       .textFieldStyle(.plain)
-      .font(.caption)
+      .appFont(.caption)
       .focused($isFieldFocused)
       .foregroundStyle(TerminalTabBarColors.activeText)
       .accessibilityLabel("Rename tab")
@@ -724,7 +724,7 @@ private struct PaneTabTitleLabel: View, Equatable {
 
   var body: some View {
     Text(title)
-      .font(.caption)
+      .appFont(.caption)
       .fontWeight(isSelected ? .semibold : .regular)
       .lineLimit(1)
       .foregroundStyle(TerminalTabBarColors.activeText)
@@ -737,9 +737,9 @@ private struct PaneTabShortcutHintText: View {
 
   var body: some View {
     Text(hint)
-      .font(.caption)
+      .appFont(.caption)
       // Explicit `.regular` because the tab bar lacks the sidebar's
-      // List/vibrancy context, where `.font(.caption)` would otherwise render
+      // List/vibrancy context, where the semantic caption would otherwise render
       // heavier.
       .fontWeight(.regular)
       .foregroundStyle(.secondary)

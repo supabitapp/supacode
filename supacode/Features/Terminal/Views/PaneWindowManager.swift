@@ -544,6 +544,8 @@ private struct WindowedPaneRootView: View {
   /// The manager-maintained repository and worktree line.
   let header: PaneWindowHeaderModel
 
+  @Shared(.settingsFile) private var settingsFile
+
   var body: some View {
     // Re-read config-derived colors on every Ghostty config reload.
     let _ = manager.configGeneration
@@ -666,6 +668,9 @@ private struct WindowedPaneRootView: View {
     .background(WindowChromeObserver(runtime: manager.ghosttyRuntime))
     .environment(ghosttyShortcuts)
     .environment(commandKeyObserver)
+    // Windowed panes host in their own `NSHostingView`, so republish the chrome
+    // text size here the same way the main pane tree does.
+    .appChromeTextSize(settingsFile.global.chromeTextSize)
   }
 
   private func requestCloseSelectedTab(of pane: Pane) {
@@ -695,7 +700,7 @@ private struct PaneWindowHeaderView: View {
 
   var body: some View {
     Text(title)
-      .font(.caption)
+      .appFont(.caption)
       .fontWeight(.semibold)
       .foregroundStyle(.secondary)
       .lineLimit(1)

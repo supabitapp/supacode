@@ -10,6 +10,7 @@ struct CommandPaletteOverlayView: View {
   @FocusState private var isQueryFocused: Bool
   @State private var hoveredID: CommandPaletteItem.ID?
   @State private var filteredItems: [CommandPaletteItem] = []
+  @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
     // The card fills the glass panel edge to edge; positioning, the material
@@ -53,6 +54,9 @@ struct CommandPaletteOverlayView: View {
       let updatedItems = refreshFilteredItems(items: items)
       updateSelection(rows: updatedItems)
     }
+    // The palette hosts in its own `NSHostingView`, so republish the chrome
+    // text size here to reach the query field and rows.
+    .appChromeTextSize(settingsFile.global.chromeTextSize)
   }
 
   private func updateSelection(rows: [CommandPaletteItem]) {
@@ -198,7 +202,7 @@ private struct CommandPaletteQuery: View {
   var body: some View {
     TextField(placeholder, text: $query)
       .padding()
-      .font(.title3.weight(.light))
+      .appFont(.title3, weight: .light)
       .frame(height: Self.fieldHeight)
       .textFieldStyle(.plain)
       .focused($isTextFieldFocused)
@@ -410,6 +414,7 @@ private struct CommandPaletteRowView: View {
           // subtitle for git rows and with the title for folders (no subtitle).
           HStack(spacing: 3) {
             Text(titleText)
+              .appFont(.body)
               .fontWeight(emphasis ? .medium : .regular)
               .foregroundStyle(titleForegroundStyle)
             if row.subtitle == nil, let hostInfo = row.worktreeStyle?.hostInfo {
@@ -420,7 +425,7 @@ private struct CommandPaletteRowView: View {
           if let subtitle = row.subtitle {
             HStack(spacing: 3) {
               Text(subtitle)
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(subtitleForegroundStyle)
               if let hostInfo = row.worktreeStyle?.hostInfo {
                 CommandPaletteRemoteHostBadge(hostInfo: hostInfo)
@@ -433,7 +438,7 @@ private struct CommandPaletteRowView: View {
 
         if let badge, !badge.isEmpty {
           Text(badge)
-            .font(.caption2.weight(.medium))
+            .appFont(.caption2, weight: .medium)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(

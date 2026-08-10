@@ -148,7 +148,7 @@ private struct GitInspectorHeader: View {
   var body: some View {
     HStack {
       Text("Pull Request")
-        .font(.headline)
+        .appFont(.headline)
       Spacer()
       if let url = URL(string: pullRequest.url) {
         Button {
@@ -213,12 +213,12 @@ private struct GitInspectorContent: View {
               .foregroundStyle(.secondary)
           }
           Text(pullRequest.title)
-            .font(.headline)
+            .appFont(.headline)
             .textSelection(.enabled)
           Text(
             "`\(pullRequest.baseRefName ?? "base")` ← `\(pullRequest.headRefName ?? "branch")`"
           )
-          .font(.subheadline)
+          .appFont(.subheadline)
           .monospaced()
           .foregroundStyle(.secondary)
         }
@@ -245,7 +245,7 @@ private struct GitInspectorContent: View {
             PullRequestChecksRingView(breakdown: breakdown)
             Text(breakdown.summaryText)
               .foregroundStyle(.secondary)
-              .font(.callout)
+              .appFont(.callout)
           }
           ForEach(sortedChecks, id: \.self) { check in
             CheckRow(check: check)
@@ -416,7 +416,7 @@ private struct CheckRowLabel: View {
         .lineLimit(1)
       Spacer()
       Text(style.label)
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
     }
   }
@@ -439,7 +439,7 @@ private struct PullRequestMergeQueueRow: View {
       }
       if let detail = status.detail {
         Text(detail)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
       }
     }
@@ -523,7 +523,7 @@ private struct NotificationsInspectorContent: View {
       if !groups.isEmpty {
         HStack {
           Text("Notifications")
-            .font(.headline)
+            .appFont(.headline)
           Spacer()
           Button("Dismiss All", action: onDismissAll)
             .buttonStyle(.borderless)
@@ -586,7 +586,7 @@ private struct NotificationWorktreeHeader: View {
           .foregroundStyle(.secondary)
       }
     }
-    .font(.subheadline.weight(.medium))
+    .appFont(.subheadline, weight: .medium)
     .lineLimit(1)
     .textCase(nil)
   }
@@ -615,14 +615,14 @@ private struct NotificationRow: View {
         VStack(alignment: .leading, spacing: 2) {
           HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(title)
-              .font(.subheadline.weight(.semibold))
+              .appFont(.subheadline, weight: .semibold)
               .foregroundStyle(notification.isRead ? Color.secondary : Color.primary)
               .lineLimit(1)
             Spacer(minLength: 6)
             // Self-updating relative time; no shared clock needed, so a row's
             // markdown body is never re-parsed just to advance the timestamp.
             Text(notification.createdAt, style: .relative)
-              .font(.caption)
+              .appFont(.caption)
               .foregroundStyle(.tertiary)
               .lineLimit(1)
               .fixedSize()
@@ -634,7 +634,7 @@ private struct NotificationRow: View {
           }
           if !notification.body.isEmpty {
             Text(Self.markdown(notification.body))
-              .font(.callout)
+              .appFont(.callout)
               .foregroundStyle(notification.isRead ? Color.secondary : Color.primary)
               .fixedSize(horizontal: false, vertical: true)
               .frame(maxWidth: .infinity, alignment: .leading)
@@ -673,7 +673,7 @@ private struct PrunedNotificationRow: View {
         VStack(alignment: .leading, spacing: 2) {
           HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(title)
-              .font(.subheadline.weight(.semibold))
+              .appFont(.subheadline, weight: .semibold)
               .foregroundStyle(.primary)
               .lineLimit(1)
             Spacer(minLength: 6)
@@ -683,7 +683,7 @@ private struct PrunedNotificationRow: View {
               .accessibilityHidden(true)
           }
           Text("Cleared per your Notification settings.")
-            .font(.callout)
+            .appFont(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -712,7 +712,7 @@ private struct NotificationSourceIcon: View {
       AgentBadgeView(agent: agent, size: 22)
     } else {
       Image(systemName: "bell.fill")
-        .font(.caption2)
+        .appFont(.caption2)
         .foregroundStyle(.secondary)
         .frame(width: 22, height: 22)
         .background(.bar, in: .circle)

@@ -702,6 +702,7 @@ struct SupacodeApp: App {
         .environment(ghosttyShortcuts)
         .environment(commandKeyObserver)
         .appChromeTextSize(store.settings.chromeTextSize)
+        .appChromeBaseFont(store.settings.chromeTextSize)
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbarColorScheme(store.settings.appearanceMode.colorScheme, for: .windowToolbar)
         .movesSettingsWindowToActiveSpace()
@@ -713,6 +714,7 @@ struct SupacodeApp: App {
     Window("Deeplink Reference", id: WindowID.deeplinkReference) {
       DeeplinkReferenceView()
         .appChromeTextSize(store.settings.chromeTextSize)
+        .appChromeBaseFont(store.settings.chromeTextSize)
     }
     .handlesExternalEvents(matching: [])
     .windowToolbarStyle(.unified)
@@ -721,6 +723,7 @@ struct SupacodeApp: App {
     Window("CLI Reference", id: WindowID.cliReference) {
       CLIReferenceView()
         .appChromeTextSize(store.settings.chromeTextSize)
+        .appChromeBaseFont(store.settings.chromeTextSize)
     }
     .handlesExternalEvents(matching: [])
     .windowToolbarStyle(.unified)

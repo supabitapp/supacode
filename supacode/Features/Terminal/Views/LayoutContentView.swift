@@ -75,6 +75,8 @@ struct LayoutPaneTreeView: View {
   var ghosttyShortcuts: GhosttyShortcutManager?
   var commandKeyObserver: CommandKeyObserver?
 
+  @Shared(.settingsFile) private var settingsFile
+
   var body: some View {
     Group {
       if let node = store.layout.tree.visibleNode {
@@ -92,6 +94,9 @@ struct LayoutPaneTreeView: View {
     }
     .environment(ghosttyShortcuts)
     .environment(commandKeyObserver)
+    // The pane tree is hosted in a fresh `NSHostingView`, so the scene's chrome
+    // text size has to be republished here to reach the tab strip.
+    .appChromeTextSize(settingsFile.global.chromeTextSize)
   }
 }
 
