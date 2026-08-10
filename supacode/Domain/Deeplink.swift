@@ -72,7 +72,6 @@ enum Deeplink: Equatable, Sendable {
   /// Settings sections reachable via deeplink.
   enum DeeplinkSettingsSection: String, Equatable, Sendable {
     case general
-    case accessibility
     case notifications
     case worktrees
     case developer

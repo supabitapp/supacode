@@ -18,6 +18,8 @@ struct WorktreeStatusInspectorContainer: View {
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
   let onOpenFile: (URL, OpenWorktreeAction?) -> Void
 
+  @Shared(.settingsFile) private var settingsFile
+
   var body: some View {
     Group {
       switch pane {
@@ -44,6 +46,9 @@ struct WorktreeStatusInspectorContainer: View {
         )
       }
     }
+    // The panes are Forms of implicit-font labels (LabeledContent, checks,
+    // actions); raise the base font so they scale like the explicit chrome.
+    .appChromeBaseFont(settingsFile.global.chromeTextSize)
     .inspectorForcedAppearance(terminalManager.surfaceBackgroundColorScheme())
   }
 }

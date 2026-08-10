@@ -15,7 +15,7 @@ public nonisolated enum ChromeTextSize: String, CaseIterable, Codable, Identifia
 
   public var label: String {
     switch self {
-    case .standard: "Default"
+    case .standard: "Regular"
     case .large: "Large"
     case .extraLarge: "Extra Large"
     }

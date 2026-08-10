@@ -3680,7 +3680,6 @@ struct AppFeature {
     let settingsSection: SettingsSection =
       switch section {
       case .general: .general
-      case .accessibility: .accessibility
       case .notifications: .notifications
       case .worktrees: .worktree
       case .developer: .developer
