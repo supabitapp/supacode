@@ -33,6 +33,7 @@ struct SidebarBottomCardTests {
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .promptInstall,
+        layoutModes: .visible,
         fileExplorerBeta: .visible,
         menuBarOnboarding: .visible,
         remoteRepositoriesBeta: .visible,
@@ -44,11 +45,49 @@ struct SidebarBottomCardTests {
     #expect(resolved == .agent(.promptInstall))
   }
 
-  @Test func fileExplorerBetaWinsOverOlderCards() {
+  @Test func layoutModesWinsOverOlderCards() {
     // Newest card: it pre-empts every announcement below the agent prompt.
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .hidden,
+        layoutModes: .visible,
+        fileExplorerBeta: .visible,
+        menuBarOnboarding: .visible,
+        remoteRepositoriesBeta: .visible,
+        terminalPersistence: .visible,
+        highlight: .visible,
+        nestedOnboarding: .visible
+      )
+    )
+    #expect(resolved == .layoutModes)
+  }
+
+  @Test func layoutModesTransitionTokenIsStable() {
+    #expect(SidebarBottomCardView.Slot.layoutModes.transitionToken == "layoutModes:visible")
+  }
+
+  @Test func layoutModesVisibleWhenNotDismissed() {
+    #expect(LayoutModesCardView.resolveMode(dismissedAt: .distantPast) == .visible)
+  }
+
+  @Test func layoutModesHiddenWhenDismissedAfterRelevance() {
+    let afterRelevance = LayoutModesCardView.cardRelevantSinceDate.addingTimeInterval(1)
+    #expect(LayoutModesCardView.resolveMode(dismissedAt: afterRelevance) == .hidden)
+  }
+
+  @Test func layoutModesHiddenWhenDismissedAtRelevanceBoundary() {
+    // The relevance date must be on-or-before the ship date so a dismiss on
+    // release day stays sticky.
+    let atBoundary = LayoutModesCardView.cardRelevantSinceDate
+    #expect(LayoutModesCardView.resolveMode(dismissedAt: atBoundary) == .hidden)
+  }
+
+  @Test func fileExplorerBetaWinsOverOlderCards() {
+    // Pre-empts every announcement below it once the newer layout card is gone.
+    let resolved = SidebarBottomCardView.Slot.resolve(
+      cards: .init(
+        agent: .hidden,
+        layoutModes: .hidden,
         fileExplorerBeta: .visible,
         menuBarOnboarding: .visible,
         remoteRepositoriesBeta: .visible,
@@ -84,6 +123,7 @@ struct SidebarBottomCardTests {
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .hidden,
+        layoutModes: .hidden,
         fileExplorerBeta: .hidden,
         menuBarOnboarding: .visible,
         remoteRepositoriesBeta: .visible,
@@ -99,6 +139,7 @@ struct SidebarBottomCardTests {
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .hidden,
+        layoutModes: .hidden,
         fileExplorerBeta: .hidden,
         menuBarOnboarding: .hidden,
         remoteRepositoriesBeta: .visible,
@@ -114,6 +155,7 @@ struct SidebarBottomCardTests {
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .hidden,
+        layoutModes: .hidden,
         fileExplorerBeta: .hidden,
         menuBarOnboarding: .hidden,
         remoteRepositoriesBeta: .hidden,
@@ -129,6 +171,7 @@ struct SidebarBottomCardTests {
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .hidden,
+        layoutModes: .hidden,
         fileExplorerBeta: .hidden,
         menuBarOnboarding: .hidden,
         remoteRepositoriesBeta: .hidden,
@@ -144,6 +187,7 @@ struct SidebarBottomCardTests {
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .hidden,
+        layoutModes: .hidden,
         fileExplorerBeta: .hidden,
         menuBarOnboarding: .hidden,
         remoteRepositoriesBeta: .hidden,
@@ -159,6 +203,7 @@ struct SidebarBottomCardTests {
     let resolved = SidebarBottomCardView.Slot.resolve(
       cards: .init(
         agent: .hidden,
+        layoutModes: .hidden,
         fileExplorerBeta: .hidden,
         menuBarOnboarding: .hidden,
         remoteRepositoriesBeta: .hidden,
