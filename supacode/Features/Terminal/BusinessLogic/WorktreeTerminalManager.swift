@@ -382,14 +382,9 @@ final class WorktreeTerminalManager {
       sendLayout(worktree.id, .selectTab(id: tabID))
       host(for: worktree).focusSelectedTab()
     case .selectTabAtIndex(let worktree, let index):
-      guard let layout = layoutState(for: worktree.id)?.layout,
-        let focusedPane = layout.focusedPaneID.flatMap({ layout.panes[id: $0] }),
-        !focusedPane.tabs.isEmpty
-      else { break }
-      // 1-based, clamped to the strip, matching Ghostty goto_tab semantics.
-      let target = focusedPane.tabs[min(max(index, 1), focusedPane.tabs.count) - 1]
-      sendLayout(worktree.id, .wakeTab(id: target.id))
-      sendLayout(worktree.id, .selectTab(id: target.id))
+      selectTab(atIndex: index, in: worktree)
+    case .selectRelativeTab(let worktree, let forward):
+      selectRelativeTab(forward: forward, in: worktree)
     case .focusSurface(let worktree, let tabID, let surfaceID, let input):
       let host = host(for: worktree)
       // Surface-first: the tab ID is a hint; the surface's actual owner wins.
@@ -442,6 +437,33 @@ final class WorktreeTerminalManager {
     return true
   }
 
+  /// Selects the tab at a 1-based index, clamped to the strip, matching Ghostty
+  /// goto_tab semantics.
+  private func selectTab(atIndex index: Int, in worktree: Worktree) {
+    guard let layout = layoutState(for: worktree.id)?.layout,
+      let focusedPane = layout.focusedPaneID.flatMap({ layout.panes[id: $0] }),
+      !focusedPane.tabs.isEmpty
+    else { return }
+    let target = focusedPane.tabs[min(max(index, 1), focusedPane.tabs.count) - 1]
+    sendLayout(worktree.id, .wakeTab(id: target.id))
+    sendLayout(worktree.id, .selectTab(id: target.id))
+  }
+
+  /// Selects the next (or previous) tab in the focused pane, wrapping around.
+  private func selectRelativeTab(forward: Bool, in worktree: Worktree) {
+    guard let layout = layoutState(for: worktree.id)?.layout,
+      let focusedPane = layout.focusedPaneID.flatMap({ layout.panes[id: $0] }),
+      focusedPane.tabs.count > 1,
+      let selectedID = focusedPane.selectedTabID,
+      let index = focusedPane.tabs.index(id: selectedID)
+    else { return }
+    let count = focusedPane.tabs.count
+    let targetIndex = forward ? (index + 1) % count : (index - 1 + count) % count
+    let target = focusedPane.tabs[targetIndex]
+    sendLayout(worktree.id, .wakeTab(id: target.id))
+    sendLayout(worktree.id, .selectTab(id: target.id))
+  }
+
   /// The tab ID when it exists in the worktree's layout, else nil.
   private func presentTab(_ tabID: TabID, in worktreeID: Worktree.ID) -> TabID? {
     layoutState(for: worktreeID)?.layout.pane(containingTab: tabID) != nil ? tabID : nil
@@ -461,7 +483,7 @@ final class WorktreeTerminalManager {
       host(for: worktree).performBindingActionOnFocusedSurface("end_search")
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
-      .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .focusSurface, .splitSurface,
+      .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface, .splitSurface,
       .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .removeWorktreeLayout,
       .setNotificationsEnabled, .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
       .setTerminalHibernationEnabled, .toggleWindowModeForFocusedPane,
@@ -506,7 +528,7 @@ final class WorktreeTerminalManager {
       setImagePasteAgents(agents, onSurfaceID: surfaceID)
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
-      .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex,
+      .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex, .selectRelativeTab,
       .focusSurface, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .removeWorktreeLayout,
       .setNotificationsEnabled, .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
       .setTerminalHibernationEnabled, .toggleWindowModeForFocusedPane,
@@ -558,7 +580,7 @@ final class WorktreeTerminalManager {
     case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
-      .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex, .focusSurface,
+      .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface,
       .splitSurface, .destroyTab, .destroySurface, .renameTab, .beginTabRename,
       .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits,
       .splitPane, .focusPane, .closePane, .toggleZoomPane, .toggleWindowModeForPane, .moveTabToSplit:

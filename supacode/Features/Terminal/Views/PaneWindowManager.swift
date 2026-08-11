@@ -77,6 +77,17 @@ enum PaneWindowShortcut {
       // Clamped to the strip, matching the main window's semantics.
       return .selectTab(pane.tabs[min(index + 1, pane.tabs.count) - 1].id)
     }
+    let isNextTab = matched(AppShortcuts.selectNextTab)
+    let isPreviousTab = matched(AppShortcuts.selectPreviousTab)
+    if isNextTab || isPreviousTab {
+      // Cycle within this window's own pane, not the main window's worktree.
+      guard !event.isARepeat, pane.tabs.count > 1, let selectedID = pane.selectedTab?.id,
+        let index = pane.tabs.index(id: selectedID)
+      else { return .ignore }
+      let count = pane.tabs.count
+      let targetIndex = isNextTab ? (index + 1) % count : (index - 1 + count) % count
+      return .selectTab(pane.tabs[targetIndex].id)
+    }
     let isRunScript = matched(AppShortcuts.runScript)
     let isStopRunScript = matched(AppShortcuts.stopRunScript)
     if isRunScript || isStopRunScript {

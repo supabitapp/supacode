@@ -93,6 +93,8 @@ struct TerminalClient {
     case endSearch(Worktree)
     case selectTab(Worktree, tabID: TabID)
     case selectTabAtIndex(Worktree, index: Int)
+    /// Cycles to the next or previous tab in the focused pane, wrapping at the ends.
+    case selectRelativeTab(Worktree, forward: Bool)
     case focusSurface(Worktree, tabID: TabID, surfaceID: UUID, input: String? = nil)
     case splitSurface(
       Worktree, tabID: TabID, surfaceID: UUID, direction: SplitDirection,

@@ -680,4 +680,24 @@ struct PaneWindowShortcutTests {
         == .ignore
     )
   }
+
+  @Test func relativeTabCyclingShortcutsUseTabChords() {
+    #expect(AppShortcuts.selectNextTab.keyEquivalent.character == "\t")
+    #expect(AppShortcuts.selectNextTab.modifiers == [.control])
+    #expect(AppShortcuts.selectPreviousTab.keyEquivalent.character == "\t")
+    #expect(AppShortcuts.selectPreviousTab.modifiers == [.control, .shift])
+  }
+
+  @Test func layoutAndTabSelectionChordsAreUnboundInGhostty() {
+    let lines = Set(AppShortcuts.ghosttyKeybindConfigLines(from: [:]))
+    // Guards the "topology owned by the app" invariant: a newly added layout or
+    // tab-selection shortcut cannot silently leave its chord bound in Ghostty.
+    let groups = AppShortcuts.groups.filter { $0.category == .layout || $0.category == .tabSelection }
+    for shortcut in groups.flatMap(\.shortcuts) {
+      guard let effective = shortcut.effective(from: [:]) else { continue }
+      let keybind = effective.ghosttyKeybind
+      guard !keybind.contains("0x") else { continue }
+      #expect(lines.contains("keybind = \(keybind)=unbind"), "\(shortcut.displayName) not unbound")
+    }
+  }
 }

@@ -146,6 +146,35 @@ private struct TerminalTabSelectionItems: View {
       .appKeyboardShortcut(shortcut)
       .help("Select Tab \(index + 1) (\(shortcut?.display ?? "no shortcut"))")
     }
+    Divider()
+    RelativeTabSelectionButton(
+      title: "Select Previous Tab", shortcut: AppShortcuts.selectPreviousTab, overrides: overrides
+    ) {
+      store.send(.selectPreviousTerminalTab)
+    }
+    RelativeTabSelectionButton(
+      title: "Select Next Tab", shortcut: AppShortcuts.selectNextTab, overrides: overrides
+    ) {
+      store.send(.selectNextTerminalTab)
+    }
+  }
+}
+
+private struct RelativeTabSelectionButton: View {
+  let title: String
+  let shortcut: AppShortcut
+  let overrides: [AppShortcutID: AppShortcutOverride]
+  let action: () -> Void
+
+  var body: some View {
+    let effective = shortcut.effective(from: overrides)
+    Button(title) {
+      // Holding the chord would otherwise cycle past the intended tab.
+      guard NSApp.currentEvent?.isAutoRepeatKeyDown != true else { return }
+      action()
+    }
+    .appKeyboardShortcut(effective)
+    .help("\(title) (\(effective?.display ?? "no shortcut"))")
   }
 }
 

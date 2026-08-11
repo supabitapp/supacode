@@ -15,6 +15,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case worktreeHistoryBack, worktreeHistoryForward
   case selectWorktree(Int)
   case selectTab(Int)
+  case selectNextTab, selectPreviousTab
   case openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository, openPullRequest, copyPath
   case runScript, stopRunScript, renameTab, toggleWindowMode
   case newTerminalTab, closeTab
@@ -64,6 +65,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .worktreeHistoryForward: "worktreeHistoryForward"
     case .selectWorktree(let index): "selectWorktree\(index)"
     case .selectTab(let index): "selectTab\(index)"
+    case .selectNextTab: "selectNextTab"
+    case .selectPreviousTab: "selectPreviousTab"
     case .openWorktree: "openWorktree"
     case .revealInFinder: "revealInFinder"
     case .openRepository: "openRepository"
@@ -138,6 +141,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "focusSplitDown": .focusSplitDown,
     "toggleSplitZoom": .toggleSplitZoom,
     "equalizeSplits": .equalizeSplits,
+    "selectNextTab": .selectNextTab,
+    "selectPreviousTab": .selectPreviousTab,
     "jumpToLatestUnread": .jumpToLatestUnread,
     "togglePullRequestInspector": .togglePullRequestInspector,
     "toggleFilesInspector": .toggleFilesInspector,
@@ -185,6 +190,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .worktreeHistoryForward: "Forward in Worktree History"
     case .selectWorktree(let index): "Select Worktree \(index == 0 ? 10 : index)"
     case .selectTab(let index): "Select Tab \(index)"
+    case .selectNextTab: "Select Next Tab"
+    case .selectPreviousTab: "Select Previous Tab"
     case .openWorktree: "Open Worktree"
     case .revealInFinder: "Reveal in Finder"
     case .openRepository: "Open Repository or Folder"
@@ -499,6 +506,15 @@ public enum AppShortcuts {
   public static let selectTab7 = AppShortcut(id: .selectTab(7), key: "7", modifiers: [.command])
   public static let selectTab8 = AppShortcut(id: .selectTab(8), key: "8", modifiers: [.command])
   public static let selectTab9 = AppShortcut(id: .selectTab(9), key: "9", modifiers: [.command])
+  // Relative tab cycling on Ghostty's layout-independent defaults (ctrl+tab).
+  public static let selectPreviousTab = AppShortcut(
+    id: .selectPreviousTab,
+    keyEquivalent: .tab, ghosttyKeyName: "tab", modifiers: [.control, .shift]
+  )
+  public static let selectNextTab = AppShortcut(
+    id: .selectNextTab,
+    keyEquivalent: .tab, ghosttyKeyName: "tab", modifiers: [.control]
+  )
 
   public static let openWorktree = AppShortcut(id: .openWorktree, key: "o", modifiers: .command)
   public static let revealInFinder = AppShortcut(id: .revealInFinder, key: "r", modifiers: [.command, .option])
@@ -628,7 +644,7 @@ public enum AppShortcuts {
         toggleSplitZoom, equalizeSplits, toggleWindowMode,
       ]
     ),
-    AppShortcutGroup(category: .tabSelection, shortcuts: tabSelection),
+    AppShortcutGroup(category: .tabSelection, shortcuts: tabSelection + [selectPreviousTab, selectNextTab]),
     AppShortcutGroup(
       category: .actions,
       shortcuts: [

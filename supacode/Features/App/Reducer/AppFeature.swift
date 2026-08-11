@@ -315,6 +315,8 @@ struct AppFeature {
     case equalizeSplits
     case focusSplit(TerminalSplitMenuDirection)
     case selectTerminalTabAtIndex(Int)
+    case selectNextTerminalTab
+    case selectPreviousTerminalTab
     case splitTerminal(TerminalSplitMenuDirection)
     case jumpToLatestUnread
     case menuBarWorktreeSelected(worktreeID: Worktree.ID)
@@ -978,6 +980,26 @@ struct AppFeature {
         }
         return .run { _ in
           await terminalClient.send(.selectTabAtIndex(worktree, index: tabNumber))
+        }
+
+      case .selectNextTerminalTab:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.selectRelativeTab(worktree, forward: true))
+        }
+
+      case .selectPreviousTerminalTab:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.selectRelativeTab(worktree, forward: false))
         }
 
       case .splitTerminal(let direction):
