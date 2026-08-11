@@ -875,6 +875,7 @@ private struct PaneTabStripAccessories: View {
         isWindowed: isWindowed,
         newTab: requestNewTab,
         split: requestSplit,
+        equalizeSplits: equalizeSplits,
         toggleZoom: toggleZoom,
         toggleWindowMode: toggleWindowMode
       )
@@ -909,6 +910,10 @@ private struct PaneTabStripAccessories: View {
     store.send(.toggleZoom(paneID: pane.id))
   }
 
+  private func equalizeSplits() {
+    store.send(.equalizePanes)
+  }
+
   private func toggleWindowMode() {
     store.send(isWindowed ? .exitWindowMode(paneID: pane.id) : .enterWindowMode(paneID: pane.id))
   }
@@ -923,6 +928,7 @@ private struct PaneTabStripNewTabControl: View {
   let isWindowed: Bool
   let newTab: () -> Void
   let split: (TerminalSplitMenuDirection) -> Void
+  let equalizeSplits: () -> Void
   let toggleZoom: () -> Void
   let toggleWindowMode: () -> Void
 
@@ -944,6 +950,10 @@ private struct PaneTabStripNewTabControl: View {
           .appKeyboardShortcut(direction.appShortcut.effective(from: settingsFile.global.shortcutOverrides))
           .disabled(!canSplit)
         }
+        Divider()
+        Button("Equalize Splits", systemImage: "rectangle.split.2x1", action: equalizeSplits)
+          .appKeyboardShortcut(AppShortcuts.equalizeSplits.effective(from: settingsFile.global.shortcutOverrides))
+          .disabled(!canZoom)
         Divider()
         Button("Toggle Split Zoom", systemImage: "arrow.up.left.and.arrow.down.right", action: toggleZoom)
           .appKeyboardShortcut(AppShortcuts.toggleSplitZoom.effective(from: settingsFile.global.shortcutOverrides))
