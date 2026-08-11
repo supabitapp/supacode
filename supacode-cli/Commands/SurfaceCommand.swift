@@ -4,7 +4,14 @@ import Foundation
 struct SurfaceCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "surface",
-    abstract: "Manage terminal surfaces.",
+    abstract: "[Deprecated] Manage terminal surfaces. Use `pane` and `tab` instead.",
+    discussion: """
+      Deprecated, and removed in the next release: a surface is now a tab's \
+      content. Use `supacode pane split` in place of `surface split`, and \
+      `supacode tab focus` / `tab close` / `tab list` in place of the surface \
+      equivalents. These commands still read the deprecated $SUPACODE_TAB_ID / \
+      $SUPACODE_SURFACE_ID environment variables.
+      """,
     subcommands: [
       List.self,
       Focus.self,
@@ -33,8 +40,8 @@ extension SurfaceCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveWorktreeID(worktree)
-      let tID = try resolveTabID(tab)
+      let wID = try IDResolvers.resolveWorktreeID(worktree)
+      let tID = try IDResolvers.resolveTabID(tab)
       let items = try QueryDispatcher.query(
         resource: "surfaces",
         params: ["worktreeID": wID, "tabID": tID],
@@ -66,9 +73,9 @@ extension SurfaceCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveWorktreeID(worktree)
-      let tID = try resolveTabID(tab)
-      let sID = try resolveSurfaceID(surface)
+      let wID = try IDResolvers.resolveWorktreeID(worktree)
+      let tID = try IDResolvers.resolveTabID(tab)
+      let sID = try IDResolvers.resolveSurfaceID(surface)
       try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.surfaceFocus(worktreeID: wID, tabID: tID, surfaceID: sID, input: input),
         timeoutSeconds: timeoutOption.timeout
@@ -102,9 +109,9 @@ extension SurfaceCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveWorktreeID(worktree)
-      let tID = try resolveTabID(tab)
-      let sID = try resolveSurfaceID(surface)
+      let wID = try IDResolvers.resolveWorktreeID(worktree)
+      let tID = try IDResolvers.resolveTabID(tab)
+      let sID = try IDResolvers.resolveSurfaceID(surface)
       let resolvedID = newID ?? UUID().uuidString
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
@@ -137,9 +144,9 @@ extension SurfaceCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let wID = try resolveWorktreeID(worktree)
-      let tID = try resolveTabID(tab)
-      let sID = try resolveSurfaceID(surface)
+      let wID = try IDResolvers.resolveWorktreeID(worktree)
+      let tID = try IDResolvers.resolveTabID(tab)
+      let sID = try IDResolvers.resolveSurfaceID(surface)
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.surfaceClose(worktreeID: wID, tabID: tID, surfaceID: sID)),

@@ -93,9 +93,9 @@ struct SidebarListView: View {
         guard let worktreeID = store.selectedWorktreeID,
           state.sidebarSelectedWorktreeIDs.count == 1,
           state.sidebarSelectedWorktreeIDs.contains(worktreeID),
-          let terminalState = terminalManager.stateIfExists(for: worktreeID)
+          let host = terminalManager.hostIfExists(for: worktreeID)
         else { return .ignored }
-        terminalState.focusAndInsertText(keyPress.characters)
+        host.focusAndInsertText(keyPress.characters)
         return .handled
       }
       .background(
@@ -104,9 +104,9 @@ struct SidebarListView: View {
           guard let worktreeID = store.selectedWorktreeID,
             state.sidebarSelectedWorktreeIDs.count == 1,
             state.sidebarSelectedWorktreeIDs.contains(worktreeID),
-            let terminalState = terminalManager.stateIfExists(for: worktreeID)
+            let host = terminalManager.hostIfExists(for: worktreeID)
           else { return false }
-          terminalState.focusSelectedTab()
+          host.focusSelectedTab()
           return true
         }
       )
@@ -339,7 +339,7 @@ private struct SidebarHoistSummaryRow: View {
         }
         Spacer(minLength: 0)
       }
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .lineLimit(1)
       .contentShape(.interaction, .rect)
@@ -544,12 +544,12 @@ private struct SidebarPlaceholderView: View {
           Label {
             VStack(alignment: .leading, spacing: 2) {
               Text("placeholder-branch")
-                .font(.body)
+                .appFont(.body)
                 .lineLimit(1)
                 .redacted(reason: .placeholder)
                 .shimmer(isActive: true)
               Text("placeholder")
-                .font(.footnote)
+                .appFont(.footnote)
                 .lineLimit(1)
                 .redacted(reason: .placeholder)
                 .shimmer(isActive: true)

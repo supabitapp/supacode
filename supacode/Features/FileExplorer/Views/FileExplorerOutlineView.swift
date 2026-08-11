@@ -35,6 +35,9 @@ struct FileExplorerOutlineView: NSViewRepresentable {
   /// Menu icon per open action: a baked app icon or an SF Symbol.
   let menuIcon: (OpenWorktreeAction) -> NSImage?
   let actions: FileExplorerOutlineActions
+  /// Chrome text size for the row cells; AppKit draws them, so they miss the
+  /// SwiftUI `appChromeTextSize` environment and take the size explicitly.
+  let chromeTextSize: ChromeTextSize
   /// Height of the SwiftUI breadcrumb bar the outline draws under, so its rows
   /// still clear the bar. SwiftUI zeroes the ignored safe area for this opaque
   /// view, so we feed the inset in explicitly.
@@ -42,6 +45,13 @@ struct FileExplorerOutlineView: NSViewRepresentable {
 
   /// Extra distance above the breadcrumb bar over which the blur fades out.
   private static let blurFadeHeight: CGFloat = 20
+
+  /// `.default` at the system size keeps the shipped row metrics and lets the
+  /// table font the label; a scaled size needs `.custom` so the table stops
+  /// overriding the cell's font.
+  static func rowSizeStyle(for size: ChromeTextSize) -> NSTableView.RowSizeStyle {
+    size == .standard ? .default : .custom
+  }
 
   func makeCoordinator() -> Coordinator {
     Coordinator()
@@ -54,7 +64,7 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     // Inset style: rounded selection and side margins, matching the sidebar's
     // modern look without source-list vibrancy fighting the forced appearance.
     outlineView.style = .inset
-    outlineView.rowSizeStyle = .default
+    outlineView.rowSizeStyle = Self.rowSizeStyle(for: chromeTextSize)
     outlineView.usesAutomaticRowHeights = true
     outlineView.intercellSpacing = NSSize(width: 0, height: 2)
     outlineView.indentationPerLevel = 14
@@ -131,7 +141,8 @@ struct FileExplorerOutlineView: NSViewRepresentable {
       fileOpenActions: fileOpenActions,
       resolvedOpenAction: resolvedOpenAction,
       menuIcon: menuIcon,
-      actions: actions
+      actions: actions,
+      chromeTextSize: chromeTextSize
     )
     // Inset the rows past the breadcrumb bar the outline now draws under. Added
     // to the safe area so it composes with the automatic titlebar inset up top.
@@ -176,6 +187,9 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     var blurHeightConstraint: NSLayoutConstraint?
     private var keyMonitor: Any?
     private(set) var tree: FileExplorerFeature.TreeState?
+    /// Applied to every cell in `viewFor`; a change forces a rebuild so rows
+    /// re-measure at the new font.
+    private(set) var chromeTextSize: ChromeTextSize = .standard
     private var fileOpenActions: [OpenWorktreeAction] = []
     private var resolvedOpenAction: OpenWorktreeAction?
     private var menuIcon: ((OpenWorktreeAction) -> NSImage?)?
@@ -189,22 +203,30 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     /// Suppresses delegate feedback while state is applied programmatically.
     private var isApplyingState = false
 
+    // swiftlint:disable:next function_parameter_count
     func apply(
       tree: FileExplorerFeature.TreeState,
       fileOpenActions: [OpenWorktreeAction],
       resolvedOpenAction: OpenWorktreeAction?,
       menuIcon: @escaping (OpenWorktreeAction) -> NSImage?,
-      actions: FileExplorerOutlineActions
+      actions: FileExplorerOutlineActions,
+      chromeTextSize: ChromeTextSize
     ) {
       self.fileOpenActions = fileOpenActions
       self.resolvedOpenAction = resolvedOpenAction
       self.menuIcon = menuIcon
       self.actions = actions
       guard let outlineView else { return }
+      let sizeChanged = self.chromeTextSize != chromeTextSize
+      self.chromeTextSize = chromeTextSize
+      if sizeChanged {
+        outlineView.rowSizeStyle = FileExplorerOutlineView.rowSizeStyle(for: chromeTextSize)
+      }
       let previous = self.tree
       self.tree = tree
       let structureChanged =
-        previous?.root != tree.root
+        sizeChanged
+        || previous?.root != tree.root
         || previous?.directories != tree.directories
         || previous?.expanded != tree.expanded
         // Deletions add/remove tombstone rows, which only `refreshItems` builds,
@@ -818,7 +840,8 @@ extension FileExplorerOutlineView.Coordinator: NSOutlineViewDelegate {
         isLoading: isLoading && (hasListing || reduceMotion),
         isShimmering: isFirstTimeLoading && !reduceMotion,
         failure: childNode?.failure,
-        decoration: decoration
+        decoration: decoration,
+        chromeTextSize: chromeTextSize
       )
       return cell
     case .showMore(let remaining, let isLoading):
@@ -827,7 +850,7 @@ extension FileExplorerOutlineView.Coordinator: NSOutlineViewDelegate {
           withIdentifier: FileExplorerShowMoreCellView.identifier, owner: nil
         ) as? FileExplorerShowMoreCellView ?? FileExplorerShowMoreCellView()
       let directory = item.path
-      cell.configure(remaining: remaining, isLoading: isLoading) { [weak self] in
+      cell.configure(remaining: remaining, isLoading: isLoading, chromeTextSize: chromeTextSize) { [weak self] in
         self?.actions?.showMore(directory)
       }
       return cell
@@ -1170,6 +1193,27 @@ enum FileExplorerFileIcon {
   }
 }
 
+/// AppKit-side font scaling for the file explorer, mirroring `AppFontMetrics`
+/// for the SwiftUI chrome. Returns the exact preferred font at Default so
+/// unscaled rows keep the system size.
+enum FileExplorerCellFont {
+  static func scaled(_ style: NSFont.TextStyle, _ size: ChromeTextSize) -> NSFont {
+    let base = NSFont.preferredFont(forTextStyle: style)
+    guard size != .standard else { return base }
+    return .systemFont(ofSize: (base.pointSize * CGFloat(size.scale)).rounded())
+  }
+
+  static func label(_ size: ChromeTextSize) -> NSFont {
+    scaled(.body, size)
+  }
+
+  static func badge(_ size: ChromeTextSize, weight: NSFont.Weight) -> NSFont {
+    let base = NSFont.preferredFont(forTextStyle: .caption1).pointSize
+    let point = size == .standard ? base : (base * CGFloat(size.scale)).rounded()
+    return .monospacedSystemFont(ofSize: point, weight: weight)
+  }
+}
+
 /// Entry cell: the file's native Finder icon beside a body-sized label with
 /// middle truncation.
 private final class FileExplorerEntryCellView: NSTableCellView {
@@ -1189,6 +1233,8 @@ private final class FileExplorerEntryCellView: NSTableCellView {
   private var renderedName = ""
   private var renderedDecoration: GitRowDecoration?
   private var renderedIsSymbolicLink = false
+  /// Set per row so the badge redraw on selection uses the same scaled size.
+  private var chromeTextSize: ChromeTextSize = .standard
   /// Inline-rename callbacks and state, live only while the label is editable.
   private var renameCommit: ((String) -> Void)?
   private var renameCancelled = false
@@ -1281,13 +1327,17 @@ private final class FileExplorerEntryCellView: NSTableCellView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { nil }
 
+  // swiftlint:disable:next function_parameter_count
   func configure(
     with entry: FileExplorerEntry,
     isLoading: Bool,
     isShimmering: Bool,
     failure: FileExplorerListingError?,
-    decoration: GitRowDecoration?
+    decoration: GitRowDecoration?,
+    chromeTextSize: ChromeTextSize
   ) {
+    self.chromeTextSize = chromeTextSize
+    label.font = FileExplorerCellFont.label(chromeTextSize)
     iconView.image = entry.isDirectory ? FileExplorerFileIcon.folder() : FileExplorerFileIcon.file(named: entry.name)
     iconView.setAccessibilityLabel(entry.isDirectory ? "Folder" : "File")
     // A read failure owns the trailing slot, so its warning wins over a badge.
@@ -1392,10 +1442,7 @@ private final class FileExplorerEntryCellView: NSTableCellView {
       badge.isHidden = false
       badge.stringValue = Self.letter(for: state)
       badge.textColor = isEmphasized ? .alternateSelectedControlTextColor : Self.tint(for: state)
-      badge.font = .monospacedSystemFont(
-        ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize,
-        weight: isStaged ? .semibold : .regular
-      )
+      badge.font = FileExplorerCellFont.badge(chromeTextSize, weight: isStaged ? .semibold : .regular)
       let help = Self.badgeHelp(state: state, isStaged: isStaged)
       badge.toolTip = help
       badge.setAccessibilityLabel(help)
@@ -1544,7 +1591,10 @@ private final class FileExplorerShowMoreCellView: NSTableCellView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { nil }
 
-  func configure(remaining: Int, isLoading: Bool, onTap: @escaping () -> Void) {
+  func configure(
+    remaining: Int, isLoading: Bool, chromeTextSize: ChromeTextSize, onTap: @escaping () -> Void
+  ) {
+    button.font = FileExplorerCellFont.label(chromeTextSize)
     button.title = "Show \(remaining) More"
     button.isEnabled = !isLoading
     button.toolTip = "Load the next chunk of this folder's entries."

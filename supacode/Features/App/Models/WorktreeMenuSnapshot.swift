@@ -103,8 +103,8 @@ extension AppFeature.Action {
         return true
       case .notificationReceived, .tabCreated, .tabClosed, .focusChanged,
         .taskStatusChanged, .blockingScriptCompleted, .commandPaletteToggleRequested,
-        .setupScriptConsumed, .worktreeProjectionChanged, .tabProjectionChanged,
-        .tabRemoved, .tabRenamed, .worktreeStateTornDown, .tabProgressDisplayChanged,
+        .setupScriptConsumed, .worktreeProjectionChanged, .surfaceCreated,
+        .tabRemoved, .tabRenamed, .worktreeStateTornDown,
         .surfacesClosed, .agentHookEventReceived, .terminalHasAnySurfaceChanged,
         .surfaceCreationFailed:
         return false
@@ -125,7 +125,8 @@ extension AppFeature.Action {
       .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
       .openWorktree, .openWorktreeFailed, .openFile, .requestQuit,
       .requestTerminateAllTerminalSessions, .newTerminal, .renameSelectedTerminalTab,
-      .selectTerminalTabAtIndex, .splitTerminal, .jumpToLatestUnread,
+      .selectTerminalTabAtIndex, .splitTerminal, .toggleWindowModeForFocusedPane, .toggleSplitZoom,
+      .equalizeSplits, .focusSplit, .jumpToLatestUnread,
       .menuBarWorktreeSelected, .markAllNotificationsRead, .runScript, .runNamedScript,
       .manageRepositoryScripts,
       .stopScript, .stopRunScripts, .closeTab, .closeSurface,

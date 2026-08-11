@@ -77,13 +77,19 @@ public struct AppearanceSettingsView: View {
         }
       }
       Section {
-        Toggle(isOn: $store.confirmCloseSurface) {
-          Text("Confirm before closing terminals")
-          Text("Asks before closing a terminal with a running process or a persisted background session.")
+        Picker(selection: $store.confirmCloseTab) {
+          ForEach(ConfirmCloseTabMode.allCases, id: \.self) { mode in
+            DefaultTaggedLabel(label: mode.label, isDefault: mode == GlobalSettings.default.confirmCloseTab)
+              .tag(mode)
+          }
+        } label: {
+          Text("Confirm before closing tabs")
+          Text(store.confirmCloseTab.subtitle)
         }
         Picker(selection: $store.confirmQuitMode) {
           ForEach(ConfirmQuitMode.allCases, id: \.self) { mode in
-            Text(mode.label).tag(mode)
+            DefaultTaggedLabel(label: mode.label, isDefault: mode == GlobalSettings.default.confirmQuitMode)
+              .tag(mode)
           }
         } label: {
           Text("Confirm before quitting app")
@@ -121,7 +127,7 @@ public struct AppearanceSettingsView: View {
         Picker(
           selection: defaultEditorID
         ) {
-          Text("Automatic")
+          DefaultTaggedLabel(label: "Auto", isDefault: true)
             .tag(OpenWorktreeAction.automaticSettingsID)
           ForEach(openActionOptions) { action in
             Text(action.labelTitle)
@@ -130,6 +136,19 @@ public struct AppearanceSettingsView: View {
         } label: {
           Text("Default editor")
           Text("Applies to Worktrees without repository overrides.")
+        }
+      }
+      Section("Accessibility") {
+        Picker(selection: $store.chromeTextSize) {
+          ForEach(ChromeTextSize.allCases) { size in
+            DefaultTaggedLabel(label: size.label, isDefault: size == .default).tag(size)
+          }
+        } label: {
+          HStack(spacing: 6) {
+            Text("Text size")
+            BetaBadge()
+          }
+          Text("Sizes all non-terminal text. The terminal keeps its own font size.")
         }
       }
       Section {
@@ -161,8 +180,7 @@ public struct AppearanceSettingsView: View {
 private struct BetaBadge: View {
   var body: some View {
     Text("Beta")
-      .font(.caption2)
-      .fontWeight(.semibold)
+      .appFont(.caption2, weight: .semibold)
       .foregroundStyle(.secondary)
       .padding(.horizontal, 6)
       .padding(.vertical, 2)

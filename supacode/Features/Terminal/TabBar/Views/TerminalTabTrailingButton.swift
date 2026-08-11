@@ -1,3 +1,5 @@
+import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 /// The circular control in a tab's trailing slot. Close and exit-split-zoom are the same
@@ -5,14 +7,13 @@ import SwiftUI
 struct TerminalTabTrailingButton: View {
   let title: String
   let systemImage: String
-  /// Ghostty action name the tooltip reads the chord from.
-  let ghosttyAction: String
+  /// The app shortcut the tooltip reads the chord from.
+  let shortcut: AppShortcut
   let isVisible: Bool
   let action: () -> Void
   @Binding var gestureActive: Bool
 
-  @Environment(GhosttyShortcutManager.self)
-  private var ghosttyShortcuts
+  @Shared(.settingsFile) private var settingsFile
 
   @State private var isPressing = false
   @State private var isHovering = false
@@ -49,8 +50,10 @@ struct TerminalTabTrailingButton: View {
   }
 
   private var helpText: String {
-    guard let shortcut = ghosttyShortcuts.display(for: ghosttyAction) else { return title }
-    return "\(title) (\(shortcut))"
+    guard let display = shortcut.effective(from: settingsFile.global.shortcutOverrides)?.display else {
+      return title
+    }
+    return "\(title) (\(display))"
   }
 }
 

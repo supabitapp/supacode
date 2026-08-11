@@ -78,7 +78,7 @@ struct GithubSettingsView: View {
               Text("GitHub CLI not found")
               Text("Install `gh` to enable pull request checks.")
                 .foregroundStyle(.secondary)
-                .font(.callout)
+                .appFont(.callout)
             }
           } icon: {
             Image(systemName: "xmark.circle")
@@ -92,7 +92,7 @@ struct GithubSettingsView: View {
               Text("Not authenticated")
               Text("Run `gh auth login` in a terminal to authenticate.")
                 .foregroundStyle(.secondary)
-                .font(.callout)
+                .appFont(.callout)
             }
           } icon: {
             Image(systemName: "exclamationmark.triangle")
@@ -106,7 +106,7 @@ struct GithubSettingsView: View {
               Text("GitHub CLI outdated")
               Text("Update to the latest version for full support.")
                 .foregroundStyle(.secondary)
-                .font(.callout)
+                .appFont(.callout)
             }
           } icon: {
             Image(systemName: "exclamationmark.triangle")
@@ -128,7 +128,7 @@ struct GithubSettingsView: View {
               Text("Error checking status")
               Text(message)
                 .foregroundStyle(.secondary)
-                .font(.callout)
+                .appFont(.callout)
             }
           } icon: {
             Image(systemName: "exclamationmark.triangle")

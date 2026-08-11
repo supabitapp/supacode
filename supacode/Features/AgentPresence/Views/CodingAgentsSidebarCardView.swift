@@ -101,7 +101,7 @@ private struct CodingAgentsCardBody: View {
           openWindow(id: WindowID.settings)
         }
         .buttonStyle(.link)
-        .font(.caption)
+        .appFont(.caption)
         .padding(.top, 2)
       }
     } header: {

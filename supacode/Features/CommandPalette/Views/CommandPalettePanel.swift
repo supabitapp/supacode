@@ -129,7 +129,9 @@ final class CommandPalettePanelHostView: NSView {
   }
 
   private func showPanel(items: [CommandPaletteItem]) {
-    guard let mainWindow = window else { return }
+    // Anchor over a key pane window; otherwise the main window hosting this
+    // observer.
+    guard let anchorWindow = (NSApp.keyWindow as? PaneWindow) ?? window else { return }
     let panel = self.panel ?? makePanel()
     // Fresh hosting view on every present so `CommandPaletteOverlayView.task`
     // re-runs and re-asserts first responder on the query field. The panel and
@@ -149,9 +151,11 @@ final class CommandPalettePanelHostView: NSView {
 
     panel.contentView = glass
     self.hostingView = hostingView
-    position(panel: panel, over: mainWindow)
-    if panel.parent == nil {
-      mainWindow.addChildWindow(panel, ordered: .above)
+    position(panel: panel, over: anchorWindow)
+    if panel.parent !== anchorWindow {
+      // The panel is reused; re-parent when a different window anchors it.
+      panel.parent?.removeChildWindow(panel)
+      anchorWindow.addChildWindow(panel, ordered: .above)
     }
     installKeyMonitorIfNeeded()
     panel.makeKeyAndOrderFront(nil)
@@ -331,15 +335,17 @@ final class CommandPalettePanelHostView: NSView {
       let parent = panel.parent
       parent?.removeChildWindow(panel)
       panel.orderOut(nil)
-      // Reclaim key on the main window so its preserved first responder (and the
-      // terminal-focus sync driven by `didBecomeKey`) is restored, but only when
-      // the dismissal stayed inside the app and nothing else took key: if the user
-      // dismissed by clicking another in-app window (e.g. Settings), re-keying here
-      // would steal focus from it; if they left the app entirely (Cmd-Tab, another
-      // app), `keyWindow` is also nil, so the `isActive` guard avoids yanking focus
-      // back from the app they switched to.
-      if NSApp.isActive, NSApp.keyWindow == nil, let parent {
-        parent.makeKey()
+      // Reclaim key on the anchor window so its preserved first responder (and
+      // the terminal-focus sync driven by `didBecomeKey`) is restored, but only
+      // when the dismissal stayed inside the app and nothing else took key: if
+      // the user dismissed by clicking another in-app window (e.g. Settings),
+      // re-keying here would steal focus from it; if they left the app entirely
+      // (Cmd-Tab, another app), `keyWindow` is also nil, so the `isActive` guard
+      // avoids yanking focus back from the app they switched to. A closed pane
+      // window can no longer take key; fall back to the host's own window.
+      let reclaim = (parent?.isVisible == true ? parent : nil) ?? window
+      if NSApp.isActive, NSApp.keyWindow == nil, let reclaim {
+        reclaim.makeKey()
       }
     }
     // Release the content tree, not just our reference: a retained NSHostingView

@@ -1,5 +1,6 @@
 import Dependencies
 import Foundation
+import IdentifiedCollections
 import SupacodeSettingsShared
 import Testing
 
@@ -31,54 +32,6 @@ struct LayoutsIncrementalWriterTests {
     return (try? JSONDecoder().decode([String: TerminalLayoutSnapshot].self, from: data)) ?? [:]
   }
 
-  @Test func separateFlushesBothSurvive() async {
-    let storage = SettingsFileStorage.inMemory()
-    let url = SupacodePaths.layoutsURL
-    let writer = LayoutsIncrementalWriter(storage: storage, url: url)
-
-    await writer.flush(["w1": .snapshot(snapshot(dir: "/w1"))])
-    await writer.flush(["w2": .snapshot(snapshot(dir: "/w2"))])
-
-    let dict = readDict(storage, url)
-    #expect(Set(dict.keys) == ["w1", "w2"])
-  }
-
-  @Test func deleteRemovesOnlyTargetKey() async {
-    let storage = SettingsFileStorage.inMemory()
-    let url = SupacodePaths.layoutsURL
-    let writer = LayoutsIncrementalWriter(storage: storage, url: url)
-
-    await writer.flush([
-      "w1": .snapshot(snapshot(dir: "/w1")),
-      "w2": .snapshot(snapshot(dir: "/w2")),
-    ])
-    await writer.flush(["w1": .delete])
-
-    let dict = readDict(storage, url)
-    #expect(Set(dict.keys) == ["w2"])
-  }
-
-  @Test func snapshotOverwritesSameKeyButPreservesOthers() async {
-    let storage = SettingsFileStorage.inMemory()
-    let url = SupacodePaths.layoutsURL
-    let writer = LayoutsIncrementalWriter(storage: storage, url: url)
-
-    await writer.flush([
-      "w1": .snapshot(snapshot(dir: "/old")),
-      "w2": .snapshot(snapshot(dir: "/w2")),
-    ])
-    await writer.flush(["w1": .snapshot(snapshot(dir: "/new"))])
-
-    let dict = readDict(storage, url)
-    #expect(dict["w2"] != nil)
-    let leaf = dict["w1"]?.tabs.first?.layout
-    if case .leaf(let surface) = leaf {
-      #expect(surface.workingDirectory == "/new")
-    } else {
-      Issue.record("Expected a leaf layout for w1")
-    }
-  }
-
   @Test func identicalReflushSkipsTheWrite() async {
     let inner = SettingsFileStorage.inMemory()
     let url = SupacodePaths.layoutsURL
@@ -92,12 +45,13 @@ struct LayoutsIncrementalWriterTests {
     )
     let writer = LayoutsIncrementalWriter(storage: storage, url: url)
 
-    await writer.flush(["w1": .snapshot(snapshot(dir: "/w1"))])
-    // Re-splicing the same snapshot is a no-op; the second flush must not write.
-    await writer.flush(["w1": .snapshot(snapshot(dir: "/w1"))])
+    let entry = record("/w1")
+    await writer.flush(records: ["w1": .record(entry)])
+    // Re-splicing the same record is a no-op; the second flush must not write.
+    await writer.flush(records: ["w1": .record(entry)])
 
     #expect(saveCount.value == 1)
-    #expect(Set(readDict(storage, url).keys) == ["w1"])
+    #expect(Set(readFile(storage, url)?.worktrees.keys.map { $0 } ?? []) == ["w1"])
   }
 
   @Test func corruptFileIsRotatedAsideAndPersistenceRecovers() async throws {
@@ -114,10 +68,10 @@ struct LayoutsIncrementalWriterTests {
       save: { data, target in try data.write(to: target, options: .atomic) }
     )
     let writer = LayoutsIncrementalWriter(storage: storage, url: url)
-    await writer.flush(["w1": .snapshot(snapshot(dir: "/w1"))])
+    await writer.flush(records: ["w1": .record(record("/w1"))])
 
     // Self-healed: the new key persisted instead of the flush aborting forever.
-    #expect(readDict(storage, url)["w1"] != nil)
+    #expect(readFile(storage, url)?.worktrees["w1"] != nil)
     // The corrupt bytes were preserved under a rotated name, not overwritten.
     let rotated = try FileManager.default
       .contentsOfDirectory(atPath: dir.path(percentEncoded: false))
@@ -130,9 +84,107 @@ struct LayoutsIncrementalWriterTests {
     let url = SupacodePaths.layoutsURL
     let writer = LayoutsIncrementalWriter(storage: storage, url: url)
 
-    await writer.flush(["w1": .snapshot(snapshot(dir: "/w1"))])
-    await writer.flush([:])
+    await writer.flush(records: ["w1": .record(record("/w1"))])
+    await writer.flush(records: [:])
 
-    #expect(Set(readDict(storage, url).keys) == ["w1"])
+    #expect(Set(readFile(storage, url)?.worktrees.keys.map { $0 } ?? []) == ["w1"])
+  }
+
+  // MARK: - v2 record flushes.
+
+  private func record(_ marker: String) -> LayoutRecord {
+    let paneID = PaneID()
+    let tabID = TabID()
+    return LayoutRecord(
+      layout: PaneLayout(
+        tree: SplitTree(view: paneID),
+        panes: [
+          Pane(
+            id: paneID,
+            tabs: [
+              TabItem(
+                id: tabID,
+                title: marker,
+                content: ContentSnapshot(
+                  id: ContentID(),
+                  state: .terminal(TerminalContentState(workingDirectory: marker))
+                )
+              )
+            ],
+            selectedTabID: tabID
+          )
+        ],
+        focusedPaneID: paneID
+      )
+    )
+  }
+
+  private func readFile(_ storage: SettingsFileStorage, _ url: URL) -> LayoutsFile? {
+    guard let data = try? storage.load(url) else { return nil }
+    return try? JSONDecoder().decode(LayoutsFile.self, from: data)
+  }
+
+  @Test func recordFlushesStampAndMergeByWorktree() async {
+    let storage = SettingsFileStorage.inMemory()
+    let url = SupacodePaths.layoutsURL
+    let writer = LayoutsIncrementalWriter(storage: storage, url: url)
+
+    await writer.flush(records: ["w1": .record(record("/w1"))])
+    await writer.flush(records: ["w2": .record(record("/w2"))])
+
+    let file = readFile(storage, url)
+    #expect(file?.schemaVersion == LayoutsFile.currentSchemaVersion)
+    #expect(Set(file?.worktrees.keys.map { $0 } ?? []) == ["w1", "w2"])
+  }
+
+  @Test func recordDeleteRemovesOnlyTargetKey() async {
+    let storage = SettingsFileStorage.inMemory()
+    let url = SupacodePaths.layoutsURL
+    let writer = LayoutsIncrementalWriter(storage: storage, url: url)
+
+    await writer.flush(records: ["w1": .record(record("/w1")), "w2": .record(record("/w2"))])
+    await writer.flush(records: ["w1": .delete])
+
+    #expect(Set(readFile(storage, url)?.worktrees.keys.map { $0 } ?? []) == ["w2"])
+  }
+
+  @Test func recordFlushPreservesTheWriteOnceOrigin() async {
+    let storage = SettingsFileStorage.inMemory()
+    let url = SupacodePaths.layoutsURL
+    let writer = LayoutsIncrementalWriter(storage: storage, url: url)
+    let origin = TerminalLayoutSnapshot(tabs: [], selectedTabIndex: 0)
+
+    // First write lands the migration origin; a later live re-save carries none.
+    await writer.flush(records: ["w1": .record(LayoutRecord(layout: record("/w1").layout, origin: origin))])
+    await writer.flush(records: ["w1": .record(record("/w1b"))])
+
+    #expect(readFile(storage, url)?.worktrees["w1"]?.origin != nil)
+  }
+
+  @Test func recordFlushWillNotWriteIntoStillV1Bytes() async {
+    let storage = SettingsFileStorage.inMemory()
+    let url = SupacodePaths.layoutsURL
+    // A deferred migration left a v1 file in place.
+    let legacy = ["w1": snapshot(dir: "/w1")]
+    try? storage.save(JSONEncoder().encode(legacy), url)
+    let writer = LayoutsIncrementalWriter(storage: storage, url: url)
+
+    await writer.flush(records: ["w2": .record(record("/w2"))])
+
+    // The v1 bytes must survive untouched for the next launch's migrator.
+    #expect(readFile(storage, url) == nil)
+    #expect(readDict(storage, url)["w1"] != nil)
+  }
+
+  @Test func recordFlushSkipsNewerSchema() async {
+    let storage = SettingsFileStorage.inMemory()
+    let url = SupacodePaths.layoutsURL
+    let newer = LayoutsFile(schemaVersion: LayoutsFile.currentSchemaVersion + 1, worktrees: [:])
+    try? storage.save(JSONEncoder().encode(newer), url)
+    let writer = LayoutsIncrementalWriter(storage: storage, url: url)
+
+    await writer.flush(records: ["w1": .record(record("/w1"))])
+
+    #expect(readFile(storage, url)?.worktrees.isEmpty == true)
   }
 }

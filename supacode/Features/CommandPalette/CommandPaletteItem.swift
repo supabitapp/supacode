@@ -85,6 +85,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
     case viewArchivedWorktrees
     case refreshWorktrees
     case ghosttyCommand(String)
+    case toggleWindowMode
+    case layoutCommand(LayoutPaletteCommand)
     case openPullRequest(Worktree.ID)
     case markPullRequestReady(Worktree.ID)
     case mergePullRequest(Worktree.ID)
@@ -105,7 +107,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
     case .checkForUpdates, .openRepository, .addRemoteRepository, .openSettings, .newWorktree,
       .viewArchivedWorktrees, .refreshWorktrees:
       true
-    case .ghosttyCommand:
+    case .ghosttyCommand, .toggleWindowMode, .layoutCommand:
       false
     case .openPullRequest,
       .markPullRequestReady,
@@ -134,7 +136,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
     case .checkForUpdates, .openRepository, .addRemoteRepository, .openSettings, .newWorktree,
       .viewArchivedWorktrees, .refreshWorktrees:
       true
-    case .ghosttyCommand:
+    case .ghosttyCommand, .toggleWindowMode, .layoutCommand:
       false
     case .openPullRequest,
       .markPullRequestReady,
@@ -169,6 +171,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
     case .viewArchivedWorktrees: AppShortcuts.archivedWorktrees
     case .refreshWorktrees: AppShortcuts.refreshWorktrees
     case .ghosttyCommand: nil
+    case .toggleWindowMode: AppShortcuts.toggleWindowMode
+    case .layoutCommand(let command): command.appShortcut
     case .openPullRequest: AppShortcuts.openPullRequest
     case .addRemoteRepository,
       .markPullRequestReady,
@@ -207,5 +211,75 @@ struct CommandPaletteItem: Identifiable, Equatable {
     guard let shortcut = appShortcut else { return nil }
     @Shared(.settingsFile) var settingsFile
     return shortcut.effective(from: settingsFile.global.shortcutOverrides)
+  }
+}
+
+/// The app-owned layout commands the palette offers in place of Ghostty's
+/// topology entries.
+enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
+  case newTerminalTab = "new-terminal-tab"
+  case closeTab = "close-tab"
+  case splitRight = "split-right"
+  case splitLeft = "split-left"
+  case splitDown = "split-down"
+  case splitUp = "split-up"
+  case focusSplitRight = "focus-split-right"
+  case focusSplitLeft = "focus-split-left"
+  case focusSplitDown = "focus-split-down"
+  case focusSplitUp = "focus-split-up"
+  case toggleSplitZoom = "toggle-split-zoom"
+  case equalizeSplits = "equalize-splits"
+
+  var title: String {
+    switch self {
+    case .newTerminalTab: "New Terminal Tab"
+    case .closeTab: "Close Tab"
+    case .splitRight: "Split Right"
+    case .splitLeft: "Split Left"
+    case .splitDown: "Split Down"
+    case .splitUp: "Split Up"
+    case .focusSplitRight: "Focus Split Right"
+    case .focusSplitLeft: "Focus Split Left"
+    case .focusSplitDown: "Focus Split Down"
+    case .focusSplitUp: "Focus Split Up"
+    case .toggleSplitZoom: "Toggle Split Zoom"
+    case .equalizeSplits: "Equalize Splits"
+    }
+  }
+
+  /// SF Symbol for the palette row.
+  var systemImage: String {
+    switch self {
+    case .newTerminalTab: "macwindow"
+    case .closeTab: "xmark"
+    case .splitRight: TerminalSplitMenuDirection.right.systemImage
+    case .splitLeft: TerminalSplitMenuDirection.left.systemImage
+    case .splitDown: TerminalSplitMenuDirection.down.systemImage
+    case .splitUp: TerminalSplitMenuDirection.up.systemImage
+    case .focusSplitRight: "arrow.right"
+    case .focusSplitLeft: "arrow.left"
+    case .focusSplitDown: "arrow.down"
+    case .focusSplitUp: "arrow.up"
+    case .toggleSplitZoom: "arrow.up.left.and.arrow.down.right"
+    case .equalizeSplits: "rectangle.split.2x1"
+    }
+  }
+
+  /// The app shortcut shown next to the palette entry, when one exists.
+  var appShortcut: AppShortcut? {
+    switch self {
+    case .newTerminalTab: AppShortcuts.newTerminalTab
+    case .closeTab: AppShortcuts.closeTab
+    case .splitRight: AppShortcuts.splitRight
+    case .splitLeft: AppShortcuts.splitLeft
+    case .splitDown: AppShortcuts.splitDown
+    case .splitUp: AppShortcuts.splitUp
+    case .focusSplitRight: AppShortcuts.focusSplitRight
+    case .focusSplitLeft: AppShortcuts.focusSplitLeft
+    case .focusSplitDown: AppShortcuts.focusSplitDown
+    case .focusSplitUp: AppShortcuts.focusSplitUp
+    case .toggleSplitZoom: AppShortcuts.toggleSplitZoom
+    case .equalizeSplits: AppShortcuts.equalizeSplits
+    }
   }
 }

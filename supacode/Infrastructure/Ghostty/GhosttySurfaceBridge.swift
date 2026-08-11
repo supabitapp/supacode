@@ -62,7 +62,7 @@ final class GhosttySurfaceBridge {
   // Fired on OSC 11 background changes only; used to re-tint window chrome
   // when the focused surface's background changes.
   var onColorChanged: (() -> Void)?
-  // Used by blocking script completion detection in WorktreeTerminalState.
+  // Used by blocking script completion detection in the content host.
   // Both callbacks are set on every surface but guarded by the
   // blockingScripts dict in the handlers.
   var onCommandFinished: ((Int?) -> Void)?

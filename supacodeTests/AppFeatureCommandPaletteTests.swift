@@ -254,7 +254,7 @@ struct AppFeatureCommandPaletteTests {
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)
-    let capturedTabID = TerminalTabID()
+    let capturedTabID = TabID()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
@@ -286,7 +286,7 @@ struct AppFeatureCommandPaletteTests {
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)
-    let capturedTabID = TerminalTabID()
+    let capturedTabID = TabID()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
@@ -318,8 +318,8 @@ struct AppFeatureCommandPaletteTests {
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)
-    let firstTabID = TerminalTabID()
-    let secondTabID = TerminalTabID()
+    let firstTabID = TabID()
+    let secondTabID = TabID()
     let currentTabID = LockIsolated(firstTabID)
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(

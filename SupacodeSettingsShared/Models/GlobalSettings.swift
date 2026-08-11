@@ -92,7 +92,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var confirmQuitMode: ConfirmQuitMode
   /// When true, user-initiated closes ask for confirmation when a terminal
   /// surface has foreground work that Ghostty considers unsafe to interrupt.
+  /// Superseded by `confirmCloseTab`; read only by the legacy terminal path.
   public var confirmCloseSurface: Bool
+  /// How aggressively to confirm before closing a tab: only when the tab is
+  /// busy (default), always, or never.
+  public var confirmCloseTab: ConfirmCloseTabMode
   /// When true, quitting Supacode also closes every terminal tab and tears
   /// down zmx sessions, local and host-side, so nothing keeps running in the
   /// background. Default off because persistence is the headline feature.
@@ -105,6 +109,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   /// Beta: hidden terminal tabs release their renderer after a few minutes of
   /// inactivity and reconnect when viewed. On by default.
   public var terminalHibernationEnabled: Bool
+  /// Accessibility size for the app chrome's text. Drives the scale published at
+  /// each window root. Defaults to the unmodified system size.
+  public var chromeTextSize: ChromeTextSize
   /// Gates all background repository polling (remote SSH, PR checks, reconcile).
   /// On by default; disable to stop SSH passphrase prompts or GitHub rate limiting.
   public var automaticRepositoryRefreshEnabled: Bool
@@ -142,9 +149,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled: true,
     confirmQuitMode: .auto,
     confirmCloseSurface: true,
+    confirmCloseTab: .busy,
     terminateSessionsOnQuit: false,
     remoteSessionPersistenceEnabled: true,
-    appVisibility: .dockAndMenuBar
+    appVisibility: .dockAndMenuBar,
+    chromeTextSize: .default
   )
 
   public init(
@@ -180,10 +189,12 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     agentPresenceBadgesEnabled: Bool = true,
     confirmQuitMode: ConfirmQuitMode = .auto,
     confirmCloseSurface: Bool = true,
+    confirmCloseTab: ConfirmCloseTabMode = .busy,
     terminateSessionsOnQuit: Bool = false,
     remoteSessionPersistenceEnabled: Bool = true,
     appVisibility: AppVisibility = .dockAndMenuBar,
     terminalHibernationEnabled: Bool = true,
+    chromeTextSize: ChromeTextSize = .default,
     automaticRepositoryRefreshEnabled: Bool = true
   ) {
     self.appearanceMode = appearanceMode
@@ -218,10 +229,12 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.agentPresenceBadgesEnabled = agentPresenceBadgesEnabled
     self.confirmQuitMode = confirmQuitMode
     self.confirmCloseSurface = confirmCloseSurface
+    self.confirmCloseTab = confirmCloseTab
     self.terminateSessionsOnQuit = terminateSessionsOnQuit
     self.remoteSessionPersistenceEnabled = remoteSessionPersistenceEnabled
     self.appVisibility = appVisibility
     self.terminalHibernationEnabled = terminalHibernationEnabled
+    self.chromeTextSize = chromeTextSize
     self.automaticRepositoryRefreshEnabled = automaticRepositoryRefreshEnabled
   }
 
@@ -387,6 +400,15 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     confirmCloseSurface =
       try container.decodeIfPresent(Bool.self, forKey: .confirmCloseSurface)
       ?? Self.default.confirmCloseSurface
+    // Prefer the explicit mode; otherwise carry the legacy bool's intent
+    // (confirm-when-busy vs never), and default to `.busy`.
+    if let raw = try container.decodeIfPresent(String.self, forKey: .confirmCloseTab),
+      let mode = ConfirmCloseTabMode(rawValue: raw)
+    {
+      confirmCloseTab = mode
+    } else {
+      confirmCloseTab = confirmCloseSurface ? .busy : .never
+    }
     terminateSessionsOnQuit =
       try container.decodeIfPresent(Bool.self, forKey: .terminateSessionsOnQuit)
       ?? Self.default.terminateSessionsOnQuit
@@ -403,6 +425,13 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminalHibernationEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .terminalHibernationEnabled)
       ?? Self.default.terminalHibernationEnabled
+    // Old settings files predate this key; they migrate to the system size. An
+    // unrecognized value falls back the same way rather than throwing, which
+    // would reset the whole file to defaults.
+    chromeTextSize =
+      ((try? container.decodeIfPresent(String.self, forKey: .chromeTextSize)) ?? nil)
+      .flatMap(ChromeTextSize.init(rawValue:))
+      ?? Self.default.chromeTextSize
     // Pre-feature files omit this key; background refresh defaults on.
     automaticRepositoryRefreshEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .automaticRepositoryRefreshEnabled)

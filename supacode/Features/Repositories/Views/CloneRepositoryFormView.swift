@@ -67,7 +67,7 @@ struct CloneRepositoryFormView: View {
           ProgressView().controlSize(.small)
           if let progress = store.progressLine, !progress.isEmpty {
             Text(store.compactProgressLine ?? progress)
-              .font(.callout)
+              .appFont(.callout)
               .foregroundStyle(.secondary)
               .lineLimit(1)
               .truncationMode(.middle)

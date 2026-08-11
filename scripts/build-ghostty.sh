@@ -24,7 +24,7 @@ ghostty_resources_path="${ghostty_build_root}/share/ghostty"
 ghostty_terminfo_path="${ghostty_build_root}/share/terminfo"
 # Out-of-tree patches applied to the pinned ghostty submodule at build time.
 # The submodule pointer stays on upstream; we never fork or commit into it.
-ghostty_patches_dir="${srcroot}/patches"
+ghostty_patches_dir="${srcroot}/patches/ghostty"
 
 print_fingerprint() {
   (

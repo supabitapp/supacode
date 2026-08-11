@@ -486,6 +486,78 @@ struct SettingsFilePersistenceTests {
     #expect(!reloaded.global.confirmCloseSurface)
   }
 
+  @Test(.dependencies) func decodesLegacyConfirmCloseSurfaceTrueAsBusy() throws {
+    let legacy = LegacySettingsFileWithCloseSurface(
+      global: LegacyGlobalSettingsWithCloseSurface(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: false,
+        updatesAutomaticallyDownloadUpdates: true,
+        confirmCloseSurface: true
+      ),
+      repositories: [:]
+    )
+    let storage = MutableTestStorage(initialData: try JSONEncoder().encode(legacy))
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.confirmCloseTab == .busy)
+  }
+
+  @Test(.dependencies) func decodesLegacyConfirmCloseSurfaceFalseAsNever() throws {
+    let legacy = LegacySettingsFileWithCloseSurface(
+      global: LegacyGlobalSettingsWithCloseSurface(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: false,
+        updatesAutomaticallyDownloadUpdates: true,
+        confirmCloseSurface: false
+      ),
+      repositories: [:]
+    )
+    let storage = MutableTestStorage(initialData: try JSONEncoder().encode(legacy))
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.confirmCloseTab == .never)
+  }
+
+  @Test(.dependencies) func freshInstallDefaultsConfirmCloseTabToBusy() throws {
+    let storage = SettingsTestStorage()
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+    #expect(settings.global.confirmCloseTab == .busy)
+  }
+
+  @Test(.dependencies) func roundTripsExplicitConfirmCloseTabAlways() throws {
+    let storage = SettingsTestStorage()
+    withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      $settings.withLock { $0.global.confirmCloseTab = .always }
+    }
+    let reloaded: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var reloaded: SettingsFile
+      return reloaded
+    }
+    #expect(reloaded.global.confirmCloseTab == .always)
+  }
+
   @Test(.dependencies) func decodesMissingRemoteSessionPersistenceEnabledAsTrue() throws {
     let legacy = LegacySettingsFile(
       global: LegacyGlobalSettings(
@@ -711,6 +783,91 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.systemNotificationsEnabled == true)
   }
 
+  @Test(.dependencies) func decodesMissingChromeTextSizeAsDefault() throws {
+    // A file predating the accessibility text size has no `chromeTextSize` key
+    // and must migrate to the system default size rather than failing to load.
+    let legacy = LegacySettingsFile(
+      global: LegacyGlobalSettings(
+        appearanceMode: .dark,
+        updatesAutomaticallyCheckForUpdates: false,
+        updatesAutomaticallyDownloadUpdates: true
+      ),
+      repositories: [:]
+    )
+    let data = try JSONEncoder().encode(legacy)
+    let storage = MutableTestStorage(initialData: data)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.chromeTextSize == .default)
+  }
+
+  @Test(.dependencies) func decodesUnrecognizedChromeTextSizeAsDefaultWithoutDiscardingTheFile() throws {
+    // An unknown size (older build, hand-edit) must fall back by itself rather
+    // than throwing, which would reset every other setting in the file.
+    let json = """
+      {"global":{"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
+      "updatesAutomaticallyDownloadUpdates":false,"chromeTextSize":"gigantic"},"repositories":{}}
+      """
+    let storage = MutableTestStorage(initialData: Data(json.utf8))
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.chromeTextSize == .default)
+    #expect(settings.global.appearanceMode == .light)
+  }
+
+  @Test(.dependencies) func decodesMistypedChromeTextSizeAsDefaultWithoutDiscardingTheFile() throws {
+    // A hand-edit can produce the wrong JSON type, not just an unknown string;
+    // the `try?` on the String decode must swallow it so one bad field can't
+    // reset the file.
+    let json = """
+      {"global":{"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
+      "updatesAutomaticallyDownloadUpdates":false,"chromeTextSize":3},"repositories":{}}
+      """
+    let storage = MutableTestStorage(initialData: Data(json.utf8))
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.chromeTextSize == .default)
+    #expect(settings.global.appearanceMode == .light)
+  }
+
+  @Test(.dependencies) func roundTripsExplicitChromeTextSize() throws {
+    let storage = SettingsTestStorage()
+
+    withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      $settings.withLock { $0.global.chromeTextSize = .extraLarge }
+    }
+
+    let reloaded: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var reloaded: SettingsFile
+      return reloaded
+    }
+
+    #expect(reloaded.global.chromeTextSize == .extraLarge)
+  }
+
   @Test(.dependencies) func roundTripsExplicitNotificationRetentionLimit() throws {
     let storage = SettingsTestStorage()
 
@@ -809,6 +966,18 @@ private struct LegacyGlobalSettingsWithQuitToggle: Codable {
   var updatesAutomaticallyCheckForUpdates: Bool
   var updatesAutomaticallyDownloadUpdates: Bool
   var confirmBeforeQuit: Bool
+}
+
+private struct LegacySettingsFileWithCloseSurface: Codable {
+  var global: LegacyGlobalSettingsWithCloseSurface
+  var repositories: [String: RepositorySettings]
+}
+
+private struct LegacyGlobalSettingsWithCloseSurface: Codable {
+  var appearanceMode: AppearanceMode
+  var updatesAutomaticallyCheckForUpdates: Bool
+  var updatesAutomaticallyDownloadUpdates: Bool
+  var confirmCloseSurface: Bool
 }
 
 private struct SettingsFileWithRawAppVisibility: Codable {

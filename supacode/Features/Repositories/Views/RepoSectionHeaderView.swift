@@ -28,6 +28,10 @@ struct RepoSectionHeaderView: View {
             .accessibilityLabel("Remote host \(hostInfo)")
         }
       }
+      // The repository name is the sidebar's primary label, so it has to follow
+      // the text scale like the rows beneath it. As a `Section` header it draws
+      // with the list's font rather than one of its own.
+      .appFontInheriting(.subheadline, weight: .semibold)
       if isRemoving {
         ProgressView()
           .controlSize(.small)

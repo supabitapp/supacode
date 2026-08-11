@@ -102,7 +102,7 @@ private struct AgentInstallPromptRow: View {
         VStack(alignment: .leading, spacing: 2) {
           Text("Agent integrations")
           Text(subtitle)
-            .font(.subheadline)
+            .appFont(.subheadline)
             .foregroundStyle(.secondary)
         }
       }
@@ -256,13 +256,13 @@ private struct AgentIntegrationRow: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(agent.displayName)
         Text(agent.integrationSubtitle)
-          .font(.subheadline)
+          .appFont(.subheadline)
           .foregroundStyle(.secondary)
         if let message = state.errorMessage {
           // Must stay a plain `String`: the message embeds a filesystem path that
           // `LocalizedStringKey` would parse as markdown and mangle.
           Text(message)
-            .font(.subheadline)
+            .appFont(.subheadline)
             .foregroundStyle(state.isUndetermined ? Color.orange : Color.red)
         }
       }

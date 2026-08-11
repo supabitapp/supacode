@@ -4,22 +4,22 @@ import SupacodeSettingsShared
 
 /// Serialized off-main writer for incremental layout persistence. Every flush
 /// re-reads `layouts.json` from disk, splices in only the per-worktree keys it
-/// carries, then writes the whole dict back through the atomic temp+rename
+/// carries, then writes the whole file back through the atomic temp+rename
 /// `settingsFileStorage.save`. Being an actor makes the read-modify-write a
-/// FIFO critical section: a positive snapshot and a delete tombstone for the
+/// FIFO critical section: a positive record and a delete tombstone for the
 /// same key can't interleave, and concurrent keys from separate flushes both
-/// survive (last-writer-wins per key, not whole-dict).
+/// survive (last-writer-wins per key, not whole-file).
 ///
 /// There is no flock / NSFileCoordinator: a second Supacode instance writing
 /// the same file concurrently is a dev-only scenario and accepted as
-/// last-writer-wins. The in-memory `@Shared(.layouts)` dict stays the source of
-/// truth on main; this actor only owns the encode + disk merge.
+/// last-writer-wins. The store's layout state is the source of truth on main;
+/// this actor only owns the encode + disk merge.
 actor LayoutsIncrementalWriter {
-  /// One per-worktree change to splice into the on-disk dict. `.delete` is an
+  /// One per-worktree change to splice into the v2 file. `.delete` is an
   /// explicit tombstone: absence from a flush means "leave the disk key alone",
   /// so a pruned worktree must be carried as `.delete`, never as omission.
-  enum Change: Sendable {
-    case snapshot(TerminalLayoutSnapshot)
+  enum RecordChange: Sendable {
+    case record(LayoutRecord)
     case delete
   }
 
@@ -30,10 +30,9 @@ actor LayoutsIncrementalWriter {
   nonisolated var unownedExecutor: UnownedSerialExecutor { executorQueue.asUnownedSerialExecutor() }
   private let storage: SettingsFileStorage
   private let url: URL
-  /// Guards the read-modify-write so the off-actor `flushSync` (on-quit) and the
-  /// actor-routed flush/delete paths mutually exclude. The actor still owns FIFO
-  /// ordering of the live path; this only prevents a lost update against the
-  /// single off-actor entrant.
+  /// Redundant now that `flushSync` also runs on `executorQueue`, so the queue
+  /// serializes every write and owns their ordering; kept as belt-and-suspenders
+  /// mutual exclusion around the read-modify-write.
   private let writeLock = NSLock()
 
   init(
@@ -44,73 +43,97 @@ actor LayoutsIncrementalWriter {
     self.url = url
   }
 
-  /// Re-reads the on-disk dict, applies `changes`, and writes the result.
+  /// Re-reads the on-disk file, applies `changes`, and writes the result.
   /// Keys not present in `changes` are preserved from disk untouched.
-  func flush(_ changes: [String: Change]) {
-    applyAndWrite(changes)
+  func flush(records changes: [String: RecordChange]) {
+    applyAndWriteRecords(changes)
   }
 
   /// Synchronous variant for the on-quit terminal write, where the run loop is
-  /// tearing down and there's no chance to await the actor. The atomic temp+rename
-  /// `storage.save` makes the off-actor write safe as the process's final flush.
-  nonisolated func flushSync(_ changes: [String: Change]) {
-    applyAndWrite(changes)
+  /// tearing down and there's no chance to await the actor. Runs on the writer's
+  /// serial executor so this terminal write is FIFO-ordered strictly after any
+  /// flush already enqueued at quit, never overtaken and regressed by a late one.
+  nonisolated func flushSync(records changes: [String: RecordChange]) {
+    executorQueue.sync { applyAndWriteRecords(changes) }
   }
 
-  private nonisolated func applyAndWrite(_ changes: [String: Change]) {
+  private nonisolated func applyAndWriteRecords(_ changes: [String: RecordChange]) {
     guard !changes.isEmpty else { return }
     writeLock.lock()
     defer { writeLock.unlock() }
-    guard var dict = readFromDisk() else {
-      // Abort rather than splice our keys into an empty dict and clobber every other worktree's layout.
-      Self.logger.error(
-        "Aborting incremental layout flush: on-disk layouts failed to decode; preserving file for recovery.")
+    guard var file = readFileFromDisk() else { return }
+    // A newer schema is read-only for this build; never write into it.
+    guard file.schemaVersion <= LayoutsFile.currentSchemaVersion else {
+      Self.logger.warning("Skipping layout flush into newer schema v\(file.schemaVersion).")
       return
     }
-    let original = dict
+    let original = file
     for (key, change) in changes {
       switch change {
-      case .snapshot(let snapshot):
-        dict[key] = snapshot
+      case .record(let record):
+        // The migration origin is write-once; preserve it when the caller
+        // carries none.
+        file.worktrees[key] = LayoutRecord(
+          layout: record.layout,
+          origin: record.origin ?? file.worktrees[key]?.origin
+        )
       case .delete:
-        dict.removeValue(forKey: key)
+        file.worktrees.removeValue(forKey: key)
       }
     }
-    // Skip the write when the splice is a no-op. onTabProjectionChanged fires on
-    // notification / focus / zoom deltas that aren't part of the snapshot, so an
-    // agent tool-call storm would otherwise churn the file with identical bytes.
-    guard dict != original else { return }
-    write(dict)
+    guard file != original else { return }
+    write(file)
   }
 
-  /// Returns the on-disk dict, `[:]` when the file is absent (fresh start) or
-  /// when corrupt bytes were rotated aside, or `nil` on a present-but-unreadable
-  /// file (transient/permission error) so the caller aborts rather than clobbers it.
-  private nonisolated func readFromDisk() -> [String: TerminalLayoutSnapshot]? {
+  /// Returns the on-disk v2 file; an empty stamped file when absent or after
+  /// corrupt bytes were rotated aside; `nil` on a present-but-unreadable file
+  /// or a still-v1 file, so the caller aborts rather than clobbers it.
+  private nonisolated func readFileFromDisk() -> LayoutsFile? {
     let data: Data
     do {
       data = try storage.load(url)
     } catch {
-      // Only an absent file is a fresh start; a present-but-unreadable file must abort so we don't clobber siblings.
       guard Self.isFileAbsent(error) else {
-        Self.logger.error("Failed to read layouts during incremental merge: \(error)")
+        Self.logger.error("Failed to read layouts during v2 merge: \(error)")
         return nil
       }
-      return [:]
+      return LayoutsFile(worktrees: [:])
     }
+    let decoder = JSONDecoder()
+    decoder.userInfo[.layoutDecodeLoss] = LayoutDecodeLoss()
+    if let file = try? decoder.decode(LayoutsFile.self, from: data) {
+      // A lossy decode dropped entries or tabs; writing it back would make the
+      // loss permanent. Abort and leave the bytes for recovery.
+      guard file.undecodedEntryCount == 0 else {
+        Self.logger.error("Aborting v2 layout flush: on-disk file has unreadable entries.")
+        return nil
+      }
+      return file
+    }
+    if (try? JSONDecoder().decode([String: FailableDecodable<TerminalLayoutSnapshot>].self, from: data)) != nil {
+      // A deferred migration left v1 bytes in place; they must survive for the
+      // next launch's migrator, so this flush is dropped.
+      Self.logger.error("Aborting v2 layout flush: layouts.json is still v1.")
+      return nil
+    }
+    Self.logger.error("Failed to decode layouts during v2 merge; rotating aside.")
+    Self.renameCorruptFile(at: url)
+    return LayoutsFile(worktrees: [:])
+  }
+
+  private nonisolated func write(_ file: LayoutsFile) {
     do {
-      return try JSONDecoder().decode([String: TerminalLayoutSnapshot].self, from: data)
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      let data = try encoder.encode(file)
+      try storage.save(data, url)
     } catch {
-      // Corrupt bytes: rotate aside and start fresh rather than refuse to save
-      // forever. Mirrors SidebarPersistenceKey; the bytes are kept for recovery.
-      Self.logger.error("Failed to decode layouts during incremental merge: \(error)")
-      Self.renameCorruptFile(at: url)
-      return [:]
+      Self.logger.warning("Failed to write incremental layouts: \(error)")
     }
   }
 
   /// True only when the read failed because the file does not exist.
-  private static func isFileAbsent(_ error: Error) -> Bool {
+  static func isFileAbsent(_ error: Error) -> Bool {
     if let cocoa = error as? CocoaError, cocoa.code == .fileReadNoSuchFile { return true }
     if let posix = error as? POSIXError, posix.code == .ENOENT { return true }
     return false
@@ -136,14 +159,4 @@ actor LayoutsIncrementalWriter {
     }
   }
 
-  private nonisolated func write(_ dict: [String: TerminalLayoutSnapshot]) {
-    do {
-      let encoder = JSONEncoder()
-      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-      let data = try encoder.encode(dict)
-      try storage.save(data, url)
-    } catch {
-      Self.logger.warning("Failed to write incremental layouts: \(error)")
-    }
-  }
 }

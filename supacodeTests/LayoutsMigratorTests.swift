@@ -1,0 +1,568 @@
+import Dependencies
+import Foundation
+import IdentifiedCollections
+import SupacodeSettingsShared
+import Testing
+
+@testable import supacode
+
+struct LayoutsMigratorTests {
+  nonisolated private static func tab(
+    id: UUID?,
+    title: String = "shell",
+    customTitle: String? = nil,
+    layout: TerminalLayoutSnapshot.LayoutNode,
+    focusedLeafIndex: Int = 0
+  ) -> TerminalLayoutSnapshot.TabSnapshot {
+    TerminalLayoutSnapshot.TabSnapshot(
+      id: id,
+      title: title,
+      customTitle: customTitle,
+      icon: nil,
+      tintColor: nil,
+      layout: layout,
+      focusedLeafIndex: focusedLeafIndex
+    )
+  }
+
+  nonisolated private static func leaf(_ id: UUID, workingDirectory: String? = nil)
+    -> TerminalLayoutSnapshot.LayoutNode
+  {
+    .leaf(
+      TerminalLayoutSnapshot.SurfaceSnapshot(id: id, workingDirectory: workingDirectory)
+    )
+  }
+
+  @Test func singleTabMapsToOnePaneKeepingIdentity() throws {
+    let tabID = UUID()
+    let surfaceID = UUID()
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [
+        Self.tab(
+          id: tabID,
+          customTitle: "named",
+          layout: Self.leaf(surfaceID, workingDirectory: "/repo")
+        )
+      ],
+      selectedTabIndex: 0
+    )
+    let record = LayoutsMigrator.migrate(snapshot)
+    let layout = record.layout
+    #expect(layout.isConsistent)
+    #expect(layout.panes.count == 1)
+    let pane = try #require(layout.panes.first)
+    let tab = try #require(pane.tabs.first)
+    #expect(tab.id.rawValue == tabID)
+    #expect(tab.customTitle == "named")
+    #expect(tab.content.id.rawValue == surfaceID)
+    guard case .terminal(let state) = tab.content.state else {
+      Issue.record("expected terminal content")
+      return
+    }
+    #expect(state.workingDirectory == "/repo")
+    #expect(record.origin == snapshot)
+    #expect(layout.tree.zoomed == nil)
+  }
+
+  @Test func selectedTabsSplitTreeBecomesThePaneArrangement() throws {
+    let tabID = UUID()
+    let surfaceA = UUID()
+    let surfaceB = UUID()
+    let surfaceC = UUID()
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [
+        Self.tab(
+          id: tabID,
+          customTitle: "work",
+          layout: .split(
+            TerminalLayoutSnapshot.SplitSnapshot(
+              direction: .horizontal,
+              ratio: 0.3,
+              left: Self.leaf(surfaceA),
+              right: .split(
+                TerminalLayoutSnapshot.SplitSnapshot(
+                  direction: .vertical,
+                  ratio: 0.6,
+                  left: Self.leaf(surfaceB),
+                  right: Self.leaf(surfaceC)
+                )
+              )
+            )
+          ),
+          focusedLeafIndex: 1
+        )
+      ],
+      selectedTabIndex: 0
+    )
+    let layout = LayoutsMigrator.migrate(snapshot).layout
+    #expect(layout.isConsistent)
+    #expect(layout.panes.count == 3)
+    // The tree mirrors directions and ratios over freshly minted pane IDs.
+    guard case .split(let rootSplit) = layout.tree.root else {
+      Issue.record("expected split root")
+      return
+    }
+    #expect(rootSplit.direction == .horizontal)
+    #expect(rootSplit.ratio == 0.3)
+    guard case .split(let rightSplit) = rootSplit.right else {
+      Issue.record("expected nested split")
+      return
+    }
+    #expect(rightSplit.direction == .vertical)
+    #expect(rightSplit.ratio == 0.6)
+    // The focused leaf's pane carries the old tab identity and the focus.
+    let paneOrder = layout.tree.leaves()
+    let focusedPane = try #require(layout.panes[id: paneOrder[1]])
+    #expect(focusedPane.tabs.first?.id.rawValue == tabID)
+    #expect(focusedPane.tabs.first?.customTitle == "work")
+    #expect(layout.focusedPaneID == focusedPane.id)
+    // Sibling leaves mint their content UUID as tab ID with no custom title.
+    let paneA = try #require(layout.panes[id: paneOrder[0]])
+    #expect(paneA.tabs.first?.id.rawValue == surfaceA)
+    #expect(paneA.tabs.first?.customTitle == nil)
+    #expect(paneA.tabs.first?.title == "shell")
+    let paneC = try #require(layout.panes[id: paneOrder[2]])
+    #expect(paneC.tabs.first?.id.rawValue == surfaceC)
+  }
+
+  @Test func otherTabsLandInTheFocusedPaneInOrder() throws {
+    let selectedID = UUID()
+    let backgroundID = UUID()
+    let fannedID = UUID()
+    let surfaceS = UUID()
+    let surfaceY = UUID()
+    let surfaceT1 = UUID()
+    let surfaceT2 = UUID()
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [
+        Self.tab(id: selectedID, layout: Self.leaf(surfaceS)),
+        Self.tab(id: backgroundID, customTitle: "bg", layout: Self.leaf(surfaceY)),
+        Self.tab(
+          id: fannedID,
+          customTitle: "fanned",
+          layout: .split(
+            TerminalLayoutSnapshot.SplitSnapshot(
+              direction: .horizontal,
+              ratio: 0.5,
+              left: Self.leaf(surfaceT1),
+              right: Self.leaf(surfaceT2)
+            )
+          ),
+          focusedLeafIndex: 1
+        ),
+      ],
+      selectedTabIndex: 0
+    )
+    let layout = LayoutsMigrator.migrate(snapshot).layout
+    #expect(layout.isConsistent)
+    #expect(layout.panes.count == 1)
+    let pane = try #require(layout.panes.first)
+    let ids = pane.tabs.map(\.id.rawValue)
+    // Selected first (keeps selection), then each tab in order; the fanned
+    // tab's leaves stay adjacent with identity on its focused leaf.
+    #expect(ids == [selectedID, backgroundID, surfaceT1, fannedID])
+    #expect(pane.selectedTabID?.rawValue == selectedID)
+    #expect(pane.tabs[id: TabID(rawValue: backgroundID)]?.customTitle == "bg")
+    #expect(pane.tabs[id: TabID(rawValue: surfaceT1)]?.customTitle == nil)
+    #expect(pane.tabs[id: TabID(rawValue: fannedID)]?.customTitle == "fanned")
+    #expect(pane.tabs[id: TabID(rawValue: fannedID)]?.content.id.rawValue == surfaceT2)
+  }
+
+  @Test func everyContentAndTabReferenceSurvivesMigration() throws {
+    let tabs: [TerminalLayoutSnapshot.TabSnapshot] = [
+      Self.tab(
+        id: UUID(),
+        layout: .split(
+          TerminalLayoutSnapshot.SplitSnapshot(
+            direction: .vertical,
+            ratio: 0.5,
+            left: Self.leaf(UUID()),
+            right: Self.leaf(UUID())
+          )
+        )
+      ),
+      Self.tab(id: UUID(), layout: Self.leaf(UUID())),
+      Self.tab(id: nil, layout: Self.leaf(UUID())),
+    ]
+    let snapshot = TerminalLayoutSnapshot(tabs: tabs, selectedTabIndex: 1)
+    let layout = LayoutsMigrator.migrate(snapshot).layout
+    #expect(layout.isConsistent)
+    // No content is dropped.
+    #expect(Set(layout.allContentIDs.map(\.rawValue)) == Set(snapshot.allSurfaceIDs))
+    // Every old tab ID still resolves to a tab.
+    for tab in tabs {
+      guard let oldID = tab.id else { continue }
+      #expect(layout.pane(containingTab: TabID(rawValue: oldID)) != nil)
+    }
+    // A legacy tab with no persisted ID adopts its content UUID.
+    let legacySurface = tabs[2].layout.firstLeaf.id
+    #expect(layout.pane(containingTab: TabID(rawValue: legacySurface!)) != nil)
+  }
+
+  @Test func identityLeafKeepsTheOldTabIDEvenWhenASiblingSharesIt() throws {
+    // The normal CLI shape: the tab ID equals the initial leaf's surface UUID,
+    // and focus moved to the second leaf. The sibling must not steal the ID.
+    let tabID = UUID()
+    let secondSurface = UUID()
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [
+        Self.tab(
+          id: tabID,
+          customTitle: "mine",
+          layout: .split(
+            TerminalLayoutSnapshot.SplitSnapshot(
+              direction: .horizontal,
+              ratio: 0.5,
+              left: Self.leaf(tabID),
+              right: Self.leaf(secondSurface)
+            )
+          ),
+          focusedLeafIndex: 1
+        )
+      ],
+      selectedTabIndex: 0
+    )
+    let layout = LayoutsMigrator.migrate(snapshot).layout
+    #expect(layout.isConsistent)
+    let identityPane = try #require(layout.pane(containingTab: TabID(rawValue: tabID)))
+    let identityTab = try #require(identityPane.tabs[id: TabID(rawValue: tabID)])
+    #expect(identityTab.customTitle == "mine")
+    #expect(identityTab.content.id.rawValue == secondSurface)
+    // The sibling holding the old tab's surface reminted its tab ID; its
+    // content is untouched.
+    let sibling = try #require(layout.tab(containingContent: ContentID(rawValue: tabID)))
+    #expect(sibling.tab.id.rawValue != tabID)
+    #expect(sibling.tab.customTitle == nil)
+  }
+
+  @Test func selectedIndexOutOfRangeClampsInsteadOfTrapping() {
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [Self.tab(id: UUID(), layout: Self.leaf(UUID()))],
+      selectedTabIndex: 7
+    )
+    let layout = LayoutsMigrator.migrate(snapshot).layout
+    #expect(layout.isConsistent)
+    #expect(layout.panes.count == 1)
+  }
+
+  @Test func emptySnapshotMigratesToAnEmptyRecord() {
+    let snapshot = TerminalLayoutSnapshot(tabs: [], selectedTabIndex: 0)
+    let record = LayoutsMigrator.migrate(snapshot)
+    #expect(record.layout.isConsistent)
+    #expect(record.layout.panes.isEmpty)
+    #expect(record.origin == snapshot)
+  }
+
+  @Test func migratedFileRoundTripsByteStably() throws {
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [
+        Self.tab(id: UUID(), layout: Self.leaf(UUID())),
+        Self.tab(
+          id: UUID(),
+          layout: .split(
+            TerminalLayoutSnapshot.SplitSnapshot(
+              direction: .horizontal,
+              ratio: 0.4,
+              left: Self.leaf(UUID()),
+              right: Self.leaf(UUID())
+            )
+          )
+        ),
+      ],
+      selectedTabIndex: 0
+    )
+    let file = LayoutsMigrator.migrate(["repo": snapshot])
+    #expect(file.schemaVersion == LayoutsFile.currentSchemaVersion)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let first = try encoder.encode(file)
+    let decoded = try JSONDecoder().decode(LayoutsFile.self, from: first)
+    let second = try encoder.encode(decoded)
+    #expect(first == second)
+    #expect(decoded == file)
+  }
+
+  @Test func rottenWorktreeEntryDropsThatEntryNotTheFile() throws {
+    let json = """
+      {"schemaVersion":2,"worktrees":{
+        "good":{"layout":{"panes":[],"tree":{}}},
+        "bad":{"layout":"not an object"}}}
+      """
+    let decoded = try JSONDecoder().decode(LayoutsFile.self, from: Data(json.utf8))
+    #expect(decoded.worktrees.count == 1)
+    #expect(decoded.worktrees["good"] != nil)
+  }
+
+  @Test func lossyV2DecodeReadsAsUnreadableSoTheReaperNeverSweeps() {
+    // A dropped entry leaves `allKnownSurfaceIDs` incomplete; a `.file` read
+    // would let the orphan reaper kill sessions the dropped record still owns.
+    let json = """
+      {"schemaVersion":2,"worktrees":{
+        "good":{"layout":{"panes":[],"tree":{}}},
+        "bad":{"layout":"not an object"}}}
+      """
+    let state = Self.readState(seededWith: json)
+    guard case .unreadable = state else {
+      Issue.record("Expected .unreadable for a lossy v2 decode, got \(state).")
+      return
+    }
+  }
+
+  @Test func cleanV2DecodeReadsAsFile() {
+    let json = """
+      {"schemaVersion":2,"worktrees":{"good":{"layout":{"panes":[],"tree":{}}}}}
+      """
+    let state = Self.readState(seededWith: json)
+    guard case .file(let file) = state else {
+      Issue.record("Expected .file for a clean v2 decode, got \(state).")
+      return
+    }
+    #expect(file.worktrees.count == 1)
+    #expect(file.undecodedEntryCount == 0)
+  }
+
+  @Test func newerSchemaReadsAsUnreadableSoADowngradeNeverReaps() {
+    // A future build's file decodes partially here; treating it as authoritative
+    // would let the reaper kill sessions the newer schema still owns.
+    let json = """
+      {"schemaVersion":3,"worktrees":{"good":{"layout":{"panes":[],"tree":{}}}}}
+      """
+    let state = Self.readState(seededWith: json)
+    guard case .unreadable = state else {
+      Issue.record("Expected .unreadable for a newer schema, got \(state).")
+      return
+    }
+  }
+
+  @Test func droppedTabMarksTheFileLossyAndUnreadable() throws {
+    // Encode a clean one-tab layout, then inject an undecodable tab so the pane
+    // still decodes while silently losing a tab.
+    let contentID = ContentID()
+    let paneID = PaneID()
+    let tab = TabItem(
+      id: TabID(),
+      title: "shell",
+      content: ContentSnapshot(id: contentID, state: .terminal(TerminalContentState(workingDirectory: nil))))
+    let layout = PaneLayout(
+      tree: SplitTree(view: paneID), panes: [Pane(id: paneID, tabs: [tab], selectedTabID: tab.id)],
+      focusedPaneID: paneID)
+    let clean = try JSONEncoder().encode(LayoutsFile(worktrees: ["wt": LayoutRecord(layout: layout)]))
+    let json = try #require(String(bytes: clean, encoding: .utf8))
+      .replacing("\"tabs\":[", with: "\"tabs\":[\"rotten\",")
+
+    // The nested drop surfaces only when a tracker is installed, as readFromDisk does.
+    let decoder = JSONDecoder()
+    decoder.userInfo[.layoutDecodeLoss] = LayoutDecodeLoss()
+    let decoded = try decoder.decode(LayoutsFile.self, from: Data(json.utf8))
+    #expect(decoded.undecodedEntryCount == 1)
+
+    guard case .unreadable = Self.readState(seededWith: json) else {
+      Issue.record("Expected .unreadable for a dropped-tab decode.")
+      return
+    }
+  }
+
+  @Test func duplicatePaneMarksTheFileLossyAndUnreadable() throws {
+    let paneID = PaneID()
+    let tab = TabItem(
+      id: TabID(), title: "shell",
+      content: ContentSnapshot(id: ContentID(), state: .terminal(TerminalContentState(workingDirectory: nil))))
+    let paneData = try JSONEncoder().encode(Pane(id: paneID, tabs: [tab], selectedTabID: tab.id))
+    let pane = try #require(String(bytes: paneData, encoding: .utf8))
+    let tree = try #require(String(bytes: JSONEncoder().encode(SplitTree(view: paneID)), encoding: .utf8))
+    let focus = try #require(String(bytes: JSONEncoder().encode(paneID), encoding: .utf8))
+    // The same pane twice: the decoder keeps the first and drops the duplicate.
+    let json = """
+      {"schemaVersion":2,"worktrees":{"wt":{"layout":{
+        "tree":\(tree),
+        "panes":[\(pane),\(pane)],
+        "focusedPaneID":\(focus)
+      }}}}
+      """
+    let decoder = JSONDecoder()
+    decoder.userInfo[.layoutDecodeLoss] = LayoutDecodeLoss()
+    let decoded = try decoder.decode(LayoutsFile.self, from: Data(json.utf8))
+    #expect(decoded.undecodedEntryCount == 1)
+
+    guard case .unreadable = Self.readState(seededWith: json) else {
+      Issue.record("Expected .unreadable for a duplicate-pane decode.")
+      return
+    }
+  }
+
+  /// Reads `readFromDisk` against an in-memory file seeded with `json`.
+  nonisolated private static func readState(seededWith json: String) -> LayoutsFile.DiskState {
+    let files = LockIsolated<[URL: Data]>([layoutsURL: Data(json.utf8)])
+    return withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { target in
+          guard let data = files.value[target] else { throw CocoaError(.fileReadNoSuchFile) }
+          return data
+        },
+        save: { _, _ in }
+      )
+    } operation: {
+      LayoutsFile.readFromDisk(url: layoutsURL)
+    }
+  }
+
+  // MARK: - File migration runner.
+
+  nonisolated private static let layoutsURL = URL(
+    fileURLWithPath: "/tmp/layouts-migrator-tests/layouts.json"
+  )
+  nonisolated private static let backupURL = layoutsURL.appendingPathExtension("pre-tabs-per-split.bak")
+
+  /// Runs the migrator against an in-memory file system; returns save calls.
+  @discardableResult
+  nonisolated private static func runMigration(
+    files: LockIsolated<[URL: Data]>,
+    backupExists: Bool = false,
+    failingSaves: Set<URL> = []
+  ) -> LockIsolated<[URL]> {
+    let saves = LockIsolated<[URL]>([])
+    withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { target in
+          guard let data = files.value[target] else { throw CocoaError(.fileReadNoSuchFile) }
+          return data
+        },
+        save: { data, target in
+          saves.withValue { $0.append(target) }
+          guard !failingSaves.contains(target) else { throw CocoaError(.fileWriteUnknown) }
+          files.withValue { $0[target] = data }
+        }
+      )
+    } operation: {
+      LayoutsMigrator.migrateFileIfNeeded(url: layoutsURL, fileExists: { _ in backupExists })
+    }
+    return saves
+  }
+
+  nonisolated private static func v1Data() throws -> Data {
+    let surfaceID = UUID()
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [tab(id: surfaceID, layout: leaf(surfaceID, workingDirectory: "/tmp/wt"))],
+      selectedTabIndex: 0
+    )
+    return try JSONEncoder().encode(["wt": snapshot])
+  }
+
+  @Test func v1FileMigratesInPlaceWithABackup() throws {
+    let original = try Self.v1Data()
+    let files = LockIsolated([Self.layoutsURL: original])
+    Self.runMigration(files: files)
+    let migrated = try JSONDecoder().decode(LayoutsFile.self, from: #require(files.value[Self.layoutsURL]))
+    #expect(migrated.schemaVersion == LayoutsFile.currentSchemaVersion)
+    #expect(migrated.worktrees["wt"]?.layout.isConsistent == true)
+    #expect(migrated.worktrees["wt"]?.origin != nil)
+    #expect(files.value[Self.backupURL] == original)
+  }
+
+  @Test func migrationRunsExactlyOnce() throws {
+    let original = try Self.v1Data()
+    let files = LockIsolated([Self.layoutsURL: original])
+    Self.runMigration(files: files)
+    let after = files.value
+    // The stamp gates the second run before any write.
+    let saves = Self.runMigration(files: files, backupExists: true)
+    #expect(saves.value.isEmpty)
+    #expect(files.value == after)
+  }
+
+  @Test func newerSchemaIsLeftUntouched() {
+    let newer = Data(#"{"schemaVersion":3,"worktrees":{}}"#.utf8)
+    let files = LockIsolated([Self.layoutsURL: newer])
+    let saves = Self.runMigration(files: files)
+    #expect(saves.value.isEmpty)
+    #expect(files.value[Self.layoutsURL] == newer)
+  }
+
+  @Test func unreadableFileIsLeftUntouched() {
+    let garbage = Data("not json".utf8)
+    let files = LockIsolated([Self.layoutsURL: garbage])
+    let saves = Self.runMigration(files: files)
+    #expect(saves.value.isEmpty)
+    #expect(files.value[Self.layoutsURL] == garbage)
+  }
+
+  @Test func existingBackupIsNeverOverwritten() throws {
+    let priorBackup = Data("prior".utf8)
+    let original = try Self.v1Data()
+    let files = LockIsolated([Self.layoutsURL: original, Self.backupURL: priorBackup])
+    Self.runMigration(files: files, backupExists: true)
+    #expect(files.value[Self.backupURL] == priorBackup)
+    let migrated = try JSONDecoder().decode(LayoutsFile.self, from: #require(files.value[Self.layoutsURL]))
+    #expect(migrated.schemaVersion == LayoutsFile.currentSchemaVersion)
+  }
+
+  @Test func failedBackupDefersTheMigration() throws {
+    let original = try Self.v1Data()
+    let files = LockIsolated([Self.layoutsURL: original])
+    Self.runMigration(files: files, failingSaves: [Self.backupURL])
+    // The v1 file must survive so the next launch can retry.
+    #expect(files.value[Self.layoutsURL] == original)
+    #expect(files.value[Self.backupURL] == nil)
+  }
+
+  @Test func absentFileIsANoOp() {
+    let files = LockIsolated([URL: Data]())
+    let saves = Self.runMigration(files: files)
+    #expect(saves.value.isEmpty)
+    #expect(files.value.isEmpty)
+  }
+
+  @Test func failedFinalWriteLeavesV1InPlaceForRetry() throws {
+    let original = try Self.v1Data()
+    let files = LockIsolated([Self.layoutsURL: original])
+    Self.runMigration(files: files, failingSaves: [Self.layoutsURL])
+    // The backup landed but the v1 bytes survive so the next launch retries.
+    #expect(files.value[Self.layoutsURL] == original)
+    #expect(files.value[Self.backupURL] == original)
+  }
+
+  @Test func emptyV1MigratesToAStampedEmptyFile() throws {
+    let files = LockIsolated([Self.layoutsURL: Data("{}".utf8)])
+    Self.runMigration(files: files)
+    let migrated = try JSONDecoder().decode(LayoutsFile.self, from: #require(files.value[Self.layoutsURL]))
+    #expect(migrated.schemaVersion == LayoutsFile.currentSchemaVersion)
+    #expect(migrated.worktrees.isEmpty)
+  }
+
+  @Test func rottenV1EntryDefersTheMigration() throws {
+    let surfaceID = UUID()
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [Self.tab(id: surfaceID, layout: Self.leaf(surfaceID))],
+      selectedTabIndex: 0
+    )
+    var envelope = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(["good": snapshot])) as? [String: Any]
+    )
+    envelope["bad"] = ["title": "missing everything else"]
+    let data = try JSONSerialization.data(withJSONObject: envelope)
+    let files = LockIsolated([Self.layoutsURL: data])
+    let saves = Self.runMigration(files: files)
+    // A partial v1 decode must not migrate: rewriting the readable entries would
+    // drop the rotten record's sessions to the reaper. The file is left for a
+    // retry, and reads as unreadable meanwhile.
+    #expect(saves.value.isEmpty)
+    #expect(files.value[Self.layoutsURL] == data)
+  }
+
+  @Test func partialV1ReadsAsUnreadable() throws {
+    let surfaceID = UUID()
+    let snapshot = TerminalLayoutSnapshot(
+      tabs: [Self.tab(id: surfaceID, layout: Self.leaf(surfaceID))],
+      selectedTabIndex: 0
+    )
+    var envelope = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(["good": snapshot])) as? [String: Any]
+    )
+    envelope["bad"] = ["title": "missing everything else"]
+    let json = try #require(String(bytes: JSONSerialization.data(withJSONObject: envelope), encoding: .utf8))
+    guard case .unreadable = Self.readState(seededWith: json) else {
+      Issue.record("Expected .unreadable for a partial v1 decode.")
+      return
+    }
+  }
+}

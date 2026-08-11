@@ -127,11 +127,10 @@ private struct NotificationSoundLabel: View {
   let sound: NotificationSound
 
   var body: some View {
-    if sound == GlobalSettings.default.notificationSound {
-      Text("\(sound.displayName) \(Text("Default").foregroundStyle(.secondary))")
-    } else {
-      Text(sound.displayName)
-    }
+    DefaultTaggedLabel(
+      label: sound.displayName,
+      isDefault: sound == GlobalSettings.default.notificationSound
+    )
   }
 }
 
@@ -139,10 +138,6 @@ private struct RetentionLimitLabel: View {
   let limit: NotificationRetentionLimit
 
   var body: some View {
-    if limit == .defaultValue {
-      Text("\(limit.label) \(Text("Default").foregroundStyle(.secondary))")
-    } else {
-      Text(limit.label)
-    }
+    DefaultTaggedLabel(label: limit.label, isDefault: limit == .defaultValue)
   }
 }

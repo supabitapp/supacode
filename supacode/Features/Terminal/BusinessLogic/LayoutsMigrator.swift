@@ -1,0 +1,436 @@
+import Dependencies
+import Foundation
+import IdentifiedCollections
+import SupacodeSettingsShared
+
+nonisolated private let migrationLogger = SupaLogger("Layouts")
+
+/// One worktree's persisted layout plus the write-once pre-migration original.
+nonisolated struct LayoutRecord: Equatable, Codable, Sendable {
+  var layout: PaneLayout
+  /// The v1 snapshot verbatim, written once at migration and never read by the
+  /// app; enables rollback tooling.
+  let origin: TerminalLayoutSnapshot?
+
+  private enum CodingKeys: String, CodingKey {
+    case layout
+    case origin
+  }
+
+  init(layout: PaneLayout, origin: TerminalLayoutSnapshot? = nil) {
+    self.layout = layout
+    self.origin = origin
+  }
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    layout = try container.decode(PaneLayout.self, forKey: .layout)
+    // `try?` so origin rot can never take the live layout down with it.
+    origin =
+      (try? container.decodeIfPresent(TerminalLayoutSnapshot.self, forKey: .origin)) ?? nil
+    if origin == nil, container.contains(.origin) {
+      migrationLogger.error("Dropped an unreadable migration origin; rollback tooling loses it.")
+    }
+  }
+}
+
+/// The layouts.json v2 shape: a version stamp over per-worktree records.
+nonisolated struct LayoutsFile: Equatable, Codable, Sendable {
+  static let currentSchemaVersion = 2
+
+  var schemaVersion: Int
+  var worktrees: [String: LayoutRecord]
+  /// Worktree entries or tabs the tolerant decode dropped; never encoded. A
+  /// non-zero count marks the value as lossy, so readers and writers reject it.
+  var undecodedEntryCount = 0
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion
+    case worktrees
+  }
+
+  init(schemaVersion: Int = LayoutsFile.currentSchemaVersion, worktrees: [String: LayoutRecord]) {
+    self.schemaVersion = schemaVersion
+    self.worktrees = worktrees
+  }
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+    // Element-wise so one rotten worktree entry drops that entry, not the file.
+    let raw = try container.decode([String: FailableDecodable<LayoutRecord>].self, forKey: .worktrees)
+    worktrees = raw.compactMapValues(\.value)
+    // A dropped entry loses its session references to the orphan reaper; the
+    // loss must at least be diagnosable.
+    let dropped = raw.keys.filter { worktrees[$0] == nil }
+    if !dropped.isEmpty {
+      migrationLogger.error("Dropped unreadable layout entries: \(dropped.sorted())")
+    }
+    // Fold in content the nested decode dropped (a lost tab or a duplicate pane):
+    // a record can decode while silently losing content, which must read as lossy.
+    let droppedContent = (decoder.userInfo[.layoutDecodeLoss] as? LayoutDecodeLoss)?.droppedCount ?? 0
+    undecodedEntryCount = dropped.count + droppedContent
+  }
+
+  func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(schemaVersion, forKey: .schemaVersion)
+    try container.encode(worktrees, forKey: .worktrees)
+  }
+}
+
+nonisolated extension LayoutsFile {
+  /// What a launch-time read of `layouts.json` found. `.absent` is a fresh
+  /// start; `.unreadable` means bytes exist but could not be decoded, so a
+  /// caller must never treat the store as empty (the orphan reaper would
+  /// sweep every detached session).
+  enum DiskState {
+    case file(LayoutsFile)
+    case absent
+    case unreadable
+  }
+
+  /// Reads and decodes the persisted layouts. A still-v1 file (a deferred
+  /// migration) migrates in memory so readers see the real records while the
+  /// on-disk bytes survive for the next launch's migrator.
+  static func readFromDisk(url: URL = SupacodePaths.layoutsURL) -> DiskState {
+    @Dependency(\.settingsFileStorage) var storage
+    let data: Data
+    do {
+      data = try storage.load(url)
+    } catch {
+      guard LayoutsIncrementalWriter.isFileAbsent(error) else {
+        migrationLogger.error("layouts.json unreadable: \(error)")
+        return .unreadable
+      }
+      return .absent
+    }
+    let decoder = JSONDecoder()
+    decoder.userInfo[.layoutDecodeLoss] = LayoutDecodeLoss()
+    if let file = try? decoder.decode(LayoutsFile.self, from: data) {
+      // A newer build's file decodes partially here (unknown content kinds drop
+      // to nothing), so a downgrade must not treat it as authoritative and reap.
+      guard file.schemaVersion <= LayoutsFile.currentSchemaVersion else {
+        migrationLogger.error(
+          "layouts.json schema v\(file.schemaVersion) is newer than v\(LayoutsFile.currentSchemaVersion); "
+            + "treating as unreadable.")
+        return .unreadable
+      }
+      // A tolerant decode that dropped entries or tabs leaves `allKnownSurfaceIDs`
+      // incomplete; the orphan reaper would then kill sessions the dropped
+      // records still own. Treat a partial read as unreadable, mirroring the
+      // writer's refusal to persist a lossy value.
+      guard file.undecodedEntryCount == 0 else {
+        migrationLogger.error(
+          "layouts.json dropped \(file.undecodedEntryCount) entrie(s); treating as unreadable."
+        )
+        return .unreadable
+      }
+      return .file(file)
+    }
+    guard
+      let raw = try? JSONDecoder().decode(
+        [String: FailableDecodable<TerminalLayoutSnapshot>].self, from: data
+      )
+    else {
+      migrationLogger.error("layouts.json is neither v2 nor v1; treating as unreadable.")
+      return .unreadable
+    }
+    let legacy = raw.compactMapValues(\.value)
+    // Any dropped v1 entry leaves its detached sessions unreferenced; an
+    // authoritative read would let the reaper sweep them, so a partial decode
+    // reads as unknown (never as empty), mirroring the v2 lossy path.
+    guard legacy.count == raw.count else {
+      migrationLogger.error("layouts.json v1 decode dropped an entry; treating as unreadable.")
+      return .unreadable
+    }
+    return .file(LayoutsMigrator.migrate(legacy))
+  }
+
+  /// Every session identity persisted anywhere in the file, including the
+  /// write-once v1 origin, so the orphan reaper can never kill a session a
+  /// dropped or not-yet-migrated record still owns.
+  var allKnownSurfaceIDs: Set<UUID> {
+    var ids: Set<UUID> = []
+    for record in worktrees.values {
+      ids.formUnion(record.layout.allContentIDs.map(\.rawValue))
+      if let origin = record.origin {
+        ids.formUnion(origin.allSurfaceIDs)
+      }
+    }
+    return ids
+  }
+}
+
+nonisolated extension PaneLayout {
+  /// `(surfaceID, agents)` for every terminal content carrying agent records;
+  /// drives the launch-time agent-presence restore.
+  func allAgentRecords() -> [(surfaceID: UUID, records: [TerminalLayoutSnapshot.SurfaceAgentRecord])] {
+    panes.flatMap { pane in
+      pane.tabs.compactMap { tab in
+        guard case .terminal(let state) = tab.content.state,
+          let agents = state.agents, !agents.isEmpty
+        else { return nil }
+        return (tab.content.id.rawValue, agents)
+      }
+    }
+  }
+}
+
+/// Transforms v1 layouts (splits-per-tab) into the v2 pane topology.
+///
+/// Mapping rule: the selected tab's split tree becomes the pane arrangement,
+/// one pane per leaf; every other tab lands in the pane of the selected tab's
+/// focused leaf; a multi-leaf non-selected tab fans its leaves into adjacent
+/// tabs. The old tab's ID stays on the tab at its focused leaf; fanned
+/// siblings mint their content's UUID as tab ID, re-establishing the
+/// documented initial-surface-equals-tab-ID invariant. No content is dropped.
+nonisolated enum LayoutsMigrator {
+  /// A migrated worktree; `nil` layout output never happens, empty input maps
+  /// to an empty record.
+  static func migrate(_ snapshot: TerminalLayoutSnapshot) -> LayoutRecord {
+    var builder = Builder()
+    let tabs = snapshot.tabs
+    guard !tabs.isEmpty else {
+      return LayoutRecord(layout: PaneLayout(), origin: snapshot)
+    }
+    let selectedIndex = max(0, min(snapshot.selectedTabIndex, tabs.count - 1))
+    let selected = tabs[selectedIndex]
+    // Old tab IDs commonly equal their initial leaf's surface UUID; reserve
+    // them so a fanned sibling cannot claim an identity leaf's ID first.
+    builder.reservedTabIDs = Set(tabs.compactMap(\.id))
+
+    // The selected tab's split tree becomes the pane arrangement.
+    let tree = builder.buildTree(from: selected.layout)
+    let selectedLeaves = selected.layout.leaves
+    let focusedLeafIndex = max(0, min(selected.focusedLeafIndex, selectedLeaves.count - 1))
+    for (index, leaf) in selectedLeaves.enumerated() {
+      let carriesTabIdentity = index == focusedLeafIndex
+      builder.appendTab(
+        toPaneAt: index,
+        Self.tabItem(
+          from: leaf,
+          tab: selected,
+          carriesTabIdentity: carriesTabIdentity,
+          builder: &builder
+        )
+      )
+    }
+    let homePaneIndex = focusedLeafIndex
+
+    // Every other tab lands in the focused leaf's pane, in tab order; fanned
+    // leaves of a multi-leaf tab stay adjacent, its focused leaf carrying the
+    // tab identity.
+    for (index, tab) in tabs.enumerated() where index != selectedIndex {
+      let leaves = tab.layout.leaves
+      let tabFocusedIndex = max(0, min(tab.focusedLeafIndex, leaves.count - 1))
+      for (leafIndex, leaf) in leaves.enumerated() {
+        builder.appendTab(
+          toPaneAt: homePaneIndex,
+          Self.tabItem(
+            from: leaf,
+            tab: tab,
+            carriesTabIdentity: leafIndex == tabFocusedIndex,
+            builder: &builder
+          )
+        )
+      }
+    }
+
+    var panes = IdentifiedArrayOf<Pane>()
+    for (index, paneID) in builder.paneIDs.enumerated() {
+      let tabs = builder.tabsByPane[index] ?? []
+      // Each pane's first tab is its own leaf's tab, so first-tab selection
+      // keeps the selected tab selected in the home pane too.
+      panes.append(
+        Pane(id: paneID, tabs: IdentifiedArray(uniqueElements: tabs), selectedTabID: tabs.first?.id)
+      )
+    }
+    let layout = PaneLayout(
+      tree: tree,
+      panes: panes,
+      focusedPaneID: builder.paneIDs.indices.contains(homePaneIndex)
+        ? builder.paneIDs[homePaneIndex] : builder.paneIDs.first
+    )
+    return LayoutRecord(layout: layout, origin: snapshot)
+  }
+
+  /// Builds the v2 file from a v1 dictionary; every worktree keeps every
+  /// content ID.
+  ///
+  /// Runner contract: gate each record on `layout.isConsistent` before serving
+  /// it; compute the orphan reaper's known set as the union of
+  /// `layout.allContentIDs` and `origin.allSurfaceIDs`; treat a file whose
+  /// `schemaVersion` exceeds `currentSchemaVersion` as read-only.
+  static func migrate(_ legacy: [String: TerminalLayoutSnapshot]) -> LayoutsFile {
+    LayoutsFile(worktrees: legacy.mapValues { migrate($0) })
+  }
+
+  private static func tabItem(
+    from leaf: TerminalLayoutSnapshot.SurfaceSnapshot,
+    tab: TerminalLayoutSnapshot.TabSnapshot,
+    carriesTabIdentity: Bool,
+    builder: inout Builder
+  ) -> TabItem {
+    let contentUUID = leaf.id ?? UUID()
+    let content = ContentSnapshot(
+      id: ContentID(rawValue: contentUUID),
+      state: .terminal(
+        TerminalContentState(
+          workingDirectory: leaf.workingDirectory,
+          agents: leaf.agents
+        )
+      )
+    )
+    // The identity-carrying tab keeps the old tab's ID and full metadata;
+    // fanned siblings mint their content UUID and inherit only presentation,
+    // never the custom title. A sibling may not claim a reserved old tab ID:
+    // tab IDs commonly equal the initial leaf's surface UUID, and identity
+    // must not be stolen by leaf order.
+    let requestedID = carriesTabIdentity ? (tab.id ?? contentUUID) : contentUUID
+    let isTaken =
+      builder.usedTabIDs.contains(requestedID)
+      || (!carriesTabIdentity && builder.reservedTabIDs.contains(requestedID))
+    let tabID = isTaken ? UUID() : requestedID
+    if isTaken {
+      migrationLogger.warning(
+        "Reminted migrated tab ID \(requestedID) -> \(tabID) (identity: \(carriesTabIdentity))"
+      )
+    }
+    builder.usedTabIDs.insert(tabID)
+    return TabItem(
+      id: TabID(rawValue: tabID),
+      title: tab.title,
+      customTitle: carriesTabIdentity ? tab.customTitle : nil,
+      icon: tab.icon,
+      tintColor: tab.tintColor,
+      content: content
+    )
+  }
+
+  /// Accumulates panes while the selected tab's tree is mirrored.
+  private struct Builder {
+    var paneIDs: [PaneID] = []
+    var tabsByPane: [Int: [TabItem]] = [:]
+    var usedTabIDs: Set<UUID> = []
+    var reservedTabIDs: Set<UUID> = []
+
+    mutating func appendTab(toPaneAt index: Int, _ tab: TabItem) {
+      tabsByPane[index, default: []].append(tab)
+    }
+
+    /// Mirrors the v1 layout node into a tree of freshly minted pane IDs,
+    /// leaves in traversal order.
+    mutating func buildTree(from node: TerminalLayoutSnapshot.LayoutNode) -> SplitTree<PaneID> {
+      SplitTree(root: buildNode(from: node))
+    }
+
+    private mutating func buildNode(
+      from node: TerminalLayoutSnapshot.LayoutNode
+    ) -> SplitTree<PaneID>.Node {
+      switch node {
+      case .leaf:
+        let paneID = PaneID()
+        paneIDs.append(paneID)
+        return .leaf(view: paneID)
+      case .split(let split):
+        let left = buildNode(from: split.left)
+        let right = buildNode(from: split.right)
+        let direction: SplitTree<PaneID>.Direction =
+          switch split.direction {
+          case .horizontal: .horizontal
+          case .vertical: .vertical
+          }
+        return .split(
+          SplitTree<PaneID>.Split(
+            direction: direction,
+            ratio: split.ratio,
+            left: left,
+            right: right
+          )
+        )
+      }
+    }
+  }
+}
+
+nonisolated extension TerminalLayoutSnapshot.LayoutNode {
+  /// Leaves in traversal order, matching `leafSurfaceIDs`.
+  fileprivate var leaves: [TerminalLayoutSnapshot.SurfaceSnapshot] {
+    switch self {
+    case .leaf(let surface):
+      return [surface]
+    case .split(let split):
+      return split.left.leaves + split.right.leaves
+    }
+  }
+}
+
+nonisolated extension LayoutsMigrator {
+  /// Presence of the stamp means v2 or newer; such files are never rewritten
+  /// here (newer schemas are read-only for this build).
+  private struct SchemaStamp: Decodable {
+    let schemaVersion: Int
+  }
+
+  /// Rewrites a v1 layouts.json into the v2 pane topology, exactly once,
+  /// before hydration. The v1 original is backed up create-if-absent first;
+  /// a failed backup defers the whole migration to the next launch.
+  static func migrateFileIfNeeded(
+    url: URL = SupacodePaths.layoutsURL,
+    fileExists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
+  ) {
+    @Dependency(\.settingsFileStorage) var storage
+    let data: Data
+    do {
+      data = try storage.load(url)
+    } catch {
+      // A fresh install has no file; anything else defers with a diagnostic.
+      if !LayoutsIncrementalWriter.isFileAbsent(error) {
+        migrationLogger.error("layouts.json unreadable, deferring migration: \(error)")
+      }
+      return
+    }
+    guard (try? JSONDecoder().decode(SchemaStamp.self, from: data)) == nil else { return }
+    guard
+      let raw = try? JSONDecoder().decode(
+        [String: FailableDecodable<TerminalLayoutSnapshot>].self, from: data
+      )
+    else {
+      migrationLogger.error("layouts.json is neither stamped v2 nor readable v1; leaving it untouched.")
+      return
+    }
+    // Element-wise so one rotten entry cannot strand the whole file on v1;
+    // the dropped entry survives only in the backup.
+    let legacy = raw.compactMapValues(\.value)
+    let dropped = raw.keys.filter { legacy[$0] == nil }
+    if !dropped.isEmpty {
+      migrationLogger.error("Migration drops unreadable v1 entries: \(dropped.sorted())")
+    }
+    // Defer whenever any v1 entry fails to decode: migrating the readable ones
+    // would drop the rotten record's session references and let the launch
+    // reaper kill them. The untouched file retries on the next launch.
+    guard legacy.count == raw.count else {
+      migrationLogger.error("\(dropped.count) v1 entrie(s) unreadable; deferring migration.")
+      return
+    }
+    let backupURL = url.appendingPathExtension("pre-tabs-per-split.bak")
+    if !fileExists(backupURL) {
+      do {
+        try storage.save(data, backupURL)
+      } catch {
+        migrationLogger.error("Backing up v1 layouts failed, deferring migration: \(error)")
+        return
+      }
+    }
+    do {
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      try storage.save(try encoder.encode(migrate(legacy)), url)
+      migrationLogger.info("Migrated layouts.json to schema v\(LayoutsFile.currentSchemaVersion).")
+    } catch {
+      // The v1 file is untouched; the next launch retries.
+      migrationLogger.error("Writing migrated layouts failed: \(error)")
+    }
+  }
+}

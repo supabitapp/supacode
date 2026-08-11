@@ -36,7 +36,7 @@ struct AppFeatureJumpToLatestUnreadTests {
       $0.terminalClient.latestUnreadNotification = {
         NotificationLocation(
           worktreeID: worktree.id,
-          tabID: TerminalTabID(rawValue: tabUUID),
+          tabID: TabID(rawValue: tabUUID),
           surfaceID: surfaceUUID,
           notificationID: notificationUUID,
         )
@@ -55,7 +55,7 @@ struct AppFeatureJumpToLatestUnreadTests {
 
     let expectedFocus = TerminalClient.Command.focusSurface(
       worktree,
-      tabID: TerminalTabID(rawValue: tabUUID),
+      tabID: TabID(rawValue: tabUUID),
       surfaceID: surfaceUUID,
       input: nil
     )
@@ -81,7 +81,7 @@ struct AppFeatureJumpToLatestUnreadTests {
       $0.terminalClient.latestUnreadNotification = {
         NotificationLocation(
           worktreeID: WorktreeID(missingID),
-          tabID: TerminalTabID(rawValue: UUID()),
+          tabID: TabID(rawValue: UUID()),
           surfaceID: UUID(),
           notificationID: UUID(),
         )

@@ -79,11 +79,13 @@ public struct SettingsFeature {
     public var agentPresenceBadgesEnabled: Bool
     public var confirmQuitMode: ConfirmQuitMode
     public var confirmCloseSurface: Bool
+    public var confirmCloseTab: ConfirmCloseTabMode
     public var terminateSessionsOnQuit: Bool
     public var remoteSessionPersistenceEnabled: Bool
     public var appVisibility: AppVisibility
     public var terminalHibernationEnabled: Bool
     public var isManagingCustomNotificationSound = false
+    public var chromeTextSize: ChromeTextSize
     public var automaticRepositoryRefreshEnabled: Bool
     public var cliInstallState = CLIInstallState.checking
     /// Installed editors in menu order, resolved once off the picker's body.
@@ -169,10 +171,12 @@ public struct SettingsFeature {
       agentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
       confirmQuitMode = settings.confirmQuitMode
       confirmCloseSurface = settings.confirmCloseSurface
+      confirmCloseTab = settings.confirmCloseTab
       terminateSessionsOnQuit = settings.terminateSessionsOnQuit
       remoteSessionPersistenceEnabled = settings.remoteSessionPersistenceEnabled
       appVisibility = settings.appVisibility
       terminalHibernationEnabled = settings.terminalHibernationEnabled
+      chromeTextSize = settings.chromeTextSize
       automaticRepositoryRefreshEnabled = settings.automaticRepositoryRefreshEnabled
       defaultWorktreeBaseDirectoryPath =
         SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath) ?? ""
@@ -214,10 +218,12 @@ public struct SettingsFeature {
         agentPresenceBadgesEnabled: agentPresenceBadgesEnabled,
         confirmQuitMode: confirmQuitMode,
         confirmCloseSurface: confirmCloseSurface,
+        confirmCloseTab: confirmCloseTab,
         terminateSessionsOnQuit: terminateSessionsOnQuit,
         remoteSessionPersistenceEnabled: remoteSessionPersistenceEnabled,
         appVisibility: appVisibility,
         terminalHibernationEnabled: terminalHibernationEnabled,
+        chromeTextSize: chromeTextSize,
         automaticRepositoryRefreshEnabled: automaticRepositoryRefreshEnabled
       )
     }
@@ -376,10 +382,12 @@ public struct SettingsFeature {
         state.agentPresenceBadgesEnabled = normalizedSettings.agentPresenceBadgesEnabled
         state.confirmQuitMode = normalizedSettings.confirmQuitMode
         state.confirmCloseSurface = normalizedSettings.confirmCloseSurface
+        state.confirmCloseTab = normalizedSettings.confirmCloseTab
         state.terminateSessionsOnQuit = normalizedSettings.terminateSessionsOnQuit
         state.remoteSessionPersistenceEnabled = normalizedSettings.remoteSessionPersistenceEnabled
         state.appVisibility = normalizedSettings.appVisibility
         state.terminalHibernationEnabled = normalizedSettings.terminalHibernationEnabled
+        state.chromeTextSize = normalizedSettings.chromeTextSize
         state.automaticRepositoryRefreshEnabled = normalizedSettings.automaticRepositoryRefreshEnabled
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
         state.syncGlobalDefaults(from: normalizedSettings)
@@ -650,6 +658,8 @@ public struct SettingsFeature {
         return clearedFailure ? .send(.refreshAgentIntegrationStates) : .none
 
       case .updateShortcut(let id, let override):
+        // A non-customizable shortcut ignores overrides; refuse to persist one.
+        guard AppShortcuts.all.first(where: { $0.id == id })?.isCustomizable != false else { return .none }
         if let override {
           state.shortcutOverrides[id] = override
         } else {
@@ -658,6 +668,8 @@ public struct SettingsFeature {
         return persist(state)
 
       case .toggleShortcutEnabled(let id, let enabled):
+        // A non-customizable shortcut is always enabled; refuse to persist a toggle.
+        guard AppShortcuts.all.first(where: { $0.id == id })?.isCustomizable != false else { return .none }
         if enabled {
           // A real binding just flips its enabled flag. A sentinel (or no override)
           // carries no binding, so restore the default: a disabled-by-default

@@ -1,3 +1,4 @@
+import SupacodeSettingsShared
 import SwiftUI
 
 struct CLIReferenceView: View {
@@ -14,19 +15,24 @@ struct CLIReferenceView: View {
         )
         .foregroundStyle(.secondary)
         Text(
-          "Commands that create resources (\(code("tab new")), \(code("surface split"))) print the new UUID to stdout. Capture it to target the resource afterward."
+          "Commands that create resources (\(code("tab new")), \(code("pane split"))) print the new UUID to stdout. Capture it to target the resource afterward."
+        )
+        .foregroundStyle(.secondary)
+        Text(
+          "Pane and tab commands resolve an omitted \(code("-w")) / \(code("-p")) / \(code("-t")) from the focused target. The \(code("$SUPACODE_*_ID")) environment variables and the \(code("surface")) commands are deprecated and will be removed in the next release."
         )
         .foregroundStyle(.secondary)
         // swiftlint:enable line_length
       } header: {
-        Text("CLI Reference").font(.title.bold())
+        Text("CLI Reference").appFont(.title, weight: .bold)
         Text("Control Supacode from the terminal.")
       }
 
       CLISection(title: "App", rows: Self.appRows)
       CLISection(title: "Worktree", rows: Self.worktreeRows)
+      CLISection(title: "Pane", rows: Self.paneRows)
       CLISection(title: "Tab", rows: Self.tabRows)
-      CLISection(title: "Surface", rows: Self.surfaceRows)
+      CLISection(title: "Surface (deprecated)", rows: Self.surfaceRows)
       CLISection(title: "Repository", rows: Self.repoRows)
       CLISection(title: "Settings", rows: Self.settingsRows)
       CLISection(title: "Socket", rows: Self.socketRows)
@@ -87,37 +93,60 @@ struct CLIReferenceView: View {
     ),
   ]
 
+  private static let paneRows: [CLIEntry] = [
+    .init(command: "supacode pane list [-w <id>] [-f]", description: "List pane UUIDs. -f for focused only."),
+    .init(
+      command: "supacode pane focus [-w <id>] [-p <id>] [-d l|r|u|d]",
+      description: "Focus a pane by id, or its neighbor by direction."
+    ),
+    .init(
+      command: "supacode pane split [-w <id>] [-p <token>] [-d h|v] [-i <cmd>] [-n <uuid>]",
+      description: "Split a pane into a new pane. Defaults to the focused pane. Prints UUID to stdout."
+    ),
+    .init(
+      command: "supacode pane close [-w <id>] [-p <token>]",
+      description: "Close a pane and all its tabs. Defaults to the focused pane."
+    ),
+    .init(command: "supacode pane zoom [-w <id>] [-p <token>]", description: "Toggle a pane's zoom."),
+    .init(command: "supacode pane equalize [-w <id>]", description: "Equalize every split ratio."),
+    .init(command: "supacode pane window [-w <id>] [-p <token>]", description: "Toggle a pane's window mode."),
+  ]
+
   private static let tabRows: [CLIEntry] = [
     .init(command: "supacode tab list [-w <id>] [-f]", description: "List tab UUIDs. -f for focused only."),
     .init(command: "supacode tab focus [-w <id>] [-t <id>]", description: "Focus a tab."),
     .init(
-      command: "supacode tab new [-w <id>] [-i <cmd>] [-n <uuid>] [--title <title>]",
-      description: "Create a tab. Prints UUID to stdout."
+      command: "supacode tab new [-w <id>] [-i <cmd>] [-n <uuid>] [--title <title>] [-p <pane-token>]",
+      description: "Create a tab in a pane (defaults to the focused pane). Prints UUID to stdout."
     ),
     .init(
       command: "supacode tab rename [-w <id>] [-t <id>] --title <title>",
       description:
         "Set the persistent title override; an empty title clears it. Script tabs are locked."
     ),
+    .init(
+      command: "supacode tab move [-w <id>] [-t <id>] -d l|r|u|d",
+      description: "Move a tab into a new split in the given direction."
+    ),
     .init(command: "supacode tab close [-w <id>] [-t <id>]", description: "Close a tab."),
   ]
 
   private static let surfaceRows: [CLIEntry] = [
     .init(
-      command: "supacode surface list [-w <id>] [-t <id>] [-f]",
-      description: "List surface UUIDs. -f for focused only."
+      command: "supacode surface split …",
+      description: "Deprecated: use `supacode pane split`."
     ),
     .init(
-      command: "supacode surface focus [-w <id>] [-t <id>] [-s <id>] [-i <cmd>]",
-      description: "Focus a surface."
+      command: "supacode surface focus …",
+      description: "Deprecated: use `supacode tab focus`."
     ),
     .init(
-      command: "supacode surface split [-w <id>] [-t <id>] [-s <id>] [-d h|v] [-i <cmd>] [-n <uuid>]",
-      description: "Split a surface. Prints UUID to stdout."
+      command: "supacode surface close …",
+      description: "Deprecated: use `supacode tab close`."
     ),
     .init(
-      command: "supacode surface close [-w <id>] [-t <id>] [-s <id>]",
-      description: "Close a surface."
+      command: "supacode surface list …",
+      description: "Deprecated: use `supacode tab list`."
     ),
   ]
 
@@ -147,9 +176,9 @@ struct CLIReferenceView: View {
   ]
 
   private static let flagRows: [CLIEntry] = [
-    .init(command: "-w, --worktree", description: "Worktree ID. Defaults to $SUPACODE_WORKTREE_ID."),
-    .init(command: "-t, --tab", description: "Tab UUID. Defaults to $SUPACODE_TAB_ID."),
-    .init(command: "-s, --surface", description: "Surface UUID. Defaults to $SUPACODE_SURFACE_ID."),
+    .init(command: "-w, --worktree", description: "Worktree ID. Pane / tab commands default to the focused worktree."),
+    .init(command: "-p, --pane", description: "Pane, tab, or content UUID. Defaults to the focused pane."),
+    .init(command: "-t, --tab", description: "Tab UUID. Defaults to the focused tab."),
     .init(command: "-c, --script", description: "Script UUID (for `worktree run`/`stop`)."),
     .init(
       command: "--title",
@@ -157,12 +186,18 @@ struct CLIReferenceView: View {
     .init(command: "--color", description: "Sidebar tint override; pass none to clear."),
     .init(command: "-r, --repo", description: "Repository ID. Defaults to $SUPACODE_REPO_ID."),
     .init(command: "-i, --input", description: "Command to run in the terminal."),
-    .init(command: "-d, --direction", description: "Split direction: horizontal (h) or vertical (v)."),
-    .init(command: "-n, --id", description: "UUID for a new tab or surface."),
+    .init(
+      command: "-d, --direction",
+      description: "Split direction (h/v) for splits; neighbor direction (l/r/u/d) for pane focus and tab move."),
+    .init(command: "-n, --id", description: "UUID for a new tab."),
     .init(command: "-f, --focused", description: "Print only the focused item in list commands."),
     .init(
       command: "--background",
       description: "Leave the selection and focus alone; new tabs and splits stay in the background."
+    ),
+    .init(
+      command: "-s, --surface",
+      description: "Deprecated. Surface UUID for the deprecated `surface` commands; defaults to $SUPACODE_SURFACE_ID."
     ),
   ]
 }
@@ -185,7 +220,7 @@ private struct CLISection: View {
         ForEach(rows) { row in
           GridRow {
             Text(row.command)
-              .font(.body.monospaced())
+              .appFont(.body, monospaced: true)
               .gridColumnAlignment(.leading)
             Text(row.description)
               .foregroundStyle(.secondary)

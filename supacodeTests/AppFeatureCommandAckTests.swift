@@ -50,19 +50,7 @@ struct AppFeatureCommandAckTests {
     )
     #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
 
-    await store.send(
-      .terminalEvent(
-        .tabProjectionChanged(
-          worktreeID: worktree.id,
-          WorktreeTabProjection(
-            tabID: TerminalTabID(rawValue: tabID),
-            surfaceIDs: [tabID],
-            activeSurfaceID: tabID,
-            unseenNotificationCount: 0
-          )
-        )
-      )
-    )
+    await store.send(.terminalEvent(.surfaceCreated(worktreeID: worktree.id, id: tabID)))
     await store.finish()
 
     #expect(store.state.pendingCommandAcks.isEmpty)
@@ -258,6 +246,49 @@ struct AppFeatureCommandAckTests {
     #expect(readPipeJSON(readFD2)?["ok"] as? Bool == false)
   }
 
+  @Test(.dependencies) func creationIdAlreadyLiveInAnotherWorktreeIsRejected() async {
+    let worktree = makeWorktree()
+    let id = UUID()
+    // The id exists as content in a different worktree; the global runtime keys
+    // by id, so reusing it here must be refused even though this worktree is clean.
+    let store = makeStore(worktree: worktree, tabExists: false) {
+      $0.terminalClient.idExistsAnywhere = { _ in true }
+    }
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabNew(input: nil, id: id)),
+        source: .socket, responseFD: writeFD, timeoutSeconds: 0))
+    await store.finish()
+
+    #expect(store.state.alert != nil)
+    #expect(store.state.pendingCommandAcks[id: writeFD] == nil)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
+  @Test func hasFocusedTabTracksTheSelectedWorktreesFocusedPane() {
+    let worktreeID = Worktree.ID("/tmp/wt-focus")
+    let paneID = PaneID()
+    let tab = TabItem(
+      id: TabID(), title: "shell",
+      content: ContentSnapshot(id: ContentID(), state: .terminal(TerminalContentState(workingDirectory: nil))))
+    let populated = PaneLayout(
+      tree: SplitTree(view: paneID), panes: [Pane(id: paneID, tabs: [tab], selectedTabID: tab.id)],
+      focusedPaneID: paneID)
+    var state = AppFeature.State(repositories: RepositoriesFeature.State(), settings: SettingsFeature.State())
+    state.terminals.layouts = [LayoutFeature.State(id: worktreeID, layout: populated)]
+
+    #expect(WorktreeDetailView.hasFocusedTab(in: state, worktreeID: worktreeID))
+    #expect(!WorktreeDetailView.hasFocusedTab(in: state, worktreeID: nil))
+    #expect(!WorktreeDetailView.hasFocusedTab(in: state, worktreeID: Worktree.ID("/tmp/other")))
+
+    // An emptied layout has no tab to close, so Cmd-W cedes to Close Window.
+    state.terminals.layouts = [LayoutFeature.State(id: worktreeID, layout: PaneLayout())]
+    #expect(!WorktreeDetailView.hasFocusedTab(in: state, worktreeID: worktreeID))
+  }
+
   // MARK: - confirmation timeout.
 
   @Test(.dependencies) func confirmationTimeoutDrainsFd() async {
@@ -330,7 +361,7 @@ struct AppFeatureCommandAckTests {
     #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
 
     await store.send(
-      .terminalEvent(.tabRemoved(worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID)))
+      .terminalEvent(.tabRemoved(worktreeID: worktree.id, tabID: TabID(rawValue: tabID)))
     )
     await store.finish()
 
@@ -450,7 +481,7 @@ struct AppFeatureCommandAckTests {
     await store.send(
       .terminalEvent(
         .tabRenamed(
-          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: true))
+          worktreeID: worktree.id, tabID: TabID(rawValue: tabID), applied: true))
     )
     await store.finish()
 
@@ -458,7 +489,7 @@ struct AppFeatureCommandAckTests {
     #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
     #expect(
       sent.value.contains(
-        .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: "review")))
+        .renameTab(worktree, tabID: TabID(rawValue: tabID), title: "review")))
   }
 
   @Test(.dependencies) func tabRenameSocketDeeplinkFailsWhenRenameDoesNotApply() async {
@@ -482,7 +513,7 @@ struct AppFeatureCommandAckTests {
     await store.send(
       .terminalEvent(
         .tabRenamed(
-          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: false))
+          worktreeID: worktree.id, tabID: TabID(rawValue: tabID), applied: false))
     )
     await store.finish()
 
@@ -525,7 +556,7 @@ struct AppFeatureCommandAckTests {
     await store.send(
       .terminalEvent(
         .tabRenamed(
-          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: true))
+          worktreeID: worktree.id, tabID: TabID(rawValue: tabID), applied: true))
     )
     await store.finish()
 
@@ -745,7 +776,7 @@ struct AppFeatureCommandAckTests {
     await store.send(
       .terminalEvent(
         .tabRenamed(
-          worktreeID: worktree.id, tabID: TerminalTabID(rawValue: tabID), applied: true))
+          worktreeID: worktree.id, tabID: TabID(rawValue: tabID), applied: true))
     )
     await store.finish()
 
@@ -1599,6 +1630,73 @@ struct AppFeatureCommandAckTests {
     let store = TestStore(initialState: initial) { AppFeature() }
     store.exhaustivity = .off
     return (store, readFD)
+  }
+
+  @Test(.dependencies) func worktreeDeletedRemovesItsLayoutWithTheResolvedRemoteHost() async {
+    let host = RemoteHost(alias: "build-box")
+    let worktree = makeWorktree()
+    let repository = Repository(
+      id: "/tmp/repo",
+      rootURL: URL(fileURLWithPath: "/tmp/repo"),
+      name: "repo",
+      worktrees: [worktree],
+      host: host
+    )
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.isInitialLoadComplete = true
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .repositories(
+        .worktreeDeleted(
+          worktree.id, repositoryID: repository.id, selectionWasRemoved: false, nextSelection: nil)
+      )
+    )
+    await store.finish()
+
+    // The row is read before the repositories scope drops the worktree, so
+    // the remote host must resolve; nil would strand the host-side session.
+    let removal = sent.value.contains {
+      if case .removeWorktreeLayout(let worktreeID, let remoteHost) = $0 {
+        return worktreeID == worktree.id && remoteHost == host
+      }
+      return false
+    }
+    #expect(removal)
+  }
+
+  @Test(.dependencies) func archivingAWorktreeKeepsItsLayout() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+
+    await store.send(.repositories(.archiveWorktreeApplied(worktree.id)))
+    await store.finish()
+
+    // Archiving must never tear the layout down; only deletion does.
+    let removal = sent.value.contains {
+      if case .removeWorktreeLayout = $0 { return true }
+      return false
+    }
+    #expect(!removal)
   }
 
   private func makeWorktree() -> Worktree {
