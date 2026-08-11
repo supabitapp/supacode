@@ -57,6 +57,31 @@ public nonisolated enum NotificationRetentionLimit: Int, Codable, CaseIterable, 
   }
 }
 
+/// How Supacode combines the user's own Ghostty config with the optional
+/// Supacode-specific config at `~/.supacode/ghostty.config`.
+public nonisolated enum GhosttyUserConfigMode: String, Codable, CaseIterable, Sendable {
+  /// Load the standard Ghostty config first, then layer the Supacode config on
+  /// top so it overrides conflicts and merges the rest. The default.
+  case mergeAfterDefault
+  /// Ignore the standard Ghostty config and read only the Supacode config. Falls
+  /// back to the standard config when the Supacode file is missing or empty.
+  case exclusive
+
+  public var label: String {
+    switch self {
+    case .mergeAfterDefault: "Merge after Ghostty config"
+    case .exclusive: "Use only the Supacode config"
+    }
+  }
+
+  public var subtitle: String {
+    switch self {
+    case .mergeAfterDefault: "Read your Ghostty config first, then apply the Supacode config on top."
+    case .exclusive: "Ignore your Ghostty config. Only the Supacode config is read."
+    }
+  }
+}
+
 public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var appearanceMode: AppearanceMode
   public var defaultEditorID: String
@@ -81,6 +106,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var copyUntrackedOnWorktreeCreate: Bool
   public var pullRequestMergeStrategy: PullRequestMergeStrategy
   public var terminalThemeSyncEnabled: Bool
+  /// Whether the optional `~/.supacode/ghostty.config` merges after the standard
+  /// Ghostty config or replaces it. Inert until that file exists.
+  public var ghosttyUserConfigMode: GhosttyUserConfigMode
   public var automatedActionPolicy: AutomatedActionPolicy
   public var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
   public var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
@@ -138,6 +166,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     copyUntrackedOnWorktreeCreate: false,
     pullRequestMergeStrategy: .merge,
     terminalThemeSyncEnabled: true,
+    ghosttyUserConfigMode: .mergeAfterDefault,
     automatedActionPolicy: .cliOnly,
     defaultWorktreeBaseDirectoryPath: nil,
     autoDeleteArchivedWorktreesAfterDays: nil,
@@ -177,6 +206,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     copyUntrackedOnWorktreeCreate: Bool = false,
     pullRequestMergeStrategy: PullRequestMergeStrategy = .merge,
     terminalThemeSyncEnabled: Bool = true,
+    ghosttyUserConfigMode: GhosttyUserConfigMode = .mergeAfterDefault,
     automatedActionPolicy: AutomatedActionPolicy = .cliOnly,
     defaultWorktreeBaseDirectoryPath: String? = nil,
     autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod? = nil,
@@ -216,6 +246,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.copyUntrackedOnWorktreeCreate = copyUntrackedOnWorktreeCreate
     self.pullRequestMergeStrategy = pullRequestMergeStrategy
     self.terminalThemeSyncEnabled = terminalThemeSyncEnabled
+    self.ghosttyUserConfigMode = ghosttyUserConfigMode
     self.automatedActionPolicy = automatedActionPolicy
     self.defaultWorktreeBaseDirectoryPath = defaultWorktreeBaseDirectoryPath
     self.autoDeleteArchivedWorktreesAfterDays = autoDeleteArchivedWorktreesAfterDays
@@ -332,6 +363,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminalThemeSyncEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .terminalThemeSyncEnabled)
       ?? false
+    // Reject unrecognized values (and a mistyped key) rather than throwing, which
+    // would reset the whole file to defaults. Pre-feature files omit this key.
+    ghosttyUserConfigMode =
+      (try? container.decode(GhosttyUserConfigMode.self, forKey: .ghosttyUserConfigMode))
+      ?? Self.default.ghosttyUserConfigMode
     // Migrate from the old Bool `allowArbitraryDeeplinkInput` to the new enum.
     if let policy = try container.decodeIfPresent(AutomatedActionPolicy.self, forKey: .automatedActionPolicy) {
       automatedActionPolicy = policy

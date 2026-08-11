@@ -21,8 +21,10 @@ final class GhosttyShortcutManager {
       self?.refresh()
     }
     // Rebinding a shortcut regenerates the app's unbind config lines; reload
-    // here, not in a window's view tree, so the terminal releases the new
-    // chord even while no window is open.
+    // here, not in a window's view tree, so the terminal releases the new chord
+    // even while no window is open. A key-path map keeps the transform
+    // nonisolated: the publisher emits off the main actor, so an inline closure
+    // here (main-actor-isolated) would trap before the receive(on:) hop.
     overridesSubscription = $settingsFile.publisher
       .map(\.global.shortcutOverrides)
       .removeDuplicates()
@@ -37,6 +39,12 @@ final class GhosttyShortcutManager {
 
   func refresh() {
     generation += 1
+  }
+
+  /// Reloads the generated Ghostty config now, e.g. after the user creates their
+  /// Supacode config so it takes effect without a relaunch.
+  func reloadConfig() {
+    runtime.reloadAppConfig()
   }
 
   var commandPaletteEntries: [GhosttyCommand] {

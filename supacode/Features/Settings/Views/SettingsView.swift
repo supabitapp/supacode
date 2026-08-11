@@ -135,6 +135,9 @@ private struct SettingsSidebarView: View {
       Label("General", systemImage: "gearshape")
         .appFont(.body)
         .tag(SettingsSection.general)
+      Label("Terminal", systemImage: "apple.terminal")
+        .appFont(.body)
+        .tag(SettingsSection.terminal)
       Label("Notifications", systemImage: "bell")
         .appFont(.body)
         .tag(SettingsSection.notifications)
@@ -195,11 +198,18 @@ private struct SettingsDetailView: View {
   let selectedRepositorySummary: SettingsRepositorySummary?
   @Bindable var settingsStore: StoreOf<SettingsFeature>
   let updatesStore: StoreOf<UpdatesFeature>
+  @Environment(GhosttyShortcutManager.self) private var ghosttyShortcuts: GhosttyShortcutManager?
 
   var body: some View {
     switch selection {
     case .general:
       AppearanceSettingsView(store: settingsStore)
+    case .terminal:
+      TerminalSettingsView(
+        store: settingsStore,
+        standardConfigPath: GhosttyRuntime.standardConfigFilePath,
+        reloadTerminalConfig: { ghosttyShortcuts?.reloadConfig() }
+      )
     case .notifications:
       NotificationsSettingsView(store: settingsStore)
     case .worktree:

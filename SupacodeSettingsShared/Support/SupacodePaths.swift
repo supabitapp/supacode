@@ -163,6 +163,28 @@ public nonisolated enum SupacodePaths {
     baseDirectory.appending(path: "sidebar.json", directoryHint: .notDirectory)
   }
 
+  /// Optional user-authored Ghostty config layered on top of (or in place of)
+  /// the standard Ghostty config. See `GhosttyUserConfigMode`.
+  public static var ghosttyUserConfigURL: URL {
+    baseDirectory.appending(path: "ghostty.config", directoryHint: .notDirectory)
+  }
+
+  /// True when the user Ghostty config is a readable, non-empty file. Empty or
+  /// unreadable counts as absent so exclusive mode never suppresses the standard
+  /// config in favor of nothing.
+  public static func ghosttyUserConfigHasContent() -> Bool {
+    let url = ghosttyUserConfigURL
+    guard FileManager.default.isReadableFile(atPath: url.path) else { return false }
+    guard
+      let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+      values.isRegularFile == true,
+      let size = values.fileSize
+    else {
+      return false
+    }
+    return size > 0
+  }
+
   public static func repositorySettingsURL(for rootURL: URL) -> URL {
     rootURL.standardizedFileURL.appending(path: "supacode.json", directoryHint: .notDirectory)
   }

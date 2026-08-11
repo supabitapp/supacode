@@ -31,10 +31,6 @@ public struct AppearanceSettingsView: View {
           Text("Appearance")
           Text("Follow the system appearance, or always use light or dark.")
         }
-        Toggle(isOn: $store.terminalThemeSyncEnabled) {
-          Text("Supacode terminal theme")
-          Text("When off, honors your Ghostty config theme.")
-        }
       }
       Section {
         LabeledContent {
@@ -55,27 +51,6 @@ public struct AppearanceSettingsView: View {
           Text("Show Supacode in the Dock, the menu bar, or both.")
         }
       }
-      Section("Persistence") {
-        Toggle(isOn: $store.terminateSessionsOnQuit) {
-          Text("Terminate sessions on quit")
-          Text(
-            """
-            Close all tabs and stop background shells when quitting.
-            Terminal persistence is powered by [zmx\u{00A0}\u{2197}](https://github.com/neurosnap/zmx).
-            """
-          )
-        }
-        Toggle(isOn: $store.terminalHibernationEnabled) {
-          HStack(spacing: 6) {
-            Text("Hibernate inactive terminals")
-            BetaBadge()
-          }
-          Text(
-            "Background terminal tabs release their renderer after a few minutes of inactivity "
-              + "and reconnect instantly when viewed. Sessions and running agents are unaffected."
-          )
-        }
-      }
       Section {
         Picker(selection: $store.confirmCloseTab) {
           ForEach(ConfirmCloseTabMode.allCases, id: \.self) { mode in
@@ -94,20 +69,6 @@ public struct AppearanceSettingsView: View {
         } label: {
           Text("Confirm before quitting app")
           Text(store.confirmQuitMode.subtitle)
-        }
-      }
-      Section {
-        Toggle(isOn: $store.remoteSessionPersistenceEnabled) {
-          HStack(spacing: 6) {
-            Text("Persist sessions on remote host")
-            BetaBadge()
-          }
-          Text(
-            """
-            Keeps SSH sessions alive across disconnects. Ignored when \
-            [zmx\u{00A0}\u{2197}](https://github.com/neurosnap/zmx) is not installed on the host.
-            """
-          )
         }
       }
       Section("Editor") {
@@ -134,7 +95,7 @@ public struct AppearanceSettingsView: View {
               .tag(action.settingsID)
           }
         } label: {
-          Text("Default editor")
+          Text("Global editor")
           Text("Applies to Worktrees without repository overrides.")
         }
       }
@@ -172,18 +133,5 @@ public struct AppearanceSettingsView: View {
     .padding(.leading, -8)
     .padding(.trailing, -6)
     .navigationTitle("General")
-  }
-}
-
-/// Small system-styled tag marking a setting as Beta. Uses `.quaternary` fill so
-/// it tracks the theme and never introduces a custom color.
-private struct BetaBadge: View {
-  var body: some View {
-    Text("Beta")
-      .appFont(.caption2, weight: .semibold)
-      .foregroundStyle(.secondary)
-      .padding(.horizontal, 6)
-      .padding(.vertical, 2)
-      .background(.quaternary, in: .capsule)
   }
 }

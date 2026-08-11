@@ -56,6 +56,34 @@ struct SettingsFilePersistenceTests {
     #expect(reloaded.pinnedWorktreeIDs == ["/tmp/repo-a/wt-1"])
   }
 
+  @Test func ghosttyUserConfigModePersistsThroughRoundTrip() throws {
+    var settings = GlobalSettings.default
+    settings.ghosttyUserConfigMode = .exclusive
+    let data = try JSONEncoder().encode(settings)
+    let decoded = try JSONDecoder().decode(GlobalSettings.self, from: data)
+    #expect(decoded.ghosttyUserConfigMode == .exclusive)
+  }
+
+  // Files written before the key existed decode to the merge default, never a throw.
+  @Test func ghosttyUserConfigModeDefaultsWhenKeyMissing() throws {
+    let data = try JSONEncoder().encode(GlobalSettings.default)
+    var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    object.removeValue(forKey: "ghosttyUserConfigMode")
+    let stripped = try JSONSerialization.data(withJSONObject: object)
+    let decoded = try JSONDecoder().decode(GlobalSettings.self, from: stripped)
+    #expect(decoded.ghosttyUserConfigMode == .mergeAfterDefault)
+  }
+
+  // A corrupt value falls back instead of throwing, which would reset the file.
+  @Test func ghosttyUserConfigModeRejectsUnknownValue() throws {
+    let data = try JSONEncoder().encode(GlobalSettings.default)
+    var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    object["ghosttyUserConfigMode"] = "bogus"
+    let corrupted = try JSONSerialization.data(withJSONObject: object)
+    let decoded = try JSONDecoder().decode(GlobalSettings.self, from: corrupted)
+    #expect(decoded.ghosttyUserConfigMode == .mergeAfterDefault)
+  }
+
   @Test(.dependencies) func invalidJSONResetsToDefaults() throws {
     let storage = MutableTestStorage(initialData: Data("{".utf8))
 

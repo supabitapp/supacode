@@ -536,32 +536,93 @@ final class GhosttyRuntime {
     self.config = config
   }
 
+  /// Pure decision for how the user-authored config tiers compose, given the
+  /// mode and whether `~/.supacode/ghostty.config` has content. Kept free of
+  /// GhosttyKit so the (mode x file-exists) matrix is unit-testable.
+  enum ConfigResolution {
+    struct Plan: Equatable {
+      /// Load the standard Ghostty config (default + recursive files).
+      var loadUserDefaultFiles: Bool
+      /// Layer `~/.supacode/ghostty.config` on top as the final tier.
+      var loadSupacodeUserConfig: Bool
+    }
+
+    static func plan(mode: GhosttyUserConfigMode, supacodeUserConfigExists: Bool) -> Plan {
+      // Exclusive only suppresses the standard config when there is actually a
+      // Supacode config to read instead; otherwise fall back to loading it so
+      // the terminal is never left with no user config at all.
+      let suppressesDefaults = mode == .exclusive && supacodeUserConfigExists
+      return Plan(
+        loadUserDefaultFiles: !suppressesDefaults,
+        loadSupacodeUserConfig: supacodeUserConfigExists
+      )
+    }
+  }
+
   private static func loadConfig() -> (config: ghostty_config_t, userBackgroundOpacity: Double)? {
     @Shared(.settingsFile) var settingsFile
     let themeSyncEnabled = settingsFile.global.terminalThemeSyncEnabled
+    let supacodeUserConfigURL = SupacodePaths.ghosttyUserConfigURL
+    let plan = ConfigResolution.plan(
+      mode: settingsFile.global.ghosttyUserConfigMode,
+      supacodeUserConfigExists: SupacodePaths.ghosttyUserConfigHasContent()
+    )
     guard let config = ghostty_config_new() else {
       logger.error("ghostty_config_new returned nil; config load aborted.")
       return nil
     }
-    ghostty_config_load_default_files(config)
-    ghostty_config_load_recursive_files(config)
+    // Tier 1: the user's standard Ghostty config, unless exclusive mode suppresses it.
+    if plan.loadUserDefaultFiles {
+      ghostty_config_load_default_files(config)
+      ghostty_config_load_recursive_files(config)
+    }
+    // CLI args are process args, not a config file, so they are orthogonal to the
+    // suppression above (and inert on macOS); always apply them.
     ghostty_config_load_cli_args(config)
-    // Snapshot the user's opacity from a clone before the override clobbers it.
+    // Snapshot the user's opacity from a clone before the overlay clobbers it,
+    // mirroring the user tiers so the tint matches the active mode.
     let userOpacity: Double
     if let userView = ghostty_config_clone(config) {
       loadBundledTheme(into: userView, enabled: themeSyncEnabled)
+      if plan.loadSupacodeUserConfig {
+        loadUserFile(at: supacodeUserConfigURL, into: userView)
+      }
       ghostty_config_finalize(userView)
       userOpacity = readBackgroundOpacity(from: userView)
       ghostty_config_free(userView)
     } else {
       userOpacity = 1
     }
-    // Last-write-wins: overrides must follow theme so the bundled padding wins.
+    // Tier 2: the always-applied Supacode overlay (theme, then cosmetic
+    // overrides). The user's config may override these.
     loadBundledTheme(into: config, enabled: themeSyncEnabled)
-    loadBundledOverrides(into: config, shortcutOverrides: settingsFile.global.shortcutOverrides)
+    loadBundledOverrides(into: config)
+    // Tier 3: the user-authored Supacode config, layered on top so it overrides.
+    // Its `config-file` includes are not followed: re-running the recursive pass
+    // here would re-apply tier-1 includes on top and invert precedence.
+    if plan.loadSupacodeUserConfig {
+      loadUserFile(at: supacodeUserConfigURL, into: config)
+    }
+    // Tier 4: app-owned overrides, always last so nothing can override them.
+    loadAppOwnedOverrides(into: config, shortcutOverrides: settingsFile.global.shortcutOverrides)
     ghostty_config_finalize(config)
     logDiagnostics(of: config)
     return (config, userOpacity)
+  }
+
+  private static func loadUserFile(at url: URL, into config: ghostty_config_t) {
+    url.path.withCString { ghostty_config_load_file(config, $0) }
+  }
+
+  /// The path Ghostty resolves for the user's standard config file (what the
+  /// `open_config` action edits). May name a file that does not exist yet.
+  static var standardConfigFilePath: String? {
+    let string = ghostty_config_open_path()
+    defer { ghostty_string_free(string) }
+    guard let ptr = string.ptr, string.len > 0 else { return nil }
+    let buffer = UnsafeRawBufferPointer(start: ptr, count: Int(string.len))
+    guard let path = String(bytes: buffer, encoding: .utf8), !path.isEmpty else { return nil }
+    return path
   }
 
   private static func readBackgroundOpacity(from config: ghostty_config_t) -> Double {
@@ -571,8 +632,8 @@ final class GhosttyRuntime {
     return min(max(value, 0), 1)
   }
 
-  /// Applies Supacode-specific config that takes precedence over user
-  /// settings.
+  /// Cosmetic Supacode defaults loaded in the middle tier; the user's own
+  /// Supacode config may override these.
   ///
   /// No `background-opacity` override: surfaces render translucent at the
   /// theme's opacity and keep their own OSC 11 color. The window tint behind
@@ -583,14 +644,15 @@ final class GhosttyRuntime {
   /// override): surfaces run the real shell with zmx injected as a Ghostty
   /// `command-wrapper`, so Ghostty resolves and integrates the shell exactly as
   /// it would without zmx, honoring the user's `command` / `shell-integration`.
-  ///
-  /// Supacode owns close-confirmation policy and UI. Keeping Ghostty's
-  /// predicate enabled makes its callback report prompt safety independently
-  /// of the user's Ghostty setting; `GlobalSettings.confirmCloseSurface`
-  /// decides whether Supacode presents the alert.
   internal static let bundledOverridesString = """
     window-padding-x = 14
     window-padding-y = 12,0
+    """
+
+  /// Behavioral overrides that must survive the user's Supacode config, so they
+  /// load last. Keeping Ghostty's close predicate enabled lets
+  /// `confirmCloseSurface` decide whether Supacode prompts.
+  internal static let appOwnedOverridesString = """
     confirm-close-surface = true
     """
 
@@ -615,25 +677,39 @@ final class GhosttyRuntime {
     return candidates.lazy.compactMap { $0 as? String }.first { !$0.isEmpty }
   }
 
-  private static func loadBundledOverrides(
+  private static func loadBundledOverrides(into config: ghostty_config_t) {
+    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("supacode-defaults.conf")
+    do {
+      try bundledOverridesString.write(to: tempURL, atomically: true, encoding: .utf8)
+    } catch {
+      logger.error(
+        "Bundled overrides not delivered; the terminal loses its cosmetic defaults: \(error.localizedDescription)")
+      return
+    }
+    tempURL.path.withCString { ghostty_config_load_file(config, $0) }
+  }
+
+  /// Writes the app-owned overrides (close predicate, TERM_PROGRAM, keybind
+  /// unbinds) as the final config tier so nothing can override them.
+  private static func loadAppOwnedOverrides(
     into config: ghostty_config_t,
     shortcutOverrides: [AppShortcutID: AppShortcutOverride]
   ) {
-    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("supacode-defaults.conf")
     let contents = [
-      bundledOverridesString,
+      appOwnedOverridesString,
       terminalProgramOverrides(version: appVersion),
       AppShortcuts.ghosttyKeybindConfigLines(from: shortcutOverrides).joined(separator: "\n"),
     ]
     .filter { !$0.isEmpty }
     .joined(separator: "\n")
+    guard !contents.isEmpty else { return }
+    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("supacode-app-overrides.conf")
     do {
       try contents.write(to: tempURL, atomically: true, encoding: .utf8)
     } catch {
-      // Losing this file leaves every app chord bound inside Ghostty, not
-      // just the cosmetic overrides.
+      // Losing this file leaves app chords bound and behavioral invariants unset.
       logger.error(
-        "Bundled overrides not delivered; the terminal keeps the app's chords: \(error.localizedDescription)")
+        "App-owned overrides not delivered; the terminal keeps the app's chords: \(error.localizedDescription)")
       return
     }
     tempURL.path.withCString { ghostty_config_load_file(config, $0) }
