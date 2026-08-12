@@ -129,37 +129,11 @@ struct SupacodeApp: App {
   @MainActor init() {
     NSWindow.allowsAutomaticWindowTabbing = false
     UserDefaults.standard.set(200, forKey: "NSInitialToolTipDelay")
-    // Fold the six legacy sidebar-state sources into `sidebar.json`
-    // before any @Shared binding observes them:
-    //   1. `@Shared(.appStorage("sidebarCollapsedRepositoryIDs"))`.
-    //   2. `@Shared(.appStorage("repositoryOrderIDs"))`.
-    //   3. `@Shared(.appStorage("worktreeOrderByRepository"))`.
-    //   4. `@Shared(.appStorage("lastFocusedWorktreeID"))`.
-    //   5. `@Shared(.appStorage("archivedWorktreeDates"))` (the
-    //      legacy key; the client that wrapped it is being retired
-    //      in a parallel task).
-    //   6. `settingsFile.pinnedWorktreeIDs` (the `SettingsFile`
-    //      slice).
-    // Idempotent — gates on whether `sidebar.json` already exists
-    // AND carries `schemaVersion >= 1` — so the downgrade →
-    // re-upgrade path can't double-migrate, while a prior
-    // half-finished migration that left a `schemaVersion == 0` file
-    // still gets retried.
-    // Snapshot settings.json + sidebar.json before any migration or @Shared hydration
-    // can rewrite them, so a botched migration or downgrade is recoverable by hand.
-    SidebarPersistenceMigrator.backupBeforeRemoteIdentityMigration()
-    // Capture the retired `global.remoteRepositories` before any migration can
-    // re-encode settings and drop the field. An unreadable settings.json skips
-    // both passes this launch (a save would strip it first); they retry next launch.
-    let capturedLegacyRemotes = SidebarPersistenceMigrator.captureLegacyRemoteRoots()
-    if capturedLegacyRemotes != .unreadable {
-      SidebarPersistenceMigrator.migrateIfNeeded()
-      SidebarPersistenceMigrator.migrateRemoteIdentityIfNeeded(capturedLegacy: capturedLegacyRemotes)
-      SidebarPersistenceMigrator.migrateRemoteSlashIDsIfNeeded()
-    }
-    // Rewrite v1 layouts.json into the v2 pane topology before anything
-    // (hydration, incremental writer) touches the file.
-    LayoutsMigrator.migrateFileIfNeeded()
+    // Relocate config out of `~/.supacode` into `~/.config/supacode` and move
+    // sidebar / layouts into UserDefaults. Never throws; the underlying data is
+    // always preserved in place, so a partial failure only defers cleanup and is
+    // surfaced to the user below.
+    let relocationOutcome = SettingsRelocationMigrator.run()
     @Shared(.settingsFile) var settingsFile
     let initialSettings = settingsFile.global
     let infoDictionary = Bundle.main.infoDictionary ?? [:]
@@ -203,6 +177,18 @@ struct SupacodeApp: App {
     appDelegate.appStore = appStore
     appDelegate.terminalManager = terminalManager
     terminalManager.appStore = appStore
+    // Surface a partial-relocation failure once the store exists so the alert
+    // presents on first window. The data is preserved regardless.
+    if case .pending(let problems) = relocationOutcome {
+      appStore.send(.settingsRelocationDidNotFinish(problems: problems))
+    }
+    // If a settings file was present but unreadable this launch, the store loaded
+    // degraded and refuses saves; tell the user their changes won't stick until
+    // they relaunch, rather than letting edits silently evaporate.
+    @Dependency(\.settingsStoreHealth) var settingsStoreHealth
+    if settingsStoreHealth.isDegraded(.live) {
+      appStore.send(.settingsStoreUnreadable)
+    }
     Self.hydrateLayouts(into: appStore)
     // Source live agent badge records for incremental layout captures; the [:]
     // default would clobber badges that share a surface key on every save.
@@ -227,7 +213,8 @@ struct SupacodeApp: App {
   /// survive for the next launch.
   @MainActor
   private static func hydrateLayouts(into store: StoreOf<AppFeature>) {
-    guard case .file(let file) = LayoutsFile.readFromDisk() else { return }
+    @Dependency(\.defaultAppStorage) var defaults
+    guard case .file(let file) = LayoutsFile.readPersisted(from: defaults) else { return }
     store.send(.terminals(.layoutsHydrated(file)))
   }
 

@@ -30,6 +30,116 @@ struct SettingsFilePersistenceTests {
     #expect(reloaded == .default)
   }
 
+  @Test(.dependencies) func loadFallsBackToLegacySettingsWhenNewStoreEmpty() throws {
+    let store = InMemorySettingsFileStorage()
+    var legacy = SettingsFile.default
+    legacy.global.appearanceMode = .dark
+    legacy.repositoryRoots = ["/tmp/repo-a"]
+    try store.save(JSONEncoder().encode(legacy), SupacodePaths.legacySettingsURL)
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { try store.load($0) }, save: { try store.save($0, $1) })
+      $0.settingsFileURLs = .live
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    // The new store is empty but a legacy settings.json exists: read it, and do
+    // NOT write defaults (which would mask a pending or failed migration and let
+    // the retire step treat those defaults as a landed migration).
+    #expect(settings.global.appearanceMode == .dark)
+    #expect(settings.repositoryRoots == ["/tmp/repo-a"])
+    #expect((try? store.load(SupacodePaths.configURL)) == nil)
+  }
+
+  @Test(.dependencies) func loadServesInitialWithoutPersistingWhenASliceIsUnreadable() throws {
+    let store = InMemorySettingsFileStorage()
+    var real = GlobalSettings.default
+    real.defaultEditorID = "custom-editor-xyz"
+    let realConfig = try JSONEncoder().encode(real)
+    try store.save(realConfig, SupacodePaths.configURL)
+
+    let settings: SettingsFile = withDependencies {
+      // config.json exists but fails to read with a non-ENOENT (transient) error.
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { url in
+          if url == SupacodePaths.configURL { throw CocoaError(.fileReadNoPermission) }
+          return try store.load(url)
+        },
+        save: { try store.save($0, $1) }
+      )
+      $0.settingsFileURLs = .live
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    // Served the initial default, NOT the real (unreadable) value.
+    #expect(settings.global.defaultEditorID == GlobalSettings.default.defaultEditorID)
+    // The real config file was never overwritten with defaults.
+    #expect((try? store.load(SupacodePaths.configURL)) == realConfig)
+  }
+
+  @Test(.dependencies) func degradedLoadRefusesLaterSaveToProtectRealData() throws {
+    let store = InMemorySettingsFileStorage()
+    var real = GlobalSettings.default
+    real.defaultEditorID = "custom-editor-xyz"
+    let realConfig = try JSONEncoder().encode(real)
+    try store.save(realConfig, SupacodePaths.configURL)
+
+    withDependencies {
+      // config.json exists but fails to read: the store loads degraded.
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { url in
+          if url == SupacodePaths.configURL { throw CocoaError(.fileReadNoPermission) }
+          return try store.load(url)
+        },
+        save: { try store.save($0, $1) }
+      )
+      $0.settingsFileURLs = .live
+      $0.settingsStoreHealth = SettingsStoreHealth()
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      // A mutation after a degraded load must NOT persist defaults over the real data.
+      $settings.withLock { $0.global.defaultEditorID = "changed" }
+    }
+
+    // The real config file is untouched: the degraded store refused the save.
+    #expect((try? store.load(SupacodePaths.configURL)) == realConfig)
+  }
+
+  @Test(.dependencies) func partialSplitStoreServesLegacyAndRefusesSave() throws {
+    let store = InMemorySettingsFileStorage()
+    // A partial split store (interrupted relocation): config + repositories present,
+    // routes.json ABSENT.
+    try store.save(JSONEncoder().encode(GlobalSettings.default), SupacodePaths.configURL)
+    try store.save(JSONEncoder().encode([String: RepositorySettings]()), SupacodePaths.reposURL)
+    // The legacy file holds the complete real data (with roots).
+    var legacy = SettingsFile.default
+    legacy.repositoryRoots = ["/tmp/repo-a"]
+    let legacyData = try JSONEncoder().encode(legacy)
+    try store.save(legacyData, SupacodePaths.legacySettingsURL)
+
+    withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { try store.load($0) }, save: { try store.save($0, $1) })
+      $0.settingsFileURLs = .live
+      $0.settingsStoreHealth = SettingsStoreHealth()
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      // The partial store serves the legacy real data, not empty defaults.
+      #expect(settings.repositoryRoots == ["/tmp/repo-a"])
+      // A mutation must not complete the partial store with defaults (save refused).
+      $settings.withLock { $0.repositoryRoots = [] }
+    }
+
+    // routes.json was never written and the legacy real data survives untouched.
+    #expect((try? store.load(SupacodePaths.routesURL)) == nil)
+    #expect((try? store.load(SupacodePaths.legacySettingsURL)) == legacyData)
+  }
+
   @Test(.dependencies) func saveAndReload() throws {
     let storage = SettingsTestStorage()
 
@@ -53,7 +163,95 @@ struct SettingsFilePersistenceTests {
 
     #expect(reloaded.global.appearanceMode == .dark)
     #expect(reloaded.repositoryRoots == ["/tmp/repo-a", "/tmp/repo-b"])
-    #expect(reloaded.pinnedWorktreeIDs == ["/tmp/repo-a/wt-1"])
+    // `pinnedWorktreeIDs` is sidebar curation now (in `SidebarState`), never
+    // persisted through the settings store, so it reloads empty.
+    #expect(reloaded.pinnedWorktreeIDs.isEmpty)
+  }
+
+  @Test(.dependencies) func savingSplitsAcrossConfigRoutesAndRepositories() throws {
+    let storage = SettingsTestStorage()
+
+    try withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      $settings.withLock {
+        $0.global.appearanceMode = .dark
+        $0.repositoryRoots = ["/tmp/repo-a"]
+        $0.remoteRepositoryRoots = ["me@box/srv/repo"]
+        $0.repositories = ["/tmp/repo-a/": .default]
+        $0.pinnedWorktreeIDs = ["/tmp/repo-a/wt-1"]
+      }
+
+      @Dependency(\.settingsFileURLs) var urls
+
+      // `config.json` is the raw `GlobalSettings`, with no "global" wrapper and
+      // no persisted pin list.
+      let configData = try storage.storage.load(urls.config)
+      let configObject = try #require(
+        JSONSerialization.jsonObject(with: configData) as? [String: Any])
+      #expect(configObject["global"] == nil)
+      #expect(configObject["appearanceMode"] != nil)
+      #expect(configObject["pinnedWorktreeIDs"] == nil)
+      let decodedGlobal = try JSONDecoder().decode(GlobalSettings.self, from: configData)
+      #expect(decodedGlobal.appearanceMode == .dark)
+
+      // `routes.json` mirrors the local / remote roots.
+      let routesData = try storage.storage.load(urls.routes)
+      let routes = try JSONDecoder().decode(RoutesFile.self, from: routesData)
+      #expect(routes.local == ["/tmp/repo-a"])
+      #expect(routes.remote == ["me@box/srv/repo"])
+
+      // `repos.json` is the per-repo settings map, keyed by repository id.
+      let repositoriesData = try storage.storage.load(urls.repositories)
+      let repositories = try JSONDecoder().decode(
+        [String: RepositorySettings].self, from: repositoriesData)
+      #expect(repositories["/tmp/repo-a/"] != nil)
+    }
+  }
+
+  @Test(.dependencies) func loadRotatesCorruptRoutesPreservingConfig() throws {
+    let storage = SettingsTestStorage()
+    var global = GlobalSettings.default
+    global.appearanceMode = .dark
+
+    let settings: SettingsFile = try withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Dependency(\.settingsFileURLs) var urls
+      try storage.storage.save(try JSONEncoder().encode(global), urls.config)
+      try storage.storage.save(Data("{ not json".utf8), urls.routes)
+      // repos.json absent.
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    // The corrupt routes slice falls back to empty without discarding config.
+    #expect(settings.global.appearanceMode == .dark)
+    #expect(settings.repositoryRoots.isEmpty)
+    #expect(settings.remoteRepositoryRoots.isEmpty)
+  }
+
+  @Test(.dependencies) func loadRotatesCorruptRepositoriesPreservingConfig() throws {
+    let storage = SettingsTestStorage()
+    var global = GlobalSettings.default
+    global.appearanceMode = .dark
+
+    let settings: SettingsFile = try withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Dependency(\.settingsFileURLs) var urls
+      try storage.storage.save(try JSONEncoder().encode(global), urls.config)
+      try storage.storage.save(Data("garbage".utf8), urls.repositories)
+      // routes.json absent.
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    // The corrupt repositories slice falls back to empty without discarding config.
+    #expect(settings.global.appearanceMode == .dark)
+    #expect(settings.repositories.isEmpty)
+    #expect(settings.repositoryRoots.isEmpty)
   }
 
   @Test func ghosttyUserConfigModePersistsThroughRoundTrip() throws {
@@ -116,7 +314,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -139,7 +337,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -183,7 +381,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -234,7 +432,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -258,7 +456,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -282,7 +480,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -328,7 +526,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -352,7 +550,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -376,7 +574,8 @@ struct SettingsFilePersistenceTests {
     let encoded = try JSONEncoder().encode(global)
     var globalDict = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
     globalDict["notificationSound"] = "futureSoundFromNewerBuild"
-    let data = try JSONSerialization.data(withJSONObject: ["global": globalDict, "repositories": [:]])
+    // `config.json` is the raw global object, no "global" wrapper.
+    let data = try JSONSerialization.data(withJSONObject: globalDict)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -424,7 +623,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -467,7 +666,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let storage = MutableTestStorage(initialData: try JSONEncoder().encode(legacy))
+    let storage = MutableTestStorage(initialData: try JSONEncoder().encode(legacy.global))
 
     let settings: SettingsFile = withDependencies {
       $0.settingsFileStorage = storage.storage
@@ -489,7 +688,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let storage = MutableTestStorage(initialData: try JSONEncoder().encode(legacy))
+    let storage = MutableTestStorage(initialData: try JSONEncoder().encode(legacy.global))
 
     let settings: SettingsFile = withDependencies {
       $0.settingsFileStorage = storage.storage
@@ -538,7 +737,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -561,7 +760,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -584,7 +783,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -609,7 +808,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -634,7 +833,8 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(file)
+    // `config.json` holds raw `GlobalSettings`, so seed just the global object.
+    let data = try JSONEncoder().encode(file.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -653,8 +853,8 @@ struct SettingsFilePersistenceTests {
   @Test(.dependencies) func decodesMistypedAppVisibilityAsDefaultWithoutDiscardingTheFile() throws {
     // A hand-edit can produce the wrong JSON type, not just an unknown string.
     let json = """
-      {"global":{"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
-      "updatesAutomaticallyDownloadUpdates":false,"appVisibility":3},"repositories":{}}
+      {"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
+      "updatesAutomaticallyDownloadUpdates":false,"appVisibility":3}
       """
     let storage = MutableTestStorage(initialData: Data(json.utf8))
 
@@ -718,7 +918,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -739,7 +939,8 @@ struct SettingsFilePersistenceTests {
     let encoded = try JSONEncoder().encode(global)
     var globalDict = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
     globalDict["notificationRetentionLimit"] = 150
-    let data = try JSONSerialization.data(withJSONObject: ["global": globalDict, "repositories": [:]])
+    // `config.json` is the raw global object, no "global" wrapper.
+    let data = try JSONSerialization.data(withJSONObject: globalDict)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -765,7 +966,7 @@ struct SettingsFilePersistenceTests {
       ),
       repositories: [:]
     )
-    let data = try JSONEncoder().encode(legacy)
+    let data = try JSONEncoder().encode(legacy.global)
     let storage = MutableTestStorage(initialData: data)
 
     let settings: SettingsFile = withDependencies {
@@ -782,8 +983,8 @@ struct SettingsFilePersistenceTests {
     // An unknown size (older build, hand-edit) must fall back by itself rather
     // than throwing, which would reset every other setting in the file.
     let json = """
-      {"global":{"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
-      "updatesAutomaticallyDownloadUpdates":false,"chromeTextSize":"gigantic"},"repositories":{}}
+      {"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
+      "updatesAutomaticallyDownloadUpdates":false,"chromeTextSize":"gigantic"}
       """
     let storage = MutableTestStorage(initialData: Data(json.utf8))
 
@@ -803,8 +1004,8 @@ struct SettingsFilePersistenceTests {
     // the `try?` on the String decode must swallow it so one bad field can't
     // reset the file.
     let json = """
-      {"global":{"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
-      "updatesAutomaticallyDownloadUpdates":false,"chromeTextSize":3},"repositories":{}}
+      {"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
+      "updatesAutomaticallyDownloadUpdates":false,"chromeTextSize":3}
       """
     let storage = MutableTestStorage(initialData: Data(json.utf8))
 

@@ -168,8 +168,10 @@ final class WorktreeTerminalManager {
     self.hookEventSleep = { duration in try await clock.sleep(for: duration) }
     self.layoutDebounceSleep = { duration in try await clock.sleep(for: duration) }
     self.clock = clock
-    @Dependency(\.settingsFileStorage) var settingsFileStorage
-    self.layoutsWriter = LayoutsIncrementalWriter(storage: settingsFileStorage)
+    @Dependency(\.defaultAppStorage) var defaultAppStorage
+    self.layoutsWriter = LayoutsIncrementalWriter(
+      store: LayoutsUserDefaultsStore(defaults: defaultAppStorage)
+    )
     paneWindows.terminalManager = self
     // A theme reload changes the fallback and every non-OSC surface background.
     runtimeObservers.append(

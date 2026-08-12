@@ -973,7 +973,20 @@ struct RemotePathClassificationTests {
     #expect(resolved == nil)
   }
 
-  @Test func parseRemoteWorktreeBaseDirectoriesExtractsPerRepoAndGlobal() throws {
+  @Test func parseRemoteWorktreeBaseDirectoriesExtractsPerRepoAndFlatGlobal() throws {
+    var repoSettings = RepositorySettings.default
+    repoSettings.worktreeBaseDirectoryPath = "/srv/wt"
+    var global = GlobalSettings.default
+    global.defaultWorktreeBaseDirectoryPath = "/srv/global"
+    let repoJSON = try #require(String(bytes: try JSONEncoder().encode(repoSettings), encoding: .utf8))
+    let globalJSON = try #require(String(bytes: try JSONEncoder().encode(global), encoding: .utf8))
+    let output = "===SUPACODE-REPO===\n\(repoJSON)\n===SUPACODE-GLOBAL===\n\(globalJSON)"
+    let result = RepositoriesFeature.parseRemoteWorktreeBaseDirectories(output)
+    #expect(result.perRepo == "/srv/wt")
+    #expect(result.global == "/srv/global")
+  }
+
+  @Test func parseRemoteWorktreeBaseDirectoriesReadsLegacyWrappedGlobal() throws {
     var repoSettings = RepositorySettings.default
     repoSettings.worktreeBaseDirectoryPath = "/srv/wt"
     var global = GlobalSettings.default

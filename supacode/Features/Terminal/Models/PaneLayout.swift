@@ -457,7 +457,10 @@ nonisolated struct FailableDecodable<Value: Decodable>: Decodable {
 /// tabs, duplicate panes), so a destructive reader can treat the file as lossy
 /// and keep the orphan reaper from sweeping sessions the dropped content still
 /// owns. Install one in the decoder's `userInfo` under `.layoutDecodeLoss`.
-nonisolated final class LayoutDecodeLoss {
+///
+/// `@unchecked Sendable`: a fresh box per decode, mutated only synchronously
+/// within that single decode pass and never shared across threads.
+nonisolated final class LayoutDecodeLoss: @unchecked Sendable {
   var droppedCount = 0
 }
 

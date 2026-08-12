@@ -566,8 +566,8 @@ enum SidebarPersistenceMigrator {
     }
     @Dependency(\.settingsFileStorage) var storage
     for url in [SupacodePaths.settingsURL, sidebarURL] {
-      let backupURL = url.deletingLastPathComponent()
-        .appendingPathComponent(url.lastPathComponent + preMigrationBackupSuffix)
+      let backupURL = SupacodePaths.backupDirectory
+        .appending(path: url.lastPathComponent + preMigrationBackupSuffix, directoryHint: .notDirectory)
       // Snapshot once: never overwrite an existing snapshot with post-migration data.
       guard !fileExists(backupURL), let data = readFile(url) else { continue }
       do {

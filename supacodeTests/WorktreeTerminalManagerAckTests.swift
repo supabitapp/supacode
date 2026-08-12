@@ -3,6 +3,7 @@ import Dependencies
 import DependenciesTestSupport
 import Foundation
 import IdentifiedCollections
+import Sharing
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
 import Testing
@@ -35,11 +36,13 @@ struct WorktreeTerminalManagerAckTests {
   /// creation flows run end to end without spawning surfaces.
   private func makeHarness(
     storage: SettingsFileStorage = .inMemory(),
+    defaults: UserDefaults = .inMemory,
     killRemoteSession: @escaping @Sendable (RemoteHost, String) -> Void = { _, _ in }
   ) -> Harness {
     let worktree = makeWorktree()
     let manager = withDependencies {
       $0.settingsFileStorage = storage
+      $0.defaultAppStorage = defaults
       $0.zmxClient = ZmxClient(
         executableURL: { nil },
         isBundled: { false },
@@ -192,24 +195,20 @@ struct WorktreeTerminalManagerAckTests {
   }
 
   @Test(.dependencies) func removingADeletedWorktreesLayoutWorksWithoutAHost() async throws {
-    let inner = SettingsFileStorage.inMemory()
+    // Layouts persist to UserDefaults now; signal each write so the async
+    // incremental flush can be awaited without polling.
     let (fileWrites, writeSignal) = AsyncStream<LayoutsFile>.makeStream()
-    let storage = SettingsFileStorage(
-      load: { try inner.load($0) },
-      save: { data, url in
-        try inner.save(data, url)
-        if let file = try? JSONDecoder().decode(LayoutsFile.self, from: data) {
-          writeSignal.yield(file)
-        }
+    let defaults = LayoutsSignalingDefaults { data in
+      if let file = try? JSONDecoder().decode(LayoutsFile.self, from: data) {
+        writeSignal.yield(file)
       }
-    )
-    let harness = makeHarness(storage: storage)
+    }
+    let harness = makeHarness(defaults: defaults)
     let contentID = UUID()
     let layout = singleTabLayout(contentID: contentID)
     let record = LayoutRecord(layout: layout)
-    try inner.save(
-      JSONEncoder().encode(LayoutsFile(worktrees: [harness.worktree.id.rawValue: record])),
-      SupacodePaths.layoutsURL
+    defaults.seed(
+      try JSONEncoder().encode(LayoutsFile(worktrees: [harness.worktree.id.rawValue: record]))
     )
     // Hydrated but never selected: no host exists for this worktree.
     harness.store.send(
@@ -298,5 +297,39 @@ struct WorktreeTerminalManagerAckTests {
     let layout = harness.store.withState { $0.terminals.layouts[id: harness.worktree.id]?.layout }
     let anchorPane = layout?.tab(containingContent: ContentID(rawValue: anchor))?.pane
     #expect(anchorPane?.tabs[id: TabID(rawValue: added)] != nil)
+  }
+}
+
+/// In-memory `UserDefaults` that signals every layouts blob write, so a test can
+/// await the incremental writer's async flush without polling. `seed(_:)` primes
+/// the store without signaling.
+private nonisolated final class LayoutsSignalingDefaults: UserDefaults, @unchecked Sendable {
+  private let lock = NSLock()
+  private var store: [String: Data] = [:]
+  private let onWrite: @Sendable (Data) -> Void
+
+  init(onWrite: @escaping @Sendable (Data) -> Void) {
+    self.onWrite = onWrite
+    super.init(suiteName: "layouts-signal-\(UUID().uuidString)")!
+  }
+
+  func seed(_ data: Data) {
+    lock.lock()
+    defer { lock.unlock() }
+    store[LayoutsFile.userDefaultsKey] = data
+  }
+
+  override func data(forKey defaultName: String) -> Data? {
+    lock.lock()
+    defer { lock.unlock() }
+    return store[defaultName]
+  }
+
+  override func set(_ value: Any?, forKey defaultName: String) {
+    lock.lock()
+    store[defaultName] = value as? Data
+    lock.unlock()
+    guard defaultName == LayoutsFile.userDefaultsKey, let data = value as? Data else { return }
+    onWrite(data)
   }
 }

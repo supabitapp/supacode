@@ -1,6 +1,7 @@
 import Dependencies
 import Foundation
 import IdentifiedCollections
+import Sharing
 import SupacodeSettingsShared
 import Testing
 
@@ -386,6 +387,50 @@ struct LayoutsMigratorTests {
 
     guard case .unreadable = Self.readState(seededWith: json) else {
       Issue.record("Expected .unreadable for a duplicate-pane decode.")
+      return
+    }
+  }
+
+  @Test func absentUserDefaultsFallsBackToUnreadableLegacyFile() {
+    // UD key absent + a present-but-unreadable legacy `layouts.json` must read as
+    // `.unreadable`, never `.absent`, so the orphan reaper never sweeps every
+    // detached session.
+    let defaults = UserDefaults.inMemory
+    let files = LockIsolated<[URL: Data]>([SupacodePaths.legacyLayoutsURL: Data("not json".utf8)])
+    let state = withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { target in
+          guard let data = files.value[target] else { throw CocoaError(.fileReadNoSuchFile) }
+          return data
+        },
+        save: { _, _ in }
+      )
+    } operation: {
+      LayoutsFile.readPersisted(from: defaults)
+    }
+    guard case .unreadable = state else {
+      Issue.record("Expected .unreadable for an unreadable legacy fallback, got \(state).")
+      return
+    }
+  }
+
+  @Test func absentUserDefaultsFallsBackToAbsentWhenNoLegacyFile() {
+    // Neither UD nor a legacy file: a genuine fresh start reads as `.absent`.
+    let defaults = UserDefaults.inMemory
+    let files = LockIsolated<[URL: Data]>([:])
+    let state = withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(
+        load: { target in
+          guard let data = files.value[target] else { throw CocoaError(.fileReadNoSuchFile) }
+          return data
+        },
+        save: { _, _ in }
+      )
+    } operation: {
+      LayoutsFile.readPersisted(from: defaults)
+    }
+    guard case .absent = state else {
+      Issue.record("Expected .absent for a fresh start, got \(state).")
       return
     }
   }

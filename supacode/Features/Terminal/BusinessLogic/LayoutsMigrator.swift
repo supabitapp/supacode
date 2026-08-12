@@ -34,7 +34,7 @@ nonisolated struct LayoutRecord: Equatable, Codable, Sendable {
   }
 }
 
-/// The layouts.json v2 shape: a version stamp over per-worktree records.
+/// The v2 layouts shape: a version stamp over per-worktree records.
 nonisolated struct LayoutsFile: Equatable, Codable, Sendable {
   static let currentSchemaVersion = 2
 
@@ -80,7 +80,7 @@ nonisolated struct LayoutsFile: Equatable, Codable, Sendable {
 }
 
 nonisolated extension LayoutsFile {
-  /// What a launch-time read of `layouts.json` found. `.absent` is a fresh
+  /// What a launch-time read of the persisted layouts found. `.absent` is a fresh
   /// start; `.unreadable` means bytes exist but could not be decoded, so a
   /// caller must never treat the store as empty (the orphan reaper would
   /// sweep every detached session).
@@ -90,10 +90,24 @@ nonisolated extension LayoutsFile {
     case unreadable
   }
 
-  /// Reads and decodes the persisted layouts. A still-v1 file (a deferred
+  /// UserDefaults key holding the encoded v2 `LayoutsFile`. Layouts are internal
+  /// state, not a user-editable file.
+  static let userDefaultsKey = "layoutsFile"
+
+  /// Reads and decodes the persisted layouts from UserDefaults. Before the store
+  /// is seeded, falls back to the legacy `layouts.json` so a present-but-unreadable
+  /// legacy file never reads as `.absent` (which would let the orphan reaper sweep
+  /// every detached session). The decode guards schema and lossiness.
+  static func readPersisted(from store: UserDefaults) -> DiskState {
+    guard let data = store.data(forKey: userDefaultsKey) else { return readFromDisk() }
+    return decodeDiskState(from: data)
+  }
+
+  /// Reads and decodes a legacy `layouts.json`. A still-v1 file (a deferred
   /// migration) migrates in memory so readers see the real records while the
-  /// on-disk bytes survive for the next launch's migrator.
-  static func readFromDisk(url: URL = SupacodePaths.layoutsURL) -> DiskState {
+  /// on-disk bytes survive for the next launch's migrator. Retained for the
+  /// migration path; live readers use `readPersisted(from:)`.
+  static func readFromDisk(url: URL = SupacodePaths.legacyLayoutsURL) -> DiskState {
     @Dependency(\.settingsFileStorage) var storage
     let data: Data
     do {
@@ -105,6 +119,12 @@ nonisolated extension LayoutsFile {
       }
       return .absent
     }
+    return decodeDiskState(from: data)
+  }
+
+  /// Shared decode for both the file and UserDefaults readers: v2 with schema and
+  /// lossiness guards, falling back to an in-memory v1 migration.
+  private static func decodeDiskState(from data: Data) -> DiskState {
     let decoder = JSONDecoder()
     decoder.userInfo[.layoutDecodeLoss] = LayoutDecodeLoss()
     if let file = try? decoder.decode(LayoutsFile.self, from: data) {

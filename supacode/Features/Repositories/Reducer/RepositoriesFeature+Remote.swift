@@ -569,9 +569,11 @@ extension RepositoriesFeature {
   }
 
   /// Read the remote host's worktree base directories over ssh: the per-repo
-  /// value from `<repoRoot>/supacode.json` and the global default from
-  /// `~/.supacode/settings.json`. Returns `(nil, nil)` when the host is
-  /// unreachable or neither file is present.
+  /// value from `<repoRoot>/supacode.json` and the global default from the host's
+  /// Supacode global config. The remote may run any Supacode build, so cat both
+  /// the new `${XDG_CONFIG_HOME:-$HOME/.config}/supacode/config.json` and the
+  /// legacy `~/.supacode/settings.json`, preferring the new one. Returns
+  /// `(nil, nil)` when the host is unreachable or neither file is present.
   static func readRemoteWorktreeBaseDirectories(
     host: RemoteHost,
     repoRoot: URL,
@@ -581,9 +583,12 @@ extension RepositoriesFeature {
     let repoSettingsPath = repoRoot.appending(path: "supacode.json").path(percentEncoded: false)
     let quotedRepoSettings = "'" + repoSettingsPath.replacing("'", with: "'\\''") + "'"
     // `|| true` keeps a missing file a clean empty section rather than a non-zero exit.
+    // Only honor `$XDG_CONFIG_HOME` when absolute, mirroring `SupacodePaths`.
     let script =
       "echo '===SUPACODE-REPO==='; cat \(quotedRepoSettings) 2>/dev/null || true; "
-      + #"echo '===SUPACODE-GLOBAL==='; cat "$HOME/.supacode/settings.json" 2>/dev/null || true"#
+      + #"echo '===SUPACODE-GLOBAL==='; cfg="$HOME/.config"; "#
+      + #"case "$XDG_CONFIG_HOME" in /*) cfg="$XDG_CONFIG_HOME";; esac; "#
+      + #"cat "$cfg/supacode/config.json" 2>/dev/null || cat "$HOME/.supacode/settings.json" 2>/dev/null || true"#
     guard
       let output = try? await shell.run(URL(fileURLWithPath: "/bin/sh"), ["-c", script], nil)
     else {
@@ -593,8 +598,9 @@ extension RepositoriesFeature {
   }
 
   /// Pure split + decode of `readRemoteWorktreeBaseDirectories`'s output: the
-  /// per-repo `RepositorySettings` block and the global `SettingsFile` block,
-  /// separated by the marker lines.
+  /// per-repo `RepositorySettings` block and the global block, separated by the
+  /// marker lines. The global block may be either the new flat `GlobalSettings`
+  /// or the legacy `SettingsFile` wrapper, so try both shapes.
   nonisolated static func parseRemoteWorktreeBaseDirectories(
     _ output: String
   ) -> (perRepo: String?, global: String?) {
@@ -607,8 +613,21 @@ extension RepositoriesFeature {
     let repoJSON = String(output[repoMarker.upperBound..<globalMarker.lowerBound])
     let globalJSON = String(output[globalMarker.upperBound...])
     let perRepo = decode(RepositorySettings.self, from: repoJSON)?.worktreeBaseDirectoryPath
-    let global = decode(SettingsFile.self, from: globalJSON)?.global.defaultWorktreeBaseDirectoryPath
+    let global = parseRemoteGlobalWorktreeBaseDirectory(globalJSON)
     return (perRepo, global)
+  }
+
+  /// Read the global default worktree base directory from either on-disk shape.
+  /// `GlobalSettings` decoding is key-tolerant, so a legacy `{"global":{…}}` blob
+  /// decodes with a nil path rather than failing: only accept the flat decode
+  /// when it yields a value, otherwise fall back to the `SettingsFile` wrapper.
+  nonisolated private static func parseRemoteGlobalWorktreeBaseDirectory(
+    _ globalJSON: String
+  ) -> String? {
+    if let flat = decode(GlobalSettings.self, from: globalJSON)?.defaultWorktreeBaseDirectoryPath {
+      return flat
+    }
+    return decode(SettingsFile.self, from: globalJSON)?.global.defaultWorktreeBaseDirectoryPath
   }
 
   nonisolated private static func decode<T: Decodable>(_ type: T.Type, from json: String) -> T? {

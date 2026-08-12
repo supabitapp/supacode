@@ -341,6 +341,8 @@ struct AppFeature {
     case commandAckTimedOut(responseFD: Int32, token: Int)
     case deeplinkConfirmationTimedOut(responseFD: Int32, token: Int)
     case deeplinkReferenceOpened
+    case settingsRelocationDidNotFinish(problems: [String])
+    case settingsStoreUnreadable
     case alert(PresentationAction<Alert>)
     case deeplinkInputConfirmation(PresentationAction<DeeplinkInputConfirmationFeature.Action>)
     case terminalEvent(TerminalClient.Event)
@@ -407,7 +409,8 @@ struct AppFeature {
             // Reap crash / force-quit orphans, then resurrect agent badges
             // from embedded records. Races with `.task` under `.merge`; the
             // `repositoriesChanged` handler drains layout-seeded surfaces if restore wins.
-            switch LayoutsFile.readFromDisk() {
+            @Dependency(\.defaultAppStorage) var defaults
+            switch LayoutsFile.readPersisted(from: defaults) {
             case .file(let layouts):
               let staged = AgentPresenceFeature.stageRestore(from: layouts)
               await terminalClient.reapOrphanSessions(layouts.allKnownSurfaceIDs)
@@ -1336,6 +1339,46 @@ struct AppFeature {
 
       case .deeplinkReferenceOpened:
         state.isDeeplinkReferenceRequested = false
+        return .none
+
+      case .settingsStoreUnreadable:
+        // The settings store loaded degraded (a file was present but unreadable),
+        // so saves are refused this session to avoid overwriting the real data.
+        state.alert = AlertState {
+          TextState("Settings couldn't be read")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState(
+            """
+            Supacode couldn't read your settings this launch, so changes you make now \
+            won't be saved until you relaunch. Your existing settings are safe. This is \
+            usually a permissions or disk issue; relaunching after it clears will restore \
+            normal saving.
+            """
+          )
+        }
+        return .none
+
+      case .settingsRelocationDidNotFinish(let problems):
+        // The relocation preserves the originals in place on any failure, so this
+        // is reassurance plus a concrete next step, not a data-loss warning.
+        state.alert = AlertState {
+          TextState("Settings move incomplete")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          let detail = problems.isEmpty ? "" : "\n\n" + problems.joined(separator: "\n")
+          return TextState(
+            """
+            Supacode couldn't finish moving your settings to ~/.config/supacode. \
+            Your existing settings are safe and untouched in ~/.supacode (and ~/.supacode/.backup).\(detail)
+
+            This is usually low disk space or a permissions issue. Free up space or check \
+            permissions on ~/.config/supacode, then relaunch. Supacode will retry automatically.
+            """
+          )
+        }
         return .none
 
       case .systemNotificationsPermissionFailed(let errorMessage):

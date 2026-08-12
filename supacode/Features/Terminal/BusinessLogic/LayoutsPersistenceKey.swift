@@ -5,9 +5,9 @@ import SupacodeSettingsShared
 
 nonisolated struct LayoutsKeyID: Hashable, Sendable {}
 
-/// Load-only reader for the persisted v2 layouts file. A still-v1 file (a
-/// deferred migration) migrates in memory so readers never see an empty file
-/// while real records exist on disk.
+/// Load-only reader for the persisted v2 layouts. Absent and unreadable both
+/// fall back to the empty initial value, so readers never see empty state while
+/// real records are persisted.
 nonisolated struct LayoutsKey: SharedKey {
   private static let logger = SupaLogger("Layouts")
 
@@ -19,9 +19,10 @@ nonisolated struct LayoutsKey: SharedKey {
   ) {
     // Absent and unreadable both serve the empty initial value here: this
     // reader only seeds sidebar badges. Destructive consumers (the orphan
-    // reaper) read `LayoutsFile.readFromDisk()` directly and skip on
+    // reaper) read `LayoutsFile.readPersisted(from:)` directly and skip on
     // `.unreadable`.
-    switch LayoutsFile.readFromDisk() {
+    @Dependency(\.defaultAppStorage) var store
+    switch LayoutsFile.readPersisted(from: store) {
     case .file(let file):
       continuation.resume(returning: file)
     case .absent, .unreadable:
@@ -41,7 +42,7 @@ nonisolated struct LayoutsKey: SharedKey {
     context _: SaveContext,
     continuation: SaveContinuation
   ) {
-    // No-op: `LayoutsIncrementalWriter` is the sole disk writer for `layouts.json`.
+    // No-op: `LayoutsIncrementalWriter` is the sole writer for the persisted layouts blob.
     continuation.resume()
   }
 }

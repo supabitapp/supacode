@@ -135,7 +135,8 @@ extension AppFeature.Action {
       .navigateSearchPrevious, .endSearch,
       .systemNotificationsPermissionFailed, .deeplinkReceived,
       .deeplink, .commandAckTimedOut, .deeplinkConfirmationTimedOut,
-      .deeplinkReferenceOpened, .alert, .deeplinkInputConfirmation:
+      .deeplinkReferenceOpened, .settingsRelocationDidNotFinish, .settingsStoreUnreadable,
+      .alert, .deeplinkInputConfirmation:
       return false
     }
   }

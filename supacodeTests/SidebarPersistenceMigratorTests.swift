@@ -878,7 +878,11 @@ struct SidebarPersistenceMigratorTests {
       let readFile: (URL) -> Data? = { url in
         url == SupacodePaths.settingsURL ? legacySettings : (try? storage.load(url))
       }
-      let fileExists: (URL) -> Bool = { (try? storage.load($0)) != nil }
+      // The legacy `settings.json` lives only behind `readFile` now (the split
+      // store never writes it), so `fileExists` must report it present to match.
+      let fileExists: (URL) -> Bool = { url in
+        url == SupacodePaths.settingsURL || (try? storage.load(url)) != nil
+      }
 
       let captured = SidebarPersistenceMigrator.captureLegacyRemoteRoots(
         fileExists: fileExists, readFile: readFile)
@@ -1212,10 +1216,11 @@ struct SidebarPersistenceMigratorTests {
       SidebarPersistenceMigrator.backupBeforeRemoteIdentityMigration(
         fileExists: { (try? storage.load($0)) != nil }, readFile: { try? storage.load($0) })
       let suffix = SidebarPersistenceMigrator.preMigrationBackupSuffix
-      let settingsBak = SupacodePaths.settingsURL.deletingLastPathComponent()
-        .appendingPathComponent(SupacodePaths.settingsURL.lastPathComponent + suffix)
-      let sidebarBak = SupacodePaths.sidebarURL.deletingLastPathComponent()
-        .appendingPathComponent(SupacodePaths.sidebarURL.lastPathComponent + suffix)
+      // Snapshots land in `~/.supacode/.backup`, not next to the source.
+      let settingsBak = SupacodePaths.backupDirectory
+        .appending(path: SupacodePaths.settingsURL.lastPathComponent + suffix, directoryHint: .notDirectory)
+      let sidebarBak = SupacodePaths.backupDirectory
+        .appending(path: SupacodePaths.sidebarURL.lastPathComponent + suffix, directoryHint: .notDirectory)
       #expect((try? storage.load(settingsBak)) == settingsData)
       #expect((try? storage.load(sidebarBak)) == sidebarData)
     }
@@ -1234,9 +1239,10 @@ struct SidebarPersistenceMigratorTests {
     } operation: {
       SidebarPersistenceMigrator.backupBeforeRemoteIdentityMigration(
         fileExists: { (try? storage.load($0)) != nil }, readFile: { try? storage.load($0) })
-      let settingsBak = SupacodePaths.settingsURL.deletingLastPathComponent()
-        .appendingPathComponent(
-          SupacodePaths.settingsURL.lastPathComponent + SidebarPersistenceMigrator.preMigrationBackupSuffix)
+      let settingsBak = SupacodePaths.backupDirectory
+        .appending(
+          path: SupacodePaths.settingsURL.lastPathComponent + SidebarPersistenceMigrator.preMigrationBackupSuffix,
+          directoryHint: .notDirectory)
       #expect((try? storage.load(settingsBak)) == nil)
     }
   }
