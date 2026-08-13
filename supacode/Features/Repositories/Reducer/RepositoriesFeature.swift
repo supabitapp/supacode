@@ -354,6 +354,11 @@ struct RepositoriesFeature {
     /// sort that nesting forces shows up in `slotByID` / `hotkeySlots` (which
     /// the view reads to assign ⌃1..⌃0 hotkeys).
     case sidebarNestByBranchChanged
+    /// Fired by `SidebarListView.onChange` whenever
+    /// `@Shared(.sidebarSortRepositoriesByName)` mutates. Rebuilds the cached
+    /// structure so repo/folder sections flip between persisted drag order and
+    /// A–Z by display name. Does not rewrite `sidebar.sections`.
+    case sidebarSortRepositoriesByNameChanged
     case setOpenPanelPresented(Bool)
     case requestAddRemoteRepository
     case requestEditRemoteRepository(Repository.ID)
@@ -3295,6 +3300,11 @@ struct RepositoriesFeature {
         // No-op handler: the post-reduce hook reads `sidebarNestWorktreesByBranch`
         // and rebuilds `sidebarStructure` so the alphabetical per-bucket sort
         // lands in `slotByID` / `hotkeySlots`.
+        return .none
+
+      case .sidebarSortRepositoriesByNameChanged:
+        // No-op handler: the post-reduce hook reads `sidebarSortRepositoriesByName`
+        // and rebuilds `sidebarStructure` in A–Z or persisted order.
         return .none
 
       case .setOpenPanelPresented(let isPresented):

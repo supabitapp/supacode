@@ -13,6 +13,7 @@ struct SidebarCommands: Commands {
   @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
   @Shared(.sidebarGroupPinnedRows) private var groupPinnedRows: Bool
   @Shared(.sidebarGroupActiveRows) private var groupActiveRows: Bool
+  @Shared(.sidebarSortRepositoriesByName) private var sortRepositoriesByName: Bool
 
   var body: some Commands {
     let overrides = settingsFile.global.shortcutOverrides
@@ -75,6 +76,7 @@ struct SidebarCommands: Commands {
           Toggle("Group Pinned Rows", isOn: Binding($groupPinnedRows))
           Toggle("Group Active Rows", isOn: Binding($groupActiveRows))
         }
+        Toggle("Sort Repositories by Name", isOn: Binding($sortRepositoriesByName))
         Toggle("Nest Worktrees by Branch", isOn: Binding($nestWorktreesByBranch))
         Toggle("Hide Worktree Name on Match", isOn: Binding($hideSubtitleOnMatch))
       }

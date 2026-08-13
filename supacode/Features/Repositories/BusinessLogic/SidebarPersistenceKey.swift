@@ -94,4 +94,13 @@ nonisolated extension SharedReaderKey where Self == AppStorageKey<Bool>.Default 
   static var sidebarGroupActiveRows: Self {
     Self[.appStorage("sidebarGroupActiveRows"), default: true]
   }
+
+  /// "Sort Repositories by Name" view-menu toggle. When on, repository and
+  /// folder sections render A–Z by sidebar display name. The persisted
+  /// `sidebar.sections` drag order is left alone so turning the toggle off
+  /// restores the curated list. Defaults off so an existing manual order is
+  /// not silently rewritten on upgrade.
+  static var sidebarSortRepositoriesByName: Self {
+    Self[.appStorage("sidebarSortRepositoriesByName"), default: false]
+  }
 }

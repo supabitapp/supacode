@@ -20,6 +20,13 @@ struct SidebarPersistenceKeyTests {
     #expect(groupActive == true)
   }
 
+  @Test func sortRepositoriesByNameDefaultsOff() {
+    // A–Z is a view overlay on top of curated drag order. Defaulting it on
+    // would silently reshuffle every existing sidebar on upgrade.
+    @Shared(.sidebarSortRepositoriesByName) var sortByName
+    #expect(sortByName == false)
+  }
+
   @Test func corruptBlobFallsBackToEmptyAndStashesItAside() {
     // A garbage UserDefaults value must decode-fail into the empty default (never
     // crash or wedge the sidebar), and the bytes must be preserved for recovery.

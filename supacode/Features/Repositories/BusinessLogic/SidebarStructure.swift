@@ -318,9 +318,11 @@ extension RepositoriesFeature.State {
   mutating func recomputeSidebarStructureIfChanged() {
     @Shared(.sidebarGroupPinnedRows) var groupPinned
     @Shared(.sidebarGroupActiveRows) var groupActive
+    @Shared(.sidebarSortRepositoriesByName) var sortByName
     let new = computeSidebarStructure(
       groupPinned: groupPinned,
-      groupActive: groupActive
+      groupActive: groupActive,
+      sortByName: sortByName
     )
     if new != sidebarStructure {
       sidebarStructure = new
@@ -445,7 +447,10 @@ extension RepositoriesFeature.Action {
 
     // Sidebar layout toggles only. `setMoveNotifiedWorktreeToTop` re-sorts the
     // highlight sections (unread float), so a runtime toggle must recompute.
+    // `sidebarSortRepositoriesByNameChanged` re-orders repo/folder sections
+    // without rewriting persisted drag order.
     case .sidebarGroupingTogglesChanged, .sidebarNestByBranchChanged,
+      .sidebarSortRepositoriesByNameChanged,
       .repositoryExpansionChanged, .branchNestExpansionChanged,
       .setAllSidebarGroupsExpanded,
       .setMoveNotifiedWorktreeToTop,
@@ -700,7 +705,8 @@ extension RepositoriesFeature.State {
 
   func computeSidebarStructure(
     groupPinned: Bool,
-    groupActive: Bool
+    groupActive: Bool,
+    sortByName: Bool = false
   ) -> SidebarStructure {
     if !isInitialLoadComplete, repositories.isEmpty {
       return SidebarStructure(
@@ -715,7 +721,7 @@ extension RepositoriesFeature.State {
     }
 
     let hoists = computeHighlightHoists(groupPinned: groupPinned, groupActive: groupActive)
-    let repoSections = buildRepositorySections(hoisted: hoists.hoistedSet)
+    let repoSections = buildRepositorySections(hoisted: hoists.hoistedSet, sortByName: sortByName)
 
     var sections: [SidebarStructure.Section] = []
     if !hoists.pinned.isEmpty {
@@ -803,7 +809,10 @@ extension RepositoriesFeature.State {
     var reorderableRepositoryIDs: [Repository.ID]
   }
 
-  private func buildRepositorySections(hoisted: Set<Worktree.ID>) -> RepositorySectionsBuild {
+  private func buildRepositorySections(
+    hoisted: Set<Worktree.ID>,
+    sortByName: Bool
+  ) -> RepositorySectionsBuild {
     var sections: [SidebarStructure.Section] = []
     var reorderableRepositoryIDs: [Repository.ID] = []
     let blockedRepositoryIDs = environmentBlockedRepositoryIDs
@@ -823,11 +832,28 @@ extension RepositoriesFeature.State {
     // `orderedRepositoryIDs()` (local roots and host-keyed remote ids honoring
     // the persisted sidebar order). Remote repos are no longer pinned below the
     // local ones: the user can interleave local and remote rows by drag.
-    // `reorderableRepositoryIDs` mirrors `orderedRepositoryIDs()` 1:1 (even ids
-    // with no rendered section, e.g. a still-loading root or a hoisted folder)
-    // so the offset-based `.repositoriesMoved` move maps cleanly back.
-    for repositoryID in orderedRepositoryIDs() {
-      reorderableRepositoryIDs.append(repositoryID)
+    // `reorderableRepositoryIDs` always mirrors that persisted order 1:1 (even
+    // ids with no rendered section, e.g. a still-loading root or a hoisted
+    // folder) so the offset-based `.repositoriesMoved` move maps cleanly back.
+    // Display order may A–Z sort independently when `sortByName` is on; the
+    // persisted key order is not rewritten.
+    let persistedRepositoryIDs = orderedRepositoryIDs()
+    let displayRepositoryIDs =
+      sortByName
+      ? persistedRepositoryIDs.sorted { lhs, rhs in
+        Repository.sidebarNameOrdersBefore(
+          repositorySidebarSortName(for: lhs, localRootsByID: localRootsByID),
+          id: lhs,
+          repositorySidebarSortName(for: rhs, localRootsByID: localRootsByID),
+          id: rhs
+        )
+      }
+      : persistedRepositoryIDs
+    // Move mapping always uses persisted order, even when the list is drawn
+    // A–Z. Drag is disabled in the view while sorted, so these ids are unused
+    // then; keep them aligned with `.repositoriesMoved` for the off-sort path.
+    reorderableRepositoryIDs = persistedRepositoryIDs
+    for repositoryID in displayRepositoryIDs {
       let repository = repositories[id: repositoryID]
       let isRemote = repository?.host != nil
 
@@ -890,6 +916,28 @@ extension RepositoriesFeature.State {
       sections: sections,
       reorderableRepositoryIDs: reorderableRepositoryIDs
     )
+  }
+
+  /// Sidebar title used when Sort Repositories by Name is on. Matches the
+  /// header: custom section title, else a folder-row title, else the folder
+  /// name / last path component.
+  func repositorySidebarSortName(
+    for repositoryID: Repository.ID,
+    localRootsByID: [Repository.ID: URL]
+  ) -> String {
+    let sectionEntry = sidebar.sections[repositoryID]
+    let folderItem = sectionEntry?.folderWorktreeItem(for: repositoryID)
+    let customTitle = sectionEntry?.title ?? folderItem?.title
+    if let repository = repositories[id: repositoryID] {
+      return Repository.sidebarDisplayName(custom: customTitle, fallback: repository.name)
+    }
+    if let rootURL = localRootsByID[repositoryID] {
+      return Repository.sidebarDisplayName(
+        custom: customTitle,
+        fallback: Repository.name(for: rootURL)
+      )
+    }
+    return Repository.sidebarDisplayName(custom: customTitle, fallback: repositoryID.rawValue)
   }
 
   /// Hotkey assignment output for a single structure pass.

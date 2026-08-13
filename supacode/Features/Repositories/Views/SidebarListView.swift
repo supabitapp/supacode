@@ -17,6 +17,7 @@ struct SidebarListView: View {
   @Shared(.sidebarGroupPinnedRows) private var groupPinnedRows: Bool
   @Shared(.sidebarGroupActiveRows) private var groupActiveRows: Bool
   @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
+  @Shared(.sidebarSortRepositoriesByName) private var sortRepositoriesByName: Bool
 
   var body: some View {
     let state = store.state
@@ -55,13 +56,13 @@ struct SidebarListView: View {
             terminalManager: terminalManager
           )
         }
-        .onMove { offsets, destination in
+        .onMove(perform: sortRepositoriesByName ? nil : { offsets, destination in
           handleRepositoryMove(
             offsets: offsets,
             destination: destination,
             structure: structure
           )
-        }
+        })
       }
       .listStyle(.sidebar)
       .focused($isSidebarFocused)
@@ -74,6 +75,9 @@ struct SidebarListView: View {
       }
       .onChange(of: nestWorktreesByBranch, initial: false) { _, _ in
         store.send(.sidebarNestByBranchChanged)
+      }
+      .onChange(of: sortRepositoriesByName, initial: false) { _, _ in
+        store.send(.sidebarSortRepositoriesByNameChanged)
       }
       .dropDestination(for: URL.self) { urls, _ in
         let fileURLs = urls.filter(\.isFileURL)
