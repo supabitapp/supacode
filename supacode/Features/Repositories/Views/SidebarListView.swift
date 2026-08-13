@@ -17,7 +17,7 @@ struct SidebarListView: View {
   @Shared(.sidebarGroupPinnedRows) private var groupPinnedRows: Bool
   @Shared(.sidebarGroupActiveRows) private var groupActiveRows: Bool
   @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
-  @Shared(.sidebarSortRepositoriesByName) private var sortRepositoriesByName: Bool
+  @Shared(.sidebarSectionSort) private var sectionSort: SidebarSectionSort
 
   var body: some View {
     let state = store.state
@@ -56,13 +56,15 @@ struct SidebarListView: View {
             terminalManager: terminalManager
           )
         }
-        .onMove(perform: sortRepositoriesByName ? nil : { offsets, destination in
-          handleRepositoryMove(
-            offsets: offsets,
-            destination: destination,
-            structure: structure
-          )
-        })
+        .onMove(
+          perform: sectionSort.allowsReordering
+            ? { offsets, destination in
+              handleRepositoryMove(
+                offsets: offsets,
+                destination: destination,
+                structure: structure
+              )
+            } : nil)
       }
       .listStyle(.sidebar)
       .focused($isSidebarFocused)
@@ -76,11 +78,11 @@ struct SidebarListView: View {
       .onChange(of: nestWorktreesByBranch, initial: false) { _, _ in
         store.send(.sidebarNestByBranchChanged)
       }
-      .onChange(of: sortRepositoriesByName, initial: true) { _, _ in
-        // `initial: true` so a toggle made while the sidebar column is
+      .onChange(of: sectionSort, initial: true) { _, _ in
+        // `initial: true` so a change made while the sidebar column is
         // collapsed still lands on the next appear (the View menu writes
         // `@Shared` even when this view is unmounted).
-        store.send(.sidebarSortRepositoriesByNameChanged)
+        store.send(.sidebarSectionSortChanged)
       }
       .dropDestination(for: URL.self) { urls, _ in
         let fileURLs = urls.filter(\.isFileURL)

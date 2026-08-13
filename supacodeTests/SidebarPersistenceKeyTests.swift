@@ -20,11 +20,27 @@ struct SidebarPersistenceKeyTests {
     #expect(groupActive == true)
   }
 
-  @Test func sortRepositoriesByNameDefaultsOff() {
-    // A–Z is a view overlay on top of curated drag order. Defaulting it on
-    // would silently reshuffle every existing sidebar on upgrade.
-    @Shared(.sidebarSortRepositoriesByName) var sortByName
-    #expect(sortByName == false)
+  @Test func sectionSortDefaultsToManual() {
+    // Alphabetical is a view overlay on top of curated drag order. Defaulting
+    // it on would silently reshuffle every existing sidebar on upgrade.
+    @Shared(.sidebarSectionSort) var sectionSort
+    #expect(sectionSort == .manual)
+  }
+
+  @Test func sectionSortRawValuesAreStablePersistenceTokens() {
+    #expect(SidebarSectionSort.manual.rawValue == "manual")
+    #expect(SidebarSectionSort.alphabetical.rawValue == "alphabetical")
+  }
+
+  @Test func sectionSortPersistsRawValue() {
+    withDependencies {
+      $0.defaultAppStorage = .inMemory
+    } operation: {
+      @Shared(.sidebarSectionSort) var sectionSort
+      $sectionSort.withLock { $0 = .alphabetical }
+      @Dependency(\.defaultAppStorage) var store
+      #expect(store.string(forKey: "sidebarSectionSort") == "alphabetical")
+    }
   }
 
   @Test func corruptBlobFallsBackToEmptyAndStashesItAside() {

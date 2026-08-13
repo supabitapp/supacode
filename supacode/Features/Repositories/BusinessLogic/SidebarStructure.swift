@@ -318,11 +318,11 @@ extension RepositoriesFeature.State {
   mutating func recomputeSidebarStructureIfChanged() {
     @Shared(.sidebarGroupPinnedRows) var groupPinned
     @Shared(.sidebarGroupActiveRows) var groupActive
-    @Shared(.sidebarSortRepositoriesByName) var sortByName
+    @Shared(.sidebarSectionSort) var sectionSort
     let new = computeSidebarStructure(
       groupPinned: groupPinned,
       groupActive: groupActive,
-      sortByName: sortByName
+      sectionSort: sectionSort
     )
     if new != sidebarStructure {
       sidebarStructure = new
@@ -447,10 +447,10 @@ extension RepositoriesFeature.Action {
 
     // Sidebar layout toggles only. `setMoveNotifiedWorktreeToTop` re-sorts the
     // highlight sections (unread float), so a runtime toggle must recompute.
-    // `sidebarSortRepositoriesByNameChanged` re-orders repo/folder sections
+    // `sidebarSectionSortChanged` re-orders repo/folder sections
     // without rewriting persisted drag order.
     case .sidebarGroupingTogglesChanged, .sidebarNestByBranchChanged,
-      .sidebarSortRepositoriesByNameChanged,
+      .sidebarSectionSortChanged,
       .repositoryExpansionChanged, .branchNestExpansionChanged,
       .setAllSidebarGroupsExpanded,
       .setMoveNotifiedWorktreeToTop,
@@ -706,7 +706,7 @@ extension RepositoriesFeature.State {
   func computeSidebarStructure(
     groupPinned: Bool,
     groupActive: Bool,
-    sortByName: Bool = false
+    sectionSort: SidebarSectionSort = .manual
   ) -> SidebarStructure {
     if !isInitialLoadComplete, repositories.isEmpty {
       return SidebarStructure(
@@ -721,7 +721,7 @@ extension RepositoriesFeature.State {
     }
 
     let hoists = computeHighlightHoists(groupPinned: groupPinned, groupActive: groupActive)
-    let repoSections = buildRepositorySections(hoisted: hoists.hoistedSet, sortByName: sortByName)
+    let repoSections = buildRepositorySections(hoisted: hoists.hoistedSet, sectionSort: sectionSort)
 
     var sections: [SidebarStructure.Section] = []
     if !hoists.pinned.isEmpty {
@@ -811,7 +811,7 @@ extension RepositoriesFeature.State {
 
   private func buildRepositorySections(
     hoisted: Set<Worktree.ID>,
-    sortByName: Bool
+    sectionSort: SidebarSectionSort
   ) -> RepositorySectionsBuild {
     var sections: [SidebarStructure.Section] = []
     var reorderableRepositoryIDs: [Repository.ID] = []
@@ -835,20 +835,12 @@ extension RepositoriesFeature.State {
     // `reorderableRepositoryIDs` always mirrors that persisted order 1:1 (even
     // ids with no rendered section, e.g. a still-loading root or a hoisted
     // folder) so the offset-based `.repositoriesMoved` move maps cleanly back.
-    // Display order may A–Z sort independently when `sortByName` is on; the
-    // persisted key order is not rewritten.
+    // Display order may sort independently of `sectionSort`; the persisted
+    // key order is not rewritten.
     let persistedRepositoryIDs = orderedRepositoryIDs()
-    let displayRepositoryIDs =
-      sortByName
-      ? persistedRepositoryIDs.sorted { lhs, rhs in
-        Repository.sidebarNameOrdersBefore(
-          repositorySidebarSortName(for: lhs, localRootsByID: localRootsByID),
-          id: lhs,
-          repositorySidebarSortName(for: rhs, localRootsByID: localRootsByID),
-          id: rhs
-        )
-      }
-      : persistedRepositoryIDs
+    let displayRepositoryIDs = sectionSort.ordered(persistedRepositoryIDs) { id in
+      repositorySidebarSortName(for: id, localRootsByID: localRootsByID)
+    }
     // Move mapping always uses persisted order, even when the list is drawn
     // A–Z. Drag is disabled in the view while sorted, so these ids are unused
     // then; keep them aligned with `.repositoriesMoved` for the off-sort path.
@@ -918,7 +910,7 @@ extension RepositoriesFeature.State {
     )
   }
 
-  /// Sidebar title used when Sort by Name is on. Matches the
+  /// Sidebar title used when section sort is `.alphabetical`. Matches the
   /// header: custom section title, else a folder-row title, else the folder
   /// name / last path component.
   func repositorySidebarSortName(

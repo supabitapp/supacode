@@ -539,7 +539,19 @@ struct SidebarStructureTests {
     #expect(!structure.hoistedRowIDs.contains(archived.id))
   }
 
-  // MARK: - Sort repositories by name.
+  // MARK: - Section sort.
+
+  @Test func sectionSortOrderedIsIdentityForManualAndAlphabeticalByName() {
+    let zebra = RepositoryID("/tmp/zebra")
+    let alpha = RepositoryID("/tmp/alpha")
+    let ids = [zebra, alpha]
+    let names: [Repository.ID: String] = [zebra: "zebra", alpha: "alpha"]
+    #expect(SidebarSectionSort.manual.ordered(ids, name: { names[$0]! }) == ids)
+    #expect(
+      SidebarSectionSort.alphabetical.ordered(ids, name: { names[$0]! }) == [alpha, zebra])
+    #expect(SidebarSectionSort.manual.allowsReordering)
+    #expect(!SidebarSectionSort.alphabetical.allowsReordering)
+  }
 
   @Test func sidebarNameOrdersBeforeIsCaseInsensitiveAndTiesOnID() {
     #expect(
@@ -573,12 +585,12 @@ struct SidebarStructureTests {
     #expect(Array(state.sidebar.sections.keys) == persisted)
 
     let unsorted = state.computeSidebarStructure(
-      groupPinned: false, groupActive: false, sortByName: false)
+      groupPinned: false, groupActive: false, sectionSort: .manual)
     #expect(repositorySectionIDs(in: unsorted) == persisted)
     #expect(unsorted.reorderableRepositoryIDs == persisted)
 
     let sorted = state.computeSidebarStructure(
-      groupPinned: false, groupActive: false, sortByName: true)
+      groupPinned: false, groupActive: false, sectionSort: .alphabetical)
     #expect(repositorySectionIDs(in: sorted) == [alpha.id, mango.id, zebra.id])
     // Drag mapping stays in persisted order; the view drops `.onMove` while sorted.
     #expect(sorted.reorderableRepositoryIDs == persisted)
@@ -595,7 +607,7 @@ struct SidebarStructureTests {
     }
 
     let sorted = state.computeSidebarStructure(
-      groupPinned: false, groupActive: false, sortByName: true)
+      groupPinned: false, groupActive: false, sectionSort: .alphabetical)
     #expect(repositorySectionIDs(in: sorted) == [zebra.id, alpha.id])
   }
 
@@ -610,7 +622,7 @@ struct SidebarStructureTests {
     }
 
     let sorted = state.computeSidebarStructure(
-      groupPinned: false, groupActive: false, sortByName: true)
+      groupPinned: false, groupActive: false, sectionSort: .alphabetical)
     // Equal names fall back to repository id so the order cannot flip.
     let ids = repositorySectionIDs(in: sorted)
     #expect(ids.last == bravo.id)
@@ -628,7 +640,7 @@ struct SidebarStructureTests {
     state.loadFailuresByID[failedID] = "boom"
 
     let sorted = state.computeSidebarStructure(
-      groupPinned: false, groupActive: false, sortByName: true)
+      groupPinned: false, groupActive: false, sectionSort: .alphabetical)
     #expect(repositorySectionIDs(in: sorted) == [failedID, folder.id, zebra.id])
   }
 
@@ -650,7 +662,7 @@ struct SidebarStructureTests {
     }
 
     let structure = state.computeSidebarStructure(
-      groupPinned: true, groupActive: false, sortByName: true)
+      groupPinned: true, groupActive: false, sectionSort: .alphabetical)
     #expect(
       {
         if case .highlight(.pinned, let ids) = structure.sections.first { return ids == [pinned.id] }
@@ -679,11 +691,11 @@ struct SidebarStructureTests {
     }
 
     let unsorted = state.computeSidebarStructure(
-      groupPinned: false, groupActive: false, sortByName: false)
+      groupPinned: false, groupActive: false, sectionSort: .manual)
     #expect(repositorySectionIDs(in: unsorted) == [localZebra.id, remote.id])
 
     let sorted = state.computeSidebarStructure(
-      groupPinned: false, groupActive: false, sortByName: true)
+      groupPinned: false, groupActive: false, sectionSort: .alphabetical)
     #expect(repositorySectionIDs(in: sorted) == [remote.id, localZebra.id])
     #expect(state.orderedRepositoryIDs() == [localZebra.id, remote.id])
   }
@@ -694,14 +706,14 @@ struct SidebarStructureTests {
     var state = makeState(repositories: [zebra, alpha])
 
     var sorted = state.computeSidebarStructure(
-      groupPinned: false, groupActive: false, sortByName: true)
+      groupPinned: false, groupActive: false, sectionSort: .alphabetical)
     #expect(repositorySectionIDs(in: sorted) == [alpha.id, zebra.id])
 
     state.$sidebar.withLock { sidebar in
       sidebar.sections[alpha.id, default: .init()].title = "zzz-renamed"
     }
     sorted = state.computeSidebarStructure(
-      groupPinned: false, groupActive: false, sortByName: true)
+      groupPinned: false, groupActive: false, sectionSort: .alphabetical)
     #expect(repositorySectionIDs(in: sorted) == [zebra.id, alpha.id])
   }
 
@@ -713,18 +725,18 @@ struct SidebarStructureTests {
     let alphaMain = alpha.worktrees[0].id
 
     let unsorted = state.computeSidebarStructure(
-      groupPinned: false, groupActive: false, sortByName: false)
+      groupPinned: false, groupActive: false, sectionSort: .manual)
     #expect(unsorted.hotkeySlots.map(\.id) == [zebraMain, alphaMain])
 
     let sorted = state.computeSidebarStructure(
-      groupPinned: false, groupActive: false, sortByName: true)
+      groupPinned: false, groupActive: false, sectionSort: .alphabetical)
     #expect(sorted.hotkeySlots.map(\.id) == [alphaMain, zebraMain])
   }
 
   @Test func sortToggleSharedKeyRebuildsCachedStructure() {
     // Same path the post-reduce hook takes: the View menu writes `@Shared`,
     // then `recomputeSidebarStructureIfChanged` reads it. Isolate AppStorage
-    // so a leftover `true` cannot leak into later tests.
+    // so a leftover `.alphabetical` cannot leak into later tests.
     withDependencies {
       $0.defaultAppStorage = .inMemory
     } operation: {
@@ -738,16 +750,16 @@ struct SidebarStructureTests {
         sidebar.sections = reordered
       }
       state.sidebarStructure = state.computeSidebarStructure(
-        groupPinned: false, groupActive: false, sortByName: false)
+        groupPinned: false, groupActive: false, sectionSort: .manual)
       #expect(repositorySectionIDs(in: state.sidebarStructure) == [zebra.id, alpha.id])
 
-      @Shared(.sidebarSortRepositoriesByName) var sortByName
-      $sortByName.withLock { $0 = true }
+      @Shared(.sidebarSectionSort) var sectionSort
+      $sectionSort.withLock { $0 = .alphabetical }
       state.recomputeSidebarStructureIfChanged()
       #expect(repositorySectionIDs(in: state.sidebarStructure) == [alpha.id, zebra.id])
       #expect(state.orderedRepositoryIDs() == [zebra.id, alpha.id])
 
-      $sortByName.withLock { $0 = false }
+      $sectionSort.withLock { $0 = .manual }
       state.recomputeSidebarStructureIfChanged()
       #expect(repositorySectionIDs(in: state.sidebarStructure) == [zebra.id, alpha.id])
     }
@@ -1599,8 +1611,8 @@ struct SidebarStructureTests {
     #expect(action.cacheInvalidations.contains(.sidebarStructure))
   }
 
-  @Test func sortRepositoriesByNameChangedArmsSidebarStructureRecompute() {
-    let action = RepositoriesFeature.Action.sidebarSortRepositoriesByNameChanged
+  @Test func sectionSortChangedArmsSidebarStructureRecompute() {
+    let action = RepositoriesFeature.Action.sidebarSectionSortChanged
     #expect(action.cacheInvalidations.contains(.sidebarStructure))
     #expect(!action.cacheInvalidations.contains(.sidebarSelectionSlice))
   }

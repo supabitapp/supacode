@@ -355,10 +355,10 @@ struct RepositoriesFeature {
     /// the view reads to assign ⌃1..⌃0 hotkeys).
     case sidebarNestByBranchChanged
     /// Fired by `SidebarListView.onChange` whenever
-    /// `@Shared(.sidebarSortRepositoriesByName)` mutates. Rebuilds the cached
-    /// structure so repo/folder sections flip between persisted drag order and
-    /// A–Z by display name. Does not rewrite `sidebar.sections`.
-    case sidebarSortRepositoriesByNameChanged
+    /// `@Shared(.sidebarSectionSort)` mutates. Rebuilds the cached
+    /// structure so repo/folder sections follow the selected sort. Does not
+    /// rewrite `sidebar.sections`.
+    case sidebarSectionSortChanged
     case setOpenPanelPresented(Bool)
     case requestAddRemoteRepository
     case requestEditRemoteRepository(Repository.ID)
@@ -3302,9 +3302,9 @@ struct RepositoriesFeature {
         // lands in `slotByID` / `hotkeySlots`.
         return .none
 
-      case .sidebarSortRepositoriesByNameChanged:
-        // No-op handler: the post-reduce hook reads `sidebarSortRepositoriesByName`
-        // and rebuilds `sidebarStructure` in A–Z or persisted order.
+      case .sidebarSectionSortChanged:
+        // No-op handler: the post-reduce hook reads `sidebarSectionSort`
+        // and rebuilds `sidebarStructure` in the selected display order.
         return .none
 
       case .setOpenPanelPresented(let isPresented):

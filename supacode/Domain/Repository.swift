@@ -145,7 +145,7 @@ nonisolated struct Repository: Identifiable, Hashable, Sendable {
   }
 
   /// Case-insensitive sidebar-title order with `id` as the deterministic
-  /// final tie-break. Used when View → Sort by Name is on.
+  /// final tie-break. Used when View → Sort is `.alphabetical`.
   static func sidebarNameOrdersBefore(
     _ lhsName: String,
     id lhsID: Repository.ID,
