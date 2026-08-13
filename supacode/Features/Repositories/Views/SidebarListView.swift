@@ -76,7 +76,10 @@ struct SidebarListView: View {
       .onChange(of: nestWorktreesByBranch, initial: false) { _, _ in
         store.send(.sidebarNestByBranchChanged)
       }
-      .onChange(of: sortRepositoriesByName, initial: false) { _, _ in
+      .onChange(of: sortRepositoriesByName, initial: true) { _, _ in
+        // `initial: true` so a toggle made while the sidebar column is
+        // collapsed still lands on the next appear (the View menu writes
+        // `@Shared` even when this view is unmounted).
         store.send(.sidebarSortRepositoriesByNameChanged)
       }
       .dropDestination(for: URL.self) { urls, _ in

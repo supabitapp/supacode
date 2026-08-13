@@ -659,6 +659,100 @@ struct SidebarStructureTests {
     #expect(repositorySectionIDs(in: structure) == [alpha.id, zebra.id])
   }
 
+  @Test func sortByNameInterleavesRemoteAndLocalByDisplayName() {
+    let localZebra = makeRepository(path: "/tmp/zebra")
+    let remoteConfig = TestRemoteRepo(host: RemoteHost(alias: "devbox"), remotePath: "/home/me/alpha")
+    let remote = Repository(
+      id: RepositoriesFeature.remoteRepositoryID(for: remoteConfig),
+      rootURL: URL(fileURLWithPath: remoteConfig.normalizedRemotePath),
+      name: remoteConfig.resolvedDisplayName,
+      worktrees: IdentifiedArray(uniqueElements: [RepositoriesFeature.remoteMainWorktree(config: remoteConfig)]),
+      isGitRepository: true,
+      host: remoteConfig.host
+    )
+    var state = makeState(repositories: [localZebra, remote])
+    state.$sidebar.withLock { sidebar in
+      var reordered: OrderedDictionary<Repository.ID, SidebarState.Section> = [:]
+      reordered[localZebra.id] = sidebar.sections[localZebra.id] ?? .init()
+      reordered[remote.id] = sidebar.sections[remote.id] ?? .init()
+      sidebar.sections = reordered
+    }
+
+    let unsorted = state.computeSidebarStructure(
+      groupPinned: false, groupActive: false, sortByName: false)
+    #expect(repositorySectionIDs(in: unsorted) == [localZebra.id, remote.id])
+
+    let sorted = state.computeSidebarStructure(
+      groupPinned: false, groupActive: false, sortByName: true)
+    #expect(repositorySectionIDs(in: sorted) == [remote.id, localZebra.id])
+    #expect(state.orderedRepositoryIDs() == [localZebra.id, remote.id])
+  }
+
+  @Test func sortByNameFollowsATitleEdit() {
+    let zebra = makeRepository(path: "/tmp/zebra")
+    let alpha = makeRepository(path: "/tmp/alpha")
+    var state = makeState(repositories: [zebra, alpha])
+
+    var sorted = state.computeSidebarStructure(
+      groupPinned: false, groupActive: false, sortByName: true)
+    #expect(repositorySectionIDs(in: sorted) == [alpha.id, zebra.id])
+
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[alpha.id, default: .init()].title = "zzz-renamed"
+    }
+    sorted = state.computeSidebarStructure(
+      groupPinned: false, groupActive: false, sortByName: true)
+    #expect(repositorySectionIDs(in: sorted) == [zebra.id, alpha.id])
+  }
+
+  @Test func sortByNameAssignsHotkeysInVisualOrder() {
+    let zebra = makeRepository(path: "/tmp/zebra")
+    let alpha = makeRepository(path: "/tmp/alpha")
+    var state = makeState(repositories: [zebra, alpha])
+    let zebraMain = zebra.worktrees[0].id
+    let alphaMain = alpha.worktrees[0].id
+
+    let unsorted = state.computeSidebarStructure(
+      groupPinned: false, groupActive: false, sortByName: false)
+    #expect(unsorted.hotkeySlots.map(\.id) == [zebraMain, alphaMain])
+
+    let sorted = state.computeSidebarStructure(
+      groupPinned: false, groupActive: false, sortByName: true)
+    #expect(sorted.hotkeySlots.map(\.id) == [alphaMain, zebraMain])
+  }
+
+  @Test func sortToggleSharedKeyRebuildsCachedStructure() {
+    // Same path the post-reduce hook takes: the View menu writes `@Shared`,
+    // then `recomputeSidebarStructureIfChanged` reads it. Isolate AppStorage
+    // so a leftover `true` cannot leak into later tests.
+    withDependencies {
+      $0.defaultAppStorage = .inMemory
+    } operation: {
+      let zebra = makeRepository(path: "/tmp/zebra")
+      let alpha = makeRepository(path: "/tmp/alpha")
+      var state = makeState(repositories: [zebra, alpha])
+      state.$sidebar.withLock { sidebar in
+        var reordered: OrderedDictionary<Repository.ID, SidebarState.Section> = [:]
+        reordered[zebra.id] = sidebar.sections[zebra.id] ?? .init()
+        reordered[alpha.id] = sidebar.sections[alpha.id] ?? .init()
+        sidebar.sections = reordered
+      }
+      state.sidebarStructure = state.computeSidebarStructure(
+        groupPinned: false, groupActive: false, sortByName: false)
+      #expect(repositorySectionIDs(in: state.sidebarStructure) == [zebra.id, alpha.id])
+
+      @Shared(.sidebarSortRepositoriesByName) var sortByName
+      $sortByName.withLock { $0 = true }
+      state.recomputeSidebarStructureIfChanged()
+      #expect(repositorySectionIDs(in: state.sidebarStructure) == [alpha.id, zebra.id])
+      #expect(state.orderedRepositoryIDs() == [zebra.id, alpha.id])
+
+      $sortByName.withLock { $0 = false }
+      state.recomputeSidebarStructureIfChanged()
+      #expect(repositorySectionIDs(in: state.sidebarStructure) == [zebra.id, alpha.id])
+    }
+  }
+
   // MARK: - Failed repository section placement.
 
   @Test func failedRepositorySectionEmittedAtRepositoryRootPosition() {
