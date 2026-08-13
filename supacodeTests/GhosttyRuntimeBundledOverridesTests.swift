@@ -56,6 +56,13 @@ struct GhosttyRuntimeBundledOverridesTests {
     #expect(!GhosttyRuntime.bundledOverridesString.contains("confirm-close-surface"))
   }
 
+  @Test func appOwnedOverridesDisableGhosttyFocusFollowsMouse() {
+    // Supacode's `hoverFocusMode` is the single hover-focus authority, so the
+    // native Ghostty path is unbound in the final tier and cannot resurrect it.
+    #expect(GhosttyRuntime.appOwnedOverridesString.contains("focus-follows-mouse = false"))
+    #expect(!GhosttyRuntime.bundledOverridesString.contains("focus-follows-mouse"))
+  }
+
   @Test func configResolutionMergeLoadsBothTiers() {
     let plan = GhosttyRuntime.ConfigResolution.plan(mode: .mergeAfterDefault, supacodeUserConfigExists: true)
     #expect(plan.loadUserDefaultFiles)

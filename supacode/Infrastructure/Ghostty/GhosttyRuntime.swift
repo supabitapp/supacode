@@ -651,9 +651,12 @@ final class GhosttyRuntime {
 
   /// Behavioral overrides that must survive the user's Supacode config, so they
   /// load last. Keeping Ghostty's close predicate enabled lets
-  /// `confirmCloseSurface` decide whether Supacode prompts.
+  /// `confirmCloseSurface` decide whether Supacode prompts. Forcing
+  /// `focus-follows-mouse` off hands hover-focus to Supacode's `hoverFocusMode`,
+  /// so the layout is the single authority and `.never` truly disables it.
   internal static let appOwnedOverridesString = """
     confirm-close-surface = true
+    focus-follows-mouse = false
     """
 
   /// Reports Supacode in `TERM_PROGRAM` so programs detect the real host
