@@ -76,7 +76,7 @@ struct SidebarCommands: Commands {
           Toggle("Group Pinned Rows", isOn: Binding($groupPinnedRows))
           Toggle("Group Active Rows", isOn: Binding($groupActiveRows))
         }
-        Toggle("Sort Repositories by Name", isOn: Binding($sortRepositoriesByName))
+        Toggle("Sort by Name", isOn: Binding($sortRepositoriesByName))
         Toggle("Nest Worktrees by Branch", isOn: Binding($nestWorktreesByBranch))
         Toggle("Hide Worktree Name on Match", isOn: Binding($hideSubtitleOnMatch))
       }

@@ -918,7 +918,7 @@ extension RepositoriesFeature.State {
     )
   }
 
-  /// Sidebar title used when Sort Repositories by Name is on. Matches the
+  /// Sidebar title used when Sort by Name is on. Matches the
   /// header: custom section title, else a folder-row title, else the folder
   /// name / last path component.
   func repositorySidebarSortName(
