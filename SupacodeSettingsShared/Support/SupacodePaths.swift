@@ -10,6 +10,27 @@ public nonisolated enum SupacodePaths {
     baseDirectory.appending(path: "repos", directoryHint: .isDirectory)
   }
 
+  /// Where migrated legacy files (settings/sidebar/layouts/ghostty) land so
+  /// `~/.supacode` keeps only `repos`.
+  public static var backupDirectory: URL {
+    baseDirectory.appending(path: ".backup", directoryHint: .isDirectory)
+  }
+
+  /// Root for user-facing config, honoring `$XDG_CONFIG_HOME` when it is a
+  /// non-empty absolute path, else `~/.config`.
+  public static var configBaseDirectory: URL {
+    let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let root: URL
+    if let xdg, xdg.hasPrefix("/") {
+      root = URL(filePath: xdg, directoryHint: .isDirectory)
+    } else {
+      root = FileManager.default.homeDirectoryForCurrentUser
+        .appending(path: ".config", directoryHint: .isDirectory)
+    }
+    return root.appending(path: "supacode", directoryHint: .isDirectory)
+  }
+
   public static func repositoryDirectory(for rootURL: URL) -> URL {
     let name = repositoryDirectoryName(for: rootURL)
     return reposDirectory.appending(path: name, directoryHint: .isDirectory)
@@ -151,16 +172,74 @@ public nonisolated enum SupacodePaths {
     .path(percentEncoded: false)
   }
 
-  public static var layoutsURL: URL {
-    baseDirectory.appending(path: "layouts.json", directoryHint: .notDirectory)
+  /// Global app settings (raw `GlobalSettings`, no wrapper key).
+  public static var configURL: URL {
+    configBaseDirectory.appending(path: "config.json", directoryHint: .notDirectory)
   }
 
-  public static var settingsURL: URL {
+  /// The added repository roots, split into `local` / `remote`.
+  public static var routesURL: URL {
+    configBaseDirectory.appending(path: "routes.json", directoryHint: .notDirectory)
+  }
+
+  /// Per-repository settings fallback, keyed by repository id, for repos without
+  /// a local `supacode.json` (notably every remote repo).
+  public static var reposURL: URL {
+    configBaseDirectory.appending(path: "repos.json", directoryHint: .notDirectory)
+  }
+
+  /// Durable marker written once the relocation has seeded every new store, so a
+  /// crash mid-relocation is resumed rather than mistaken for complete.
+  public static var relocationMarkerURL: URL {
+    configBaseDirectory.appending(path: ".relocated", directoryHint: .notDirectory)
+  }
+
+  /// Legacy `~/.supacode/settings.json`, read once by the relocation migrator.
+  public static var legacySettingsURL: URL {
     baseDirectory.appending(path: "settings.json", directoryHint: .notDirectory)
   }
 
-  public static var sidebarURL: URL {
+  /// Legacy `~/.supacode/sidebar.json`, read once by the relocation migrator.
+  public static var legacySidebarURL: URL {
     baseDirectory.appending(path: "sidebar.json", directoryHint: .notDirectory)
+  }
+
+  /// Legacy `~/.supacode/layouts.json`, read once by the relocation migrator.
+  public static var legacyLayoutsURL: URL {
+    baseDirectory.appending(path: "layouts.json", directoryHint: .notDirectory)
+  }
+
+  /// Legacy `~/.supacode/ghostty.config`, read once by the relocation migrator.
+  public static var legacyGhosttyUserConfigURL: URL {
+    baseDirectory.appending(path: "ghostty.config", directoryHint: .notDirectory)
+  }
+
+  // Transitional aliases retained until every consumer moves to the config /
+  // legacy accessors above; each is deleted as its last reader migrates.
+  public static var settingsURL: URL { legacySettingsURL }
+  public static var sidebarURL: URL { legacySidebarURL }
+  public static var layoutsURL: URL { legacyLayoutsURL }
+
+  /// Optional user-authored Ghostty config layered on top of (or in place of)
+  /// the standard Ghostty config. See `GhosttyUserConfigMode`.
+  public static var ghosttyUserConfigURL: URL {
+    configBaseDirectory.appending(path: "config.ghostty", directoryHint: .notDirectory)
+  }
+
+  /// True when the user Ghostty config is a readable, non-empty file. Empty or
+  /// unreadable counts as absent so exclusive mode never suppresses the standard
+  /// config in favor of nothing.
+  public static func ghosttyUserConfigHasContent() -> Bool {
+    let url = ghosttyUserConfigURL
+    guard FileManager.default.isReadableFile(atPath: url.path) else { return false }
+    guard
+      let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+      values.isRegularFile == true,
+      let size = values.fileSize
+    else {
+      return false
+    }
+    return size > 0
   }
 
   public static func repositorySettingsURL(for rootURL: URL) -> URL {

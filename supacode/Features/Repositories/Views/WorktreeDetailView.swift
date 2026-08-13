@@ -32,10 +32,6 @@ struct WorktreeDetailView: View {
     let selectedRow = repositories.selectedWorktreeSlice
     let selectedWorktree = repositories.worktree(for: repositories.selectedWorktreeID)
     let selectedWorktreeSummaries = selectedWorktreeSummaries(from: repositories)
-    let showsMultiSelectionSummary = shouldShowMultiSelectionSummary(
-      repositories: repositories,
-      selectedWorktreeSummaries: selectedWorktreeSummaries
-    )
     let loadingInfo = loadingInfo(
       for: selectedRow,
       selectedWorktreeID: repositories.selectedWorktreeID,
@@ -50,7 +46,8 @@ struct WorktreeDetailView: View {
     let hasActiveWorktree =
       selectedWorktree != nil
       && loadingInfo == nil
-      && !showsMultiSelectionSummary
+      && !shouldShowMultiSelectionSummary(
+        repositories: repositories, selectedWorktreeSummaries: selectedWorktreeSummaries)
       && selectedWorktree?.isMissing != true
     // `toolbarNotificationGroupsCache` is observed inside `ToolbarNotificationsButtonHost`
     // instead; reading it here would re-render the body on every notification.
@@ -70,6 +67,15 @@ struct WorktreeDetailView: View {
     // deferred toolbar closure) so the toolbar scheme invalidates on change.
     let toolbarScheme: ColorScheme =
       terminalManager.focusedSurfaceBackground.isLightColor ? .light : .dark
+    // Reveal in Finder is local-only; Open can target a remote worktree when the
+    // resolved editor can express the host. `resolvedSelection` (nil when it
+    // can't) drives the focused-action enablement, the menu label, and the
+    // files inspector's default Open.
+    let resolvedSelection = Self.resolvedOpenSelection(
+      hasActiveWorktree: hasActiveWorktree,
+      selectedWorktree: selectedWorktree,
+      state: state
+    )
     let content = detailContent(
       repositories: repositories,
       loadingInfo: loadingInfo,
@@ -110,28 +116,24 @@ struct WorktreeDetailView: View {
         pullRequest: inspectorPullRequest,
         repositoriesStore: repositoriesStore,
         terminalManager: terminalManager,
+        fileOpenActions: state.installedOpenActions.filter(\.canOpenFiles),
+        resolvedOpenAction: resolvedSelection,
         onSelectNotification: selectToolbarNotification,
         onSelectSurface: selectToolbarSurface,
-        onPullRequestAction: { sendPullRequestAction($0, worktree: selectedWorktree) }
+        onPullRequestAction: { sendPullRequestAction($0, worktree: selectedWorktree) },
+        onOpenFile: { store.send(.openFile($0, with: $1)) },
+        onActivateFile: { store.send(.openFileFromExplorer($0)) }
       )
       .inspectorColumnWidth(min: 280, ideal: 320, max: 480)
       // Match the inspector's accent to the terminal background; the appearance
       // is forced inside `WorktreeStatusInspectorContainer`.
       .tint(terminalManager.chromeOverlayTint())
     }
-    // Reveal in Finder is local-only; Open can target a remote worktree when the
-    // resolved editor can express the host. `resolvedSelection` (nil when it
-    // can't) drives both the focused-action enablement and the menu label.
-    let resolvedSelection = Self.resolvedOpenSelection(
-      hasActiveWorktree: hasActiveWorktree,
-      selectedWorktree: selectedWorktree,
-      state: state
-    )
     return applyFocusedActions(
       content: content,
+      state: state,
       hasActiveWorktree: hasActiveWorktree,
       canRevealLocally: hasActiveWorktree && selectedWorktree?.host == nil,
-      hasRunningRunScript: state.hasRunningRunScript,
       resolvedSelection: resolvedSelection
     )
   }
@@ -273,16 +275,14 @@ struct WorktreeDetailView: View {
           store.send(.repositories(.requestDeleteSidebarItems([target])))
         }
       } else if let selectedWorktree {
-        let shouldRunSetupScript = selectedSlice?.lifecycle == .pending
         let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
-        WorktreeTerminalTabsView(
+        WorktreeLayoutView(
           worktree: selectedWorktree,
           manager: terminalManager,
           terminalsStore: store.scope(state: \.terminals, action: \.terminals),
-          shouldRunSetupScript: shouldRunSetupScript,
-          isLifecycleBusy: selectedSlice?.lifecycle.isBusy ?? false,
+          runtime: ContentRuntime.liveValue,
           forceAutoFocus: shouldFocusTerminal,
-          createTab: { store.send(.newTerminal) }
+          isLifecycleBusy: selectedSlice?.lifecycle.isBusy ?? false
         )
         .id(selectedWorktree.id)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -300,14 +300,30 @@ struct WorktreeDetailView: View {
     }
   }
 
+  /// Whether the selected worktree has a focused tab to act on, so Close Tab /
+  /// Close Surface don't hold Cmd-W on an emptied layout and steal it from Close
+  /// Window.
+  static func hasFocusedTab(in state: AppFeature.State, worktreeID: Worktree.ID?) -> Bool {
+    guard let worktreeID,
+      let layout = state.terminals.layouts[id: worktreeID]?.layout,
+      let focusedPaneID = layout.focusedPaneID
+    else { return false }
+    return layout.panes[id: focusedPaneID]?.selectedTab != nil
+  }
+
   private func applyFocusedActions<Content: View>(
     content: Content,
+    state: AppFeature.State,
     hasActiveWorktree: Bool,
     canRevealLocally: Bool,
-    hasRunningRunScript: Bool,
     resolvedSelection: OpenWorktreeAction?
   ) -> some View {
-    content
+    // Reading the layout re-runs this body on its churn, but the FocusedAction
+    // (isEnabled, token) dedup keeps AppKit from rebuilding the menu.
+    let hasFocusedTab = Self.hasFocusedTab(in: state, worktreeID: state.repositories.selectedWorktreeID)
+    let hasRunningRunScript = state.hasRunningRunScript
+    return
+      content
       // Open is enabled only when the resolved editor can open the selection
       // (`resolvedSelection != nil`), which already folds in remote capability.
       .focusedSceneAction(\.openSelectedWorktreeAction, enabled: resolvedSelection != nil) {
@@ -323,13 +339,29 @@ struct WorktreeDetailView: View {
       .focusedSceneAction(\.newTerminalAction, enabled: hasActiveWorktree) {
         store.send(.newTerminal)
       }
+      // Lock and validity are enforced by the terminal model, so this only gates on an active worktree.
+      .focusedSceneAction(\.renameTabAction, enabled: hasActiveWorktree) {
+        store.send(.renameSelectedTerminalTab)
+      }
       .focusedAction(\.splitTerminalAction, enabled: hasActiveWorktree) { direction in
         store.send(.splitTerminal(direction))
       }
-      .focusedAction(\.closeTabAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.toggleWindowModeAction, enabled: hasActiveWorktree) {
+        store.send(.toggleWindowModeForFocusedPane)
+      }
+      .focusedAction(\.toggleSplitZoomAction, enabled: hasActiveWorktree) {
+        store.send(.toggleSplitZoom)
+      }
+      .focusedAction(\.equalizeSplitsAction, enabled: hasActiveWorktree) {
+        store.send(.equalizeSplits)
+      }
+      .focusedAction(\.focusSplitAction, enabled: hasActiveWorktree) { direction in
+        store.send(.focusSplit(direction))
+      }
+      .focusedAction(\.closeTabAction, enabled: hasActiveWorktree && hasFocusedTab) {
         store.send(.closeTab)
       }
-      .focusedAction(\.closeSurfaceAction, enabled: hasActiveWorktree) {
+      .focusedAction(\.closeSurfaceAction, enabled: hasActiveWorktree && hasFocusedTab) {
         store.send(.closeSurface)
       }
       .focusedSceneAction(\.startSearchAction, enabled: hasActiveWorktree) {
@@ -366,8 +398,10 @@ struct WorktreeDetailView: View {
   /// no notification object survives to carry the surface ID.
   private func selectToolbarSurface(_ worktreeID: Worktree.ID, _ surfaceID: UUID) {
     store.send(.repositories(.selectWorktree(worktreeID)))
-    if let terminalState = terminalManager.stateIfExists(for: worktreeID) {
-      _ = terminalState.focusSurface(id: surfaceID)
+    if let host = terminalManager.hostIfExists(for: worktreeID),
+      !host.focusSurface(id: surfaceID)
+    {
+      SupaLogger("Terminal").warning("Failed to focus surface \(surfaceID) for worktree \(worktreeID).")
     }
   }
 
@@ -640,6 +674,11 @@ struct WorktreeDetailView: View {
       ToolbarItem(placement: .navigation) {
         TerminalSchemeHost(scheme: scheme) {
           WorktreeToolbarTitleView(content: toolbarState.titleContent)
+            // `TerminalSchemeHost` re-hosts its content in a fresh
+            // `NSHostingView`, which starts a new environment rather than
+            // inheriting the window's. Publish the size inside the closure so it
+            // travels with the content value.
+            .appChromeTextSize(settingsFile.global.chromeTextSize)
         }
       }
       .sharedBackgroundVisibility(.hidden)
@@ -768,6 +807,12 @@ struct WorktreeDetailView: View {
         // full-opacity tint reads as a stark solid pill against the glass.
         let chromeForeground = terminalManager.chromeOverlayTint()
         let chromeTint = chromeForeground.opacity(0.2)
+        WorktreeFilesToolbarButton(
+          isSelected: inspectorPresented && inspectorPane == .files,
+          tint: chromeTint,
+          foreground: chromeForeground,
+          onActivate: { onActivateInspector(.files) }
+        )
         WorktreeGitStatusButton(
           pullRequest: pullRequest,
           isSelected: inspectorPresented && inspectorPane == .git,
@@ -1014,7 +1059,7 @@ private struct DetailPlaceholderView: View {
       ProgressView()
         .controlSize(.large)
       Text(Self.messages[messageIndex])
-        .font(.title3)
+        .appFont(.title3)
         .foregroundStyle(.secondary)
         .contentTransition(.numericText())
         .shimmer(isActive: true)
@@ -1046,6 +1091,8 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
   // appended by the toolbar) so the group isn't doubled; cold boot keeps them.
   var includesStatusSkeleton: Bool = true
 
+  @Shared(.settingsFile) private var settingsFile
+
   var body: some ToolbarContent {
     ToolbarItem(placement: .navigation) {
       TerminalSchemeHost(scheme: scheme) {
@@ -1056,10 +1103,13 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
               .foregroundStyle(.secondary)
             Text("feature/branch")
           }
-          .font(.headline)
+          .appFont(.headline)
         }
         .redacted(reason: .placeholder)
         .shimmer(isActive: true)
+        // `TerminalSchemeHost` re-hosts in a fresh `NSHostingView`, so the size
+        // must be published inside the closure to travel with the content.
+        .appChromeTextSize(settingsFile.global.chromeTextSize)
       }
     }
     .sharedBackgroundVisibility(.hidden)
@@ -1087,7 +1137,13 @@ private struct ToolbarPlaceholderContent: ToolbarContent {
 
     if includesStatusSkeleton {
       ToolbarItemGroup {
-        // Mirror the trailing inspector toggles (git status + notifications).
+        // Mirror the trailing inspector toggles (files + git status + notifications).
+        Button {
+        } label: {
+          Image(systemName: "list.bullet")
+        }
+        .redacted(reason: .placeholder)
+        .shimmer(isActive: true)
         Button {
         } label: {
           Image(systemName: "arrow.trianglehead.branch")
@@ -1135,7 +1191,7 @@ private struct MultiSelectedWorktreesDetailView: View {
     let deleteShortcut = KeyboardShortcut(.delete, modifiers: [.command, .shift]).display
     VStack(alignment: .leading, spacing: 20) {
       Text("\(rows.count) items selected")
-        .font(.title3)
+        .appFont(.title3)
 
       if !worktreeRows.isEmpty {
         selectionSection(
@@ -1167,12 +1223,12 @@ private struct MultiSelectedWorktreesDetailView: View {
       if isMixedKindSelection {
         VStack(alignment: .leading, spacing: 6) {
           Label("No bulk action available", systemImage: "exclamationmark.triangle")
-            .font(.headline)
+            .appFont(.headline)
           Text(
             "Worktrees and folders don't share bulk actions. Deselect "
               + "one kind to archive/delete worktrees or remove folders."
           )
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }
@@ -1191,7 +1247,7 @@ private struct MultiSelectedWorktreesDetailView: View {
   ) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       Text(title)
-        .font(.headline)
+        .appFont(.headline)
       ForEach(Array(rows.prefix(visibleRowsLimit))) { row in
         HStack(alignment: .firstTextBaseline, spacing: 8) {
           Text(row.name)
@@ -1202,23 +1258,23 @@ private struct MultiSelectedWorktreesDetailView: View {
               .lineLimit(1)
           }
         }
-        .font(.body)
+        .appFont(.body)
       }
       if rows.count > visibleRowsLimit {
         Text("+\(rows.count - visibleRowsLimit) more")
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
       }
       if !actions.isEmpty {
         VStack(alignment: .leading, spacing: 4) {
           Text("Available actions")
-            .font(.subheadline)
+            .appFont(.subheadline)
             .foregroundStyle(.secondary)
           ForEach(actions, id: \.self) { action in
             Text(action)
           }
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .padding(.top, 4)
       }

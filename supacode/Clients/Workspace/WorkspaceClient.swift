@@ -9,18 +9,57 @@ struct WorkspaceClient {
       _ worktree: Worktree,
       _ onError: @escaping @MainActor @Sendable (OpenActionError) -> Void
     ) -> Void
+  /// Opens a single file: in `action` when it is an installed file-capable
+  /// editor, otherwise in the system default application. Awaiting the launch
+  /// outcome keeps the calling effect alive until it lands; `nil` means opened.
+  var openFile:
+    @MainActor @Sendable (
+      _ fileURL: URL,
+      _ action: OpenWorktreeAction?
+    ) async -> OpenActionError?
 }
 
 extension WorkspaceClient: DependencyKey {
-  static let liveValue = WorkspaceClient { action, worktree, onError in
-    if worktree.host != nil {
-      WorktreeOpener.performRemote(action: action, worktree: worktree, onError: onError)
-    } else {
-      WorktreeOpener.perform(action: action, worktree: worktree, onError: onError)
+  static let liveValue = WorkspaceClient(
+    open: { action, worktree, onError in
+      if worktree.host != nil {
+        WorktreeOpener.performRemote(action: action, worktree: worktree, onError: onError)
+      } else {
+        WorktreeOpener.perform(action: action, worktree: worktree, onError: onError)
+      }
+    },
+    openFile: { fileURL, action in
+      if let action, action.canOpenFiles {
+        // An explicitly picked editor that vanished must surface, not silently
+        // fall back to a different app.
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: action.bundleIdentifier)
+        else { return .appNotFound(action) }
+        return await withCheckedContinuation { continuation in
+          NSWorkspace.shared.open(
+            [fileURL],
+            withApplicationAt: appURL,
+            configuration: NSWorkspace.OpenConfiguration()
+          ) { _, error in
+            continuation.resume(returning: error.map { .openFailed(action, $0) })
+          }
+        }
+      }
+      return await withCheckedContinuation { continuation in
+        NSWorkspace.shared.open(fileURL, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+          continuation.resume(
+            returning: error.map {
+              OpenActionError(
+                title: "Unable to open \(fileURL.lastPathComponent)",
+                message: $0.localizedDescription
+              )
+            }
+          )
+        }
+      }
     }
-  }
+  )
 
-  static let testValue = WorkspaceClient { _, _, _ in }
+  static let testValue = WorkspaceClient(open: { _, _, _ in }, openFile: { _, _ in nil })
 }
 
 extension DependencyValues {
@@ -302,7 +341,7 @@ enum WorktreeOpener {
   }
 }
 
-extension OpenActionError {
+nonisolated extension OpenActionError {
   static func appNotFound(_ action: OpenWorktreeAction) -> OpenActionError {
     OpenActionError(
       title: "\(action.title) not found",

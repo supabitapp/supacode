@@ -98,7 +98,7 @@ extension SettingsCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let rID = try resolveRepoID(options.repo)
+      let rID = try IDResolvers.resolveRepoID(options.repo)
       try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.settingsRepo(repoID: rID),
         timeoutSeconds: timeoutOption.timeout
@@ -112,7 +112,7 @@ extension SettingsCommand {
       @OptionGroup var timeoutOption: TimeoutOption
 
       func run() throws {
-        let rID = try resolveRepoID(options.repo)
+        let rID = try IDResolvers.resolveRepoID(options.repo)
         try Dispatcher.dispatch(
           deeplinkURL: DeeplinkURLBuilder.settingsRepoScripts(repoID: rID),
           timeoutSeconds: timeoutOption.timeout

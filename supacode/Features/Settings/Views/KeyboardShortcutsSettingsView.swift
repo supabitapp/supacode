@@ -17,16 +17,22 @@ struct ShortcutTableItem: Identifiable {
 
 struct KeyboardShortcutsSettingsView: View {
   @Bindable var store: StoreOf<SettingsFeature>
-  @Environment(GhosttyShortcutManager.self) private var ghosttyShortcuts
 
   @State private var searchText = ""
   @State private var showRestoreConfirmation = false
-  @State private var expandedGroups: Set<String> = Set(AppShortcuts.groups.map(\.id))
+  @State private var expandedGroups: Set<String> = Set(Self.visibleGroups.map(\.id))
+
+  // Non-customizable shortcuts are hardcoded chords; they get no row at all.
+  private static let visibleGroups: [AppShortcutGroup] = AppShortcuts.groups.compactMap { group in
+    let shortcuts = group.shortcuts.filter(\.isCustomizable)
+    guard !shortcuts.isEmpty else { return nil }
+    return AppShortcutGroup(category: group.category, shortcuts: shortcuts)
+  }
 
   private var filteredGroups: [AppShortcutGroup] {
-    guard !searchText.isEmpty else { return AppShortcuts.groups }
+    guard !searchText.isEmpty else { return Self.visibleGroups }
     let query = searchText.lowercased()
-    return AppShortcuts.groups.compactMap { group in
+    return Self.visibleGroups.compactMap { group in
       let filtered = group.shortcuts.filter { shortcut in
         shortcut.displayName.lowercased().contains(query)
           || shortcut.display.lowercased().contains(query)
@@ -56,28 +62,22 @@ struct KeyboardShortcutsSettingsView: View {
     !store.shortcutOverrides.isEmpty
   }
 
+  // No terminal-conflict pass here: every effective shortcut's chord is
+  // unbound inside Ghostty via the app's keybind config lines, so a terminal
+  // "conflict" is resolved in the app's favor by construction. The recorder
+  // still flags terminal chords at record time.
   private var warningsByID: [AppShortcutID: String] {
-    var warnings = AppShortcuts.conflictWarnings(from: store.shortcutOverrides)
-    let terminalDisplays = ghosttyShortcuts.reservedDisplayStrings
-    guard !terminalDisplays.isEmpty else { return warnings }
-    for shortcut in AppShortcuts.all {
-      guard let effective = shortcut.effective(from: store.shortcutOverrides) else { continue }
-      guard terminalDisplays.contains(effective.display) else { continue }
-      let existing = warnings[shortcut.id].map { $0 + " " } ?? ""
-      warnings[shortcut.id] = existing + "Conflicts with Terminal."
-    }
-    return warnings
+    AppShortcuts.conflictWarnings(from: store.shortcutOverrides)
   }
 
   var body: some View {
     let warnings = warningsByID
-    let terminalDisplays = ghosttyShortcuts.reservedDisplayStrings
     Table(of: ShortcutTableItem.self) {
       TableColumn("Name") { item in
         NameCell(item: item, overrides: store.shortcutOverrides)
       }
       TableColumn("Hotkey") { item in
-        HotkeyCell(item: item, store: store, warning: warnings, terminalReservedDisplays: terminalDisplays)
+        HotkeyCell(item: item, store: store, warning: warnings)
       }
       .width(min: 90, ideal: 120, max: 200)
       TableColumn("Enabled") { item in
@@ -158,7 +158,6 @@ private struct HotkeyCell: View {
   let item: ShortcutTableItem
   let store: StoreOf<SettingsFeature>
   let warning: [AppShortcutID: String]
-  let terminalReservedDisplays: Set<String>
 
   var body: some View {
     switch item.kind {
@@ -176,14 +175,19 @@ private struct HotkeyCell: View {
         onReset: {
           store.send(.updateShortcut(id: shortcut.id, override: nil))
         },
+        // No terminal check: the app unbinds every recorded chord inside
+        // Ghostty, so a terminal binding is claimable, not a conflict.
         conflictChecker: { proposed in
           let proposedDisplay = proposed.displayString
+          // The hardcoded close chord has no row of its own to explain a
+          // bare "System" refusal.
+          guard proposedDisplay != AppShortcuts.closeTab.display else {
+            return AppShortcuts.closeTab.displayName
+          }
           // Check system-reserved shortcuts.
           guard !AppShortcutOverride.allReservedDisplayStrings().contains(proposedDisplay) else {
             return "System"
           }
-          // Check terminal shortcuts.
-          guard !terminalReservedDisplays.contains(proposedDisplay) else { return "Terminal" }
           // Check other app shortcuts.
           let overrides = store.shortcutOverrides
           for other in AppShortcuts.all where other.id != shortcut.id {
@@ -209,7 +213,7 @@ private struct EnabledCell: View {
         MixedStateCheckbox(
           state: groupCheckboxState(for: group),
           onToggle: { enabled in
-            for shortcut in group.shortcuts {
+            for shortcut in group.shortcuts where shortcut.isCustomizable {
               store.send(.toggleShortcutEnabled(id: shortcut.id, enabled: enabled))
             }
           }
@@ -231,8 +235,11 @@ private struct EnabledCell: View {
 
   private func groupCheckboxState(for group: AppShortcutGroup) -> CheckboxState {
     let overrides = store.shortcutOverrides
-    let enabledCount = group.shortcuts.filter { overrides[$0.id]?.isEnabled ?? $0.isEnabledByDefault }.count
-    if enabledCount == group.shortcuts.count { return .checked }
+    // Non-customizable shortcuts are always enabled and never counted.
+    let customizable = group.shortcuts.filter(\.isCustomizable)
+    guard !customizable.isEmpty else { return .checked }
+    let enabledCount = customizable.filter { overrides[$0.id]?.isEnabled ?? $0.isEnabledByDefault }.count
+    if enabledCount == customizable.count { return .checked }
     if enabledCount == 0 { return .unchecked }
     return .mixed
   }

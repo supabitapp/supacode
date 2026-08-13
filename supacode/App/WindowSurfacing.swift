@@ -48,7 +48,9 @@ extension NSApplication {
     return true
   }
 
-  private func mainWindowCandidate() -> NSWindow? {
+  /// The window best representing the app's main content area. Excludes stale
+  /// panels and prefers the real main window over Settings.
+  func mainWindowCandidate() -> NSWindow? {
     if let window = windows.first(where: { $0.identifier?.rawValue == WindowID.main }) {
       return window
     }

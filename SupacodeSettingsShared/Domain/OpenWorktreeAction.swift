@@ -137,6 +137,21 @@ public nonisolated enum OpenWorktreeAction: CaseIterable, Identifiable, Hashable
     }
   }
 
+  /// Whether this action is a GUI editor that can open an arbitrary file URL.
+  /// Terminals, git GUIs, Finder, and `$EDITOR` operate on directories or
+  /// shells, so a file open falls back to the system default app instead.
+  public var canOpenFiles: Bool {
+    switch self {
+    case .androidStudio, .antigravity, .cursor, .goland, .intellij, .intellijEAP, .nova,
+      .phpstorm, .pycharm, .rider, .rubymine, .rustrover, .trae, .traeCN, .vscode,
+      .vscodeInsiders, .vscodium, .webstorm, .windsurf, .xcode, .zed, .zedPreview:
+      true
+    case .alacritty, .editor, .finder, .fork, .githubDesktop, .gitkraken, .gitup, .ghostty,
+      .kitty, .smartgit, .sourcetree, .sublimeMerge, .terminal, .warp, .wezterm:
+      false
+    }
+  }
+
   public var labelTitle: String {
     switch self {
     case .finder: "Finder"

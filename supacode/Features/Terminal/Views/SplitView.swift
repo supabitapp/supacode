@@ -2,14 +2,18 @@ import AppKit
 import SwiftUI
 
 struct SplitView<L: View, R: View>: View {
-  let direction: Direction
+  let direction: SplitDirection
   let dividerColor: Color
   let resizeIncrements: CGSize
   let left: L
   let right: R
+  let onResize: (Double) -> Void
   let onEqualize: () -> Void
   let minSize: CGFloat = 10
-  @Binding var split: CGFloat
+  // Fraction of the container the left/top child occupies, matching
+  // `SplitTree.Split.ratio`; a plain value, not a closure binding, so the
+  // children re-evaluate only when the ratio actually changes.
+  let ratio: Double
   private let splitterVisibleSize: CGFloat = 1
   private let splitterInvisibleSize: CGFloat = 6
 
@@ -42,20 +46,22 @@ struct SplitView<L: View, R: View>: View {
   }
 
   init(
-    _ direction: Direction,
-    _ split: Binding<CGFloat>,
+    _ direction: SplitDirection,
+    ratio: Double,
     dividerColor: Color,
     resizeIncrements: CGSize = .init(width: 1, height: 1),
     @ViewBuilder left: (() -> L),
     @ViewBuilder right: (() -> R),
+    onResize: @escaping (Double) -> Void,
     onEqualize: @escaping () -> Void
   ) {
     self.direction = direction
-    self._split = split
+    self.ratio = ratio
     self.dividerColor = dividerColor
     self.resizeIncrements = resizeIncrements
     self.left = left()
     self.right = right()
+    self.onResize = onResize
     self.onEqualize = onEqualize
   }
 
@@ -65,10 +71,10 @@ struct SplitView<L: View, R: View>: View {
         switch direction {
         case .horizontal:
           let new = min(max(minSize, gesture.location.x), size.width - minSize)
-          split = new / size.width
+          onResize(Double(new / size.width))
         case .vertical:
           let new = min(max(minSize, gesture.location.y), size.height - minSize)
-          split = new / size.height
+          onResize(Double(new / size.height))
         }
       }
   }
@@ -77,11 +83,11 @@ struct SplitView<L: View, R: View>: View {
     var result = CGRect(x: 0, y: 0, width: size.width, height: size.height)
     switch direction {
     case .horizontal:
-      result.size.width *= split
+      result.size.width *= CGFloat(ratio)
       result.size.width -= splitterVisibleSize / 2
       result.size.width -= result.size.width.truncatingRemainder(dividingBy: resizeIncrements.width)
     case .vertical:
-      result.size.height *= split
+      result.size.height *= CGFloat(ratio)
       result.size.height -= splitterVisibleSize / 2
       result.size.height -= result.size.height.truncatingRemainder(
         dividingBy: resizeIncrements.height)
@@ -113,13 +119,8 @@ struct SplitView<L: View, R: View>: View {
     }
   }
 
-  enum Direction: Codable {
-    case horizontal
-    case vertical
-  }
-
   private struct SplitDivider: View {
-    let direction: Direction
+    let direction: SplitDirection
     let visibleSize: CGFloat
     let invisibleSize: CGFloat
     let color: Color

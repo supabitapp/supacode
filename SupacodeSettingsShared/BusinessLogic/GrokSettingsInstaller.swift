@@ -23,7 +23,7 @@ nonisolated struct GrokSettingsInstaller {
   /// After the shared command-set check, also requires every managed hook to
   /// carry the canonical Grok env passthrough map, inspected on the same
   /// parsed snapshot (no second disk read).
-  func installState() -> ComponentInstallState {
+  func installState() throws -> ComponentInstallState {
     let groups: [String: [JSONValue]]
     do {
       groups = try GrokHookSettings.hooksByEvent()
@@ -31,7 +31,7 @@ nonisolated struct GrokSettingsInstaller {
       Self.reportInvalidHookConfiguration(error)
       return .notInstalled
     }
-    return fileInstaller.installState(
+    return try fileInstaller.installState(
       settingsURL: settingsURL,
       hookGroupsByEvent: groups,
       additionalOutdatedIfInstalled: GrokHookSettings.managedHooksLackEnvPassthrough(in:)

@@ -32,6 +32,7 @@ struct SidebarHighlightSection: View {
         Text(kind.title)
         SidebarHighlightHeaderDot(color: kind.indicatorColor)
       }
+      .appFontInheriting(.subheadline, weight: .semibold)
     }
   }
 }

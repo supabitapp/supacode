@@ -499,11 +499,11 @@ nonisolated enum ZmxAttach {
   ) -> String {
     let connectLine = SSHCommand.commandLine(
       host: launch.host,
-      remoteCommand: posixShellWrapped(remoteConnectScript(launch))
+      remoteCommand: SSHCommand.posixShellWrapped(remoteConnectScript(launch))
     )
     let reconnectLine = SSHCommand.commandLine(
       host: launch.host,
-      remoteCommand: posixShellWrapped(remoteReconnectScript(launch))
+      remoteCommand: SSHCommand.posixShellWrapped(remoteReconnectScript(launch))
     )
     let loop = SSHReconnectLoop.script(connect: connectLine, reconnect: reconnectLine)
     guard let localZmxExecutablePath else { return "/bin/sh -c " + shellQuote(loop) }
@@ -513,14 +513,6 @@ nonisolated enum ZmxAttach {
       sessionID: launch.sessionID,
       userCommand: loop
     )
-  }
-
-  /// Re-quotes a remote script behind `exec /bin/sh -c`, so the login shell
-  /// (which may be fish or csh) only has to parse that one portable line; the
-  /// POSIX `if/fi` script runs in /bin/sh with the login shell's exported
-  /// PATH already in place.
-  static func posixShellWrapped(_ script: String) -> String {
-    "exec /bin/sh -c " + shellQuote(script)
   }
 
   /// Runs a command under a fresh login shell. Commands must never execute in

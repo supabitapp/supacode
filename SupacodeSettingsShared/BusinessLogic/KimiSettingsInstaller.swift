@@ -18,9 +18,9 @@ nonisolated struct KimiSettingsInstaller {
 
   /// Install state for the unified hook map. See
   /// `ClaudeSettingsInstaller.installState()` for rationale.
-  func installState() -> ComponentInstallState {
+  func installState() throws -> ComponentInstallState {
     let entries = KimiHookSettings.canonicalEntries()
-    return fileInstaller.installState(
+    return try fileInstaller.installState(
       settingsURL: settingsURL,
       canonicalEntries: entries,
     )

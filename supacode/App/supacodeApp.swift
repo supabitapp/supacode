@@ -17,17 +17,11 @@ import SupacodeSettingsShared
 import SwiftUI
 
 private enum GhosttyCLI {
+  // Bare executable only: this argv is inert on macOS (Ghostty reads CLI args
+  // from `NSProcessInfo`), so keybinds ship via the bundled config file.
   static let argv: [UnsafeMutablePointer<CChar>?] = {
-    @Shared(.settingsFile) var settingsFile
-    let overrides = settingsFile.global.shortcutOverrides
-    var args: [UnsafeMutablePointer<CChar>?] = []
     let executable = CommandLine.arguments.first ?? "supacode"
-    args.append(strdup(executable))
-    for keybindArgument in AppShortcuts.ghosttyCLIKeybindArguments(from: overrides) {
-      args.append(strdup(keybindArgument))
-    }
-    args.append(nil)
-    return args
+    return [strdup(executable), nil]
   }()
 }
 
@@ -53,12 +47,12 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
   private var bufferedDeeplinkURLs: [URL] = []
 
   func applicationWillTerminate(_ notification: Notification) {
-    // Drop the queued debounce timers; an already-started async flush has no
-    // cancellation checkpoint and still completes, but the writer's lock plus the
-    // atomic temp+rename keep this terminal write from tearing. The on-quit save
-    // embeds agent records so badges survive relaunch (agents only emit
-    // session_start once per process lifetime), and a second concurrent instance
-    // overwriting the file is an accepted dev-only last-writer-wins window.
+    // Drop the queued debounce timers; a flush already on the writer's serial
+    // queue still completes, but the terminal write below runs on that same queue
+    // and is therefore ordered strictly after it, never regressed by a late flush.
+    // The on-quit save embeds agent records so badges survive relaunch (agents
+    // only emit session_start once per process lifetime), and a second concurrent
+    // instance overwriting the file is an accepted dev-only last-writer-wins window.
     terminalManager?.cancelPendingLayoutSaves()
     let agentsBySurface = appStore?.state.agentPresence.agentsBySurface() ?? [:]
     terminalManager?.saveAllLayoutSnapshots(agentsBySurface: agentsBySurface)
@@ -135,34 +129,11 @@ struct SupacodeApp: App {
   @MainActor init() {
     NSWindow.allowsAutomaticWindowTabbing = false
     UserDefaults.standard.set(200, forKey: "NSInitialToolTipDelay")
-    // Fold the six legacy sidebar-state sources into `sidebar.json`
-    // before any @Shared binding observes them:
-    //   1. `@Shared(.appStorage("sidebarCollapsedRepositoryIDs"))`.
-    //   2. `@Shared(.appStorage("repositoryOrderIDs"))`.
-    //   3. `@Shared(.appStorage("worktreeOrderByRepository"))`.
-    //   4. `@Shared(.appStorage("lastFocusedWorktreeID"))`.
-    //   5. `@Shared(.appStorage("archivedWorktreeDates"))` (the
-    //      legacy key; the client that wrapped it is being retired
-    //      in a parallel task).
-    //   6. `settingsFile.pinnedWorktreeIDs` (the `SettingsFile`
-    //      slice).
-    // Idempotent — gates on whether `sidebar.json` already exists
-    // AND carries `schemaVersion >= 1` — so the downgrade →
-    // re-upgrade path can't double-migrate, while a prior
-    // half-finished migration that left a `schemaVersion == 0` file
-    // still gets retried.
-    // Snapshot settings.json + sidebar.json before any migration or @Shared hydration
-    // can rewrite them, so a botched migration or downgrade is recoverable by hand.
-    SidebarPersistenceMigrator.backupBeforeRemoteIdentityMigration()
-    // Capture the retired `global.remoteRepositories` before any migration can
-    // re-encode settings and drop the field. An unreadable settings.json skips
-    // both passes this launch (a save would strip it first); they retry next launch.
-    let capturedLegacyRemotes = SidebarPersistenceMigrator.captureLegacyRemoteRoots()
-    if capturedLegacyRemotes != .unreadable {
-      SidebarPersistenceMigrator.migrateIfNeeded()
-      SidebarPersistenceMigrator.migrateRemoteIdentityIfNeeded(capturedLegacy: capturedLegacyRemotes)
-      SidebarPersistenceMigrator.migrateRemoteSlashIDsIfNeeded()
-    }
+    // Relocate config out of `~/.supacode` into `~/.config/supacode` and move
+    // sidebar / layouts into UserDefaults. Never throws; the underlying data is
+    // always preserved in place, so a partial failure only defers cleanup and is
+    // surfaced to the user below.
+    let relocationOutcome = SettingsRelocationMigrator.run()
     @Shared(.settingsFile) var settingsFile
     let initialSettings = settingsFile.global
     let infoDictionary = Bundle.main.infoDictionary ?? [:]
@@ -184,18 +155,41 @@ struct SupacodeApp: App {
     _ghosttyShortcuts = State(initialValue: shortcuts)
     let terminalManager = Self.makeTerminalManager(runtime: runtime)
     _terminalManager = State(initialValue: terminalManager)
-    let worktreeInfoWatcher = WorktreeInfoWatcherManager()
+    // Seed the flag at construction so a user who disabled background refresh
+    // never eats a launch-time SSH / gh burst before the setting is applied.
+    let worktreeInfoWatcher = WorktreeInfoWatcherManager(
+      automaticRefreshEnabled: initialSettings.automaticRepositoryRefreshEnabled
+    )
     _worktreeInfoWatcher = State(initialValue: worktreeInfoWatcher)
     let keyObserver = CommandKeyObserver()
     _commandKeyObserver = State(initialValue: keyObserver)
+    // Windowed panes host the same strip views, which read these from the
+    // environment; the app shell is the only place both exist.
+    terminalManager.paneWindows.ghosttyShortcuts = shortcuts
+    terminalManager.paneWindows.commandKeyObserver = keyObserver
     let appStore = Self.makeStore(
       initialSettings: initialSettings,
+      runtime: runtime,
       terminalManager: terminalManager,
       worktreeInfoWatcher: worktreeInfoWatcher
     )
     _store = State(initialValue: appStore)
     appDelegate.appStore = appStore
     appDelegate.terminalManager = terminalManager
+    terminalManager.appStore = appStore
+    // Surface a partial-relocation failure once the store exists so the alert
+    // presents on first window. The data is preserved regardless.
+    if case .pending(let problems) = relocationOutcome {
+      appStore.send(.settingsRelocationDidNotFinish(problems: problems))
+    }
+    // If a settings file was present but unreadable this launch, the store loaded
+    // degraded and refuses saves; tell the user their changes won't stick until
+    // they relaunch, rather than letting edits silently evaporate.
+    @Dependency(\.settingsStoreHealth) var settingsStoreHealth
+    if settingsStoreHealth.isDegraded(.live) {
+      appStore.send(.settingsStoreUnreadable)
+    }
+    Self.hydrateLayouts(into: appStore)
     // Source live agent badge records for incremental layout captures; the [:]
     // default would clobber badges that share a surface key on every save.
     terminalManager.currentAgentsBySurface = { [weak appStore] in
@@ -210,26 +204,24 @@ struct SupacodeApp: App {
     runtime.focusedSurfaceBackgroundColorProvider = { [weak terminalManager] in
       terminalManager?.focusedSurfaceBackground
     }
-    terminalManager.saveLayoutSnapshot = { worktreeID, snapshot in
-      @Shared(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
-      $layouts.withLock { dict in
-        if let snapshot {
-          dict[worktreeID.rawValue] = snapshot
-        } else {
-          dict.removeValue(forKey: worktreeID.rawValue)
-        }
-      }
-    }
-    terminalManager.loadLayoutSnapshot = { worktreeID in
-      @SharedReader(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
-      return layouts[worktreeID.rawValue]
-    }
     return terminalManager
+  }
+
+  /// Serves the persisted layouts to `TerminalsFeature`. A still-v1 file (a
+  /// deferred migration) is migrated in memory as a safety net; the writer
+  /// then drops flushes until the on-disk migration succeeds, so the v1 bytes
+  /// survive for the next launch.
+  @MainActor
+  private static func hydrateLayouts(into store: StoreOf<AppFeature>) {
+    @Dependency(\.defaultAppStorage) var defaults
+    guard case .file(let file) = LayoutsFile.readPersisted(from: defaults) else { return }
+    store.send(.terminals(.layoutsHydrated(file)))
   }
 
   @MainActor
   private static func makeStore(
     initialSettings: GlobalSettings,
+    runtime: GhosttyRuntime,
     terminalManager: WorktreeTerminalManager,
     worktreeInfoWatcher: WorktreeInfoWatcherManager
   ) -> StoreOf<AppFeature> {
@@ -237,6 +229,23 @@ struct SupacodeApp: App {
       AppFeature()
         .logActions()
     } withDependencies: { values in
+      values[LayoutContentFactory.self] = Self.makeContentFactory(
+        runtime: runtime,
+        terminalManager: terminalManager
+      )
+      values[ContentSessionKiller.self] = ContentSessionKiller(
+        kill: { contentID, worktreeID in
+          await terminalManager.killSession(for: contentID, worktreeID: worktreeID)
+        }
+      )
+      values[SplitZoomPolicy.self] = SplitZoomPolicy(
+        preservesZoomOnNavigation: { runtime.splitPreserveZoomOnNavigation() }
+      )
+      values[LayoutChangeObserver.self] = LayoutChangeObserver(
+        layoutChanged: { worktreeID in
+          terminalManager.handleLayoutChanged(for: worktreeID)
+        }
+      )
       values.terminalClient = TerminalClient(
         send: { command in
           terminalManager.handleCommand(command)
@@ -256,17 +265,23 @@ struct SupacodeApp: App {
         surfaceExistsInWorktree: { worktreeID, surfaceID in
           terminalManager.surfaceExistsInWorktree(worktreeID: worktreeID, surfaceID: surfaceID)
         },
+        idExistsAnywhere: { id in
+          terminalManager.idExistsAnywhere(id)
+        },
+        paneExists: { worktreeID, token in
+          terminalManager.paneExists(worktreeID: worktreeID, token: token)
+        },
+        canMoveTabToNewSplit: { worktreeID, tabID in
+          terminalManager.canMoveTabToNewSplit(worktreeID: worktreeID, tabID: tabID)
+        },
         tabID: { worktreeID, surfaceID in
           terminalManager.tabID(forWorktreeID: worktreeID, surfaceID: surfaceID)
         },
         selectedTabID: { worktreeID in
-          terminalManager.stateIfExists(for: worktreeID)?.tabManager.selectedTabId
+          terminalManager.hostIfExists(for: worktreeID)?.focusedTab?.id
         },
         selectedSurfaceID: { worktreeID in
-          guard let state = terminalManager.stateIfExists(for: worktreeID),
-            let tabID = state.tabManager.selectedTabId
-          else { return nil }
-          return state.activeSurfaceID(for: tabID)
+          terminalManager.hostIfExists(for: worktreeID)?.focusedContentID
         },
         latestUnreadNotification: {
           terminalManager.latestUnreadNotificationLocation()
@@ -317,6 +332,50 @@ struct SupacodeApp: App {
       // own clock and still override this.
       values.continuousClock = ContinuousClock()
     }
+  }
+
+  /// The live content factory: terminal surfaces built from a freshly
+  /// resolved plan, wired into the worktree's host and layout conduit.
+  @MainActor
+  private static func makeContentFactory(
+    runtime: GhosttyRuntime,
+    terminalManager: WorktreeTerminalManager
+  ) -> LayoutContentFactory {
+    TerminalContentBuilder(
+      runtime: runtime,
+      worktree: { [weak terminalManager] id in
+        terminalManager?.appStore?.withState { $0.repositories.worktree(for: id) }
+      },
+      socketPath: { [weak terminalManager] in
+        terminalManager?.socketServer?.socketPath
+      },
+      zmxExecutablePath: {
+        @Dependency(\.zmxClient) var zmxClient
+        return zmxClient.executableURL()?.path(percentEncoded: false)
+      },
+      sourceSurface: { id in
+        ContentRuntime.liveValue.content(for: id)?.renderer as? GhosttySurfaceView
+      },
+      wireSurface: { [weak terminalManager] view, request in
+        guard let terminalManager,
+          let worktree = terminalManager.appStore?.withState({
+            $0.repositories.worktree(for: request.worktreeID)
+          })
+        else { return }
+        let host = terminalManager.host(for: worktree)
+        LayoutSurfaceConduit(
+          host: host,
+          runtime: ContentRuntime.liveValue,
+          handleUnexpectedZmxClose: { [weak terminalManager] view in
+            terminalManager?.handleUnexpectedZmxClose(view, worktreeID: worktree.id)
+          }
+        ).wire(view, contentID: request.contentID)
+      },
+      environmentExtras: { [weak terminalManager] request in
+        terminalManager?.hostIfExists(for: request.worktreeID)?
+          .blockingScriptEnvironment(for: request.tabID) ?? [:]
+      }
+    ).factory()
   }
 
   @MainActor
@@ -393,6 +452,9 @@ struct SupacodeApp: App {
         }
       }
       AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: tabs ?? [])
+    case "panes":
+      handlePanesQuery(
+        params: params, repos: repos, clientFD: clientFD, terminalManager: terminalManager)
     case "surfaces":
       guard let worktreeID = params["worktreeID"], let tabID = params["tabID"] else {
         AgentHookSocketServer.sendCommandResponse(
@@ -415,6 +477,30 @@ struct SupacodeApp: App {
       AgentHookSocketServer.sendCommandResponse(
         clientFD: clientFD, ok: false, error: "Unknown resource: \(resource)")
     }
+  }
+
+  private static func handlePanesQuery(
+    params: [String: String],
+    repos: IdentifiedArrayOf<Repository>,
+    clientFD: Int32,
+    terminalManager: WorktreeTerminalManager
+  ) {
+    guard let worktreeID = params["worktreeID"] else {
+      AgentHookSocketServer.sendCommandResponse(
+        clientFD: clientFD, ok: false, error: "Missing worktreeID for pane list.")
+      return
+    }
+    let panes = terminalManager.listPanes(worktreeID: worktreeID)
+    if panes == nil {
+      let decoded = worktreeID.removingPercentEncoding ?? worktreeID
+      let worktreeExists = repos.contains { $0.worktrees.contains { $0.id.rawValue == decoded } }
+      guard worktreeExists else {
+        AgentHookSocketServer.sendCommandResponse(
+          clientFD: clientFD, ok: false, error: "Worktree not found: \(worktreeID)")
+        return
+      }
+    }
+    AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: panes ?? [])
   }
 
   private static func handleWorktreeStatusQuery(
@@ -539,6 +625,7 @@ struct SupacodeApp: App {
           .environment(ghosttyShortcuts)
           .environment(commandKeyObserver)
           .environment(openActionIcons)
+          .appChromeTextSize(store.settings.chromeTextSize)
       }
       .openSettingsOnSelection(store: store)
       .openDeeplinkReferenceOnRequest(store: store)
@@ -554,7 +641,7 @@ struct SupacodeApp: App {
         TerminalCommands(ghosttyShortcuts: ghosttyShortcuts)
         TerminalTabSelectionCommands(store: store)
       }
-      WindowCommands(ghosttyShortcuts: ghosttyShortcuts)
+      WindowCommands()
       CommandGroup(after: .textEditing) {
         Button("Go to Worktree") {
           guard NSApp.currentEvent?.isAutoRepeatKeyDown != true else { return }
@@ -601,6 +688,8 @@ struct SupacodeApp: App {
       SettingsView(store: store)
         .environment(ghosttyShortcuts)
         .environment(commandKeyObserver)
+        .appChromeTextSize(store.settings.chromeTextSize)
+        .appChromeBaseFont(store.settings.chromeTextSize)
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbarColorScheme(store.settings.appearanceMode.colorScheme, for: .windowToolbar)
         .movesSettingsWindowToActiveSpace()
@@ -611,6 +700,8 @@ struct SupacodeApp: App {
     .restorationBehavior(.disabled)
     Window("Deeplink Reference", id: WindowID.deeplinkReference) {
       DeeplinkReferenceView()
+        .appChromeTextSize(store.settings.chromeTextSize)
+        .appChromeBaseFont(store.settings.chromeTextSize)
     }
     .handlesExternalEvents(matching: [])
     .windowToolbarStyle(.unified)
@@ -618,6 +709,8 @@ struct SupacodeApp: App {
     .restorationBehavior(.disabled)
     Window("CLI Reference", id: WindowID.cliReference) {
       CLIReferenceView()
+        .appChromeTextSize(store.settings.chromeTextSize)
+        .appChromeBaseFont(store.settings.chromeTextSize)
     }
     .handlesExternalEvents(matching: [])
     .windowToolbarStyle(.unified)
@@ -625,6 +718,7 @@ struct SupacodeApp: App {
     .restorationBehavior(.disabled)
     MenuBarExtra(isInserted: menuBarInserted) {
       MenuBarNotificationsMenu(store: store)
+        .appChromeTextSize(store.settings.chromeTextSize)
     } label: {
       MenuBarNotificationsLabel(unreadCount: store.notificationIndicatorCount)
     }

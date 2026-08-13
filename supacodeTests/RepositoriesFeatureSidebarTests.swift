@@ -164,6 +164,7 @@ struct RepositoriesFeatureSidebarTests {
       mergeable: nil,
       mergeStateStatus: nil,
       updatedAt: nil,
+      mergedAt: nil,
       url: "https://example.com/pull/7",
       headRefName: "feature",
       baseRefName: "main",
@@ -257,16 +258,12 @@ struct RepositoriesFeatureSidebarTests {
       ],
       selectedTabIndex: 0
     )
-    let storage = InMemorySettingsFileStorage()
-    let payload = try JSONEncoder().encode([worktreeID.rawValue: layout])
-    try storage.save(payload, SupacodePaths.layoutsURL)
+    // Layouts read from UserDefaults now; a v1 dict blob migrates in-read.
+    let defaults = UserDefaults.inMemory
+    defaults.set(try JSONEncoder().encode([worktreeID.rawValue: layout]), forKey: LayoutsFile.userDefaultsKey)
 
     try withDependencies {
-      $0.settingsFileStorage = SettingsFileStorage(
-        load: { try storage.load($0) },
-        save: { try storage.save($0, $1) }
-      )
-      $0.defaultAppStorage = .inMemory
+      $0.defaultAppStorage = defaults
     } operation: {
       let worktree = Worktree(
         id: worktreeID,
@@ -314,16 +311,11 @@ struct RepositoriesFeatureSidebarTests {
       ],
       selectedTabIndex: 0
     )
-    let storage = InMemorySettingsFileStorage()
-    let payload = try JSONEncoder().encode([folderID.rawValue: layout])
-    try storage.save(payload, SupacodePaths.layoutsURL)
+    let defaults = UserDefaults.inMemory
+    defaults.set(try JSONEncoder().encode([folderID.rawValue: layout]), forKey: LayoutsFile.userDefaultsKey)
 
     try withDependencies {
-      $0.settingsFileStorage = SettingsFileStorage(
-        load: { try storage.load($0) },
-        save: { try storage.save($0, $1) }
-      )
-      $0.defaultAppStorage = .inMemory
+      $0.defaultAppStorage = defaults
     } operation: {
       let folderRepository = Repository(
         id: RepositoryID(rootURL.path(percentEncoded: false) + "/"),
@@ -370,15 +362,11 @@ struct RepositoriesFeatureSidebarTests {
       ],
       selectedTabIndex: 0
     )
-    let storage = InMemorySettingsFileStorage()
-    try storage.save(try JSONEncoder().encode([worktreeID.rawValue: staleLayout]), SupacodePaths.layoutsURL)
+    let defaults = UserDefaults.inMemory
+    defaults.set(try JSONEncoder().encode([worktreeID.rawValue: staleLayout]), forKey: LayoutsFile.userDefaultsKey)
 
     try withDependencies {
-      $0.settingsFileStorage = SettingsFileStorage(
-        load: { try storage.load($0) },
-        save: { try storage.save($0, $1) }
-      )
-      $0.defaultAppStorage = .inMemory
+      $0.defaultAppStorage = defaults
     } operation: {
       let worktree = Worktree(
         id: worktreeID,
@@ -429,15 +417,11 @@ struct RepositoriesFeatureSidebarTests {
       ],
       selectedTabIndex: 0
     )
-    let storage = InMemorySettingsFileStorage()
-    try storage.save(try JSONEncoder().encode([worktreeID.rawValue: staleLayout]), SupacodePaths.layoutsURL)
+    let defaults = UserDefaults.inMemory
+    defaults.set(try JSONEncoder().encode([worktreeID.rawValue: staleLayout]), forKey: LayoutsFile.userDefaultsKey)
 
     try withDependencies {
-      $0.settingsFileStorage = SettingsFileStorage(
-        load: { try storage.load($0) },
-        save: { try storage.save($0, $1) }
-      )
-      $0.defaultAppStorage = .inMemory
+      $0.defaultAppStorage = defaults
     } operation: {
       let worktree = Worktree(
         id: worktreeID,

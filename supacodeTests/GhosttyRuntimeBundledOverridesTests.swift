@@ -1,4 +1,5 @@
 import Foundation
+import SupacodeSettingsShared
 import SwiftUI
 import Testing
 
@@ -48,8 +49,37 @@ struct GhosttyRuntimeBundledOverridesTests {
     #expect(!GhosttyRuntime.bundledOverridesString.contains("shell-integration"))
   }
 
-  @Test func bundledOverridesKeepSurfaceCloseDetectionEnabled() {
-    #expect(GhosttyRuntime.bundledOverridesString.contains("confirm-close-surface = true"))
+  @Test func appOwnedOverridesKeepSurfaceCloseDetectionEnabled() {
+    // The close-safety predicate is app-owned, so it lives in the final tier,
+    // not the cosmetic defaults.
+    #expect(GhosttyRuntime.appOwnedOverridesString.contains("confirm-close-surface = true"))
+    #expect(!GhosttyRuntime.bundledOverridesString.contains("confirm-close-surface"))
+  }
+
+  @Test func configResolutionMergeLoadsBothTiers() {
+    let plan = GhosttyRuntime.ConfigResolution.plan(mode: .mergeAfterDefault, supacodeUserConfigExists: true)
+    #expect(plan.loadUserDefaultFiles)
+    #expect(plan.loadSupacodeUserConfig)
+  }
+
+  @Test func configResolutionMergeWithoutFileLoadsOnlyDefaults() {
+    let plan = GhosttyRuntime.ConfigResolution.plan(mode: .mergeAfterDefault, supacodeUserConfigExists: false)
+    #expect(plan.loadUserDefaultFiles)
+    #expect(!plan.loadSupacodeUserConfig)
+  }
+
+  @Test func configResolutionExclusiveSuppressesDefaultsWhenFilePresent() {
+    let plan = GhosttyRuntime.ConfigResolution.plan(mode: .exclusive, supacodeUserConfigExists: true)
+    #expect(!plan.loadUserDefaultFiles)
+    #expect(plan.loadSupacodeUserConfig)
+  }
+
+  // Exclusive with no Supacode file must still load the standard config: booting
+  // the terminal with no user config at all is worse than ignoring the mode.
+  @Test func configResolutionExclusiveFallsBackWhenFileMissing() {
+    let plan = GhosttyRuntime.ConfigResolution.plan(mode: .exclusive, supacodeUserConfigExists: false)
+    #expect(plan.loadUserDefaultFiles)
+    #expect(!plan.loadSupacodeUserConfig)
   }
 
   /// Each line in the heredoc is parsed as a Ghostty `key = value` directive

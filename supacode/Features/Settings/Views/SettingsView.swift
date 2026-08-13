@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import Kingfisher
 import SupacodeSettingsFeature
+import SupacodeSettingsShared
 import SwiftUI
 
 /// Sidebar label that shows a GitHub owner avatar next to the
@@ -35,6 +36,7 @@ private struct RepositoryLabel: View {
           .accessibilityHidden(true)
       }
     }
+    .appFont(.body)
     .task(id: rootURL) {
       guard isGitRepository else {
         avatarURL = nil
@@ -95,8 +97,10 @@ private struct SettingsRepositoryRow: View {
       )
       DisclosureGroup(isExpanded: isExpanded) {
         Label("General", systemImage: "gearshape")
+          .appFont(.body)
           .tag(SettingsSection.repository(repository.id))
         Label("Scripts", systemImage: "terminal")
+          .appFont(.body)
           .tag(SettingsSection.repositoryScripts(repository.id))
       } label: {
         RepositoryDisclosureLabel(
@@ -126,21 +130,34 @@ private struct SettingsSidebarView: View {
 
   var body: some View {
     List(selection: $settingsStore.selection.sending(\.setSelection)) {
+      // The `.sidebar` list style pins its own font, so each row opts into the
+      // chrome text size explicitly rather than inheriting the window's.
       Label("General", systemImage: "gearshape")
+        .appFont(.body)
         .tag(SettingsSection.general)
+      Label("Terminal", systemImage: "apple.terminal")
+        .appFont(.body)
+        .tag(SettingsSection.terminal)
       Label("Notifications", systemImage: "bell")
+        .appFont(.body)
         .tag(SettingsSection.notifications)
       Label("Worktrees", systemImage: "list.dash")
+        .appFont(.body)
         .tag(SettingsSection.worktree)
       Label("Developer", systemImage: "hammer")
+        .appFont(.body)
         .tag(SettingsSection.developer)
       Label("GitHub", image: "github-mark")
+        .appFont(.body)
         .tag(SettingsSection.github)
       Label("Shortcuts", systemImage: "keyboard")
+        .appFont(.body)
         .tag(SettingsSection.shortcuts)
       Label("Global Scripts", systemImage: "terminal")
+        .appFont(.body)
         .tag(SettingsSection.scripts)
       Label("Updates", systemImage: "arrow.down.circle")
+        .appFont(.body)
         .tag(SettingsSection.updates)
 
       let localRepositories = settingsStore.repositorySummaries.filter { !$0.isRemote }
@@ -181,11 +198,18 @@ private struct SettingsDetailView: View {
   let selectedRepositorySummary: SettingsRepositorySummary?
   @Bindable var settingsStore: StoreOf<SettingsFeature>
   let updatesStore: StoreOf<UpdatesFeature>
+  @Environment(GhosttyShortcutManager.self) private var ghosttyShortcuts: GhosttyShortcutManager?
 
   var body: some View {
     switch selection {
     case .general:
       AppearanceSettingsView(store: settingsStore)
+    case .terminal:
+      TerminalSettingsView(
+        store: settingsStore,
+        standardConfigPath: GhosttyRuntime.standardConfigFilePath,
+        reloadTerminalConfig: { ghosttyShortcuts?.reloadConfig() }
+      )
     case .notifications:
       NotificationsSettingsView(store: settingsStore)
     case .worktree:

@@ -108,10 +108,10 @@ struct KiroSettingsInstallerTests {
     }
   }
 
-  @Test func installStateReturnsNotInstalledBeforeInstall() {
+  @Test func installStateReturnsNotInstalledBeforeInstall() throws {
     let homeURL = makeTempHomeURL()
     let installer = makeInstaller(homeURL: homeURL)
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
   @Test func installStateReturnsInstalledAfterInstall() async throws {
@@ -120,7 +120,7 @@ struct KiroSettingsInstallerTests {
 
     let installer = makeInstaller(homeURL: homeURL)
     try await installer.installAllHooks()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
   }
 
   @Test func installStateReturnsNotInstalledAfterUninstall() async throws {
@@ -130,7 +130,7 @@ struct KiroSettingsInstallerTests {
     let installer = makeInstaller(homeURL: homeURL)
     try await installer.installAllHooks()
     try installer.uninstallAllHooks()
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
   @Test func settingsURLPointsToExpectedPath() {
@@ -141,7 +141,7 @@ struct KiroSettingsInstallerTests {
 
   // MARK: - Version gating.
 
-  @Test func installFailsWhenKiroBinaryMissing() async {
+  @Test func installFailsWhenKiroBinaryMissing() async throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
@@ -153,7 +153,7 @@ struct KiroSettingsInstallerTests {
     #expect(fileManager.fileExists(atPath: settingsURL.path) == false)
   }
 
-  @Test func installFailsWhenKiroCommandThrows() async {
+  @Test func installFailsWhenKiroCommandThrows() async throws {
     struct Boom: Error {}
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
@@ -164,7 +164,7 @@ struct KiroSettingsInstallerTests {
     }
   }
 
-  @Test func installPreservesKiroVersionCheckTimeout() async {
+  @Test func installPreservesKiroVersionCheckTimeout() async throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
@@ -176,7 +176,7 @@ struct KiroSettingsInstallerTests {
     }
   }
 
-  @Test func installFailsOnUnsupportedKiroVersion() async {
+  @Test func installFailsOnUnsupportedKiroVersion() async throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
@@ -186,7 +186,7 @@ struct KiroSettingsInstallerTests {
     }
   }
 
-  @Test func installFailsWhenVersionOutputHasNoVersionNumber() async {
+  @Test func installFailsWhenVersionOutputHasNoVersionNumber() async throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
@@ -198,7 +198,7 @@ struct KiroSettingsInstallerTests {
     }
   }
 
-  @Test func installFailsOnNonZeroNonMissingStatus() async {
+  @Test func installFailsOnNonZeroNonMissingStatus() async throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 
@@ -214,7 +214,7 @@ struct KiroSettingsInstallerTests {
     }
   }
 
-  @Test func installFailsForDoubleDigitMajorVersion() async {
+  @Test func installFailsForDoubleDigitMajorVersion() async throws {
     let homeURL = makeTempHomeURL()
     defer { try? fileManager.removeItem(at: homeURL) }
 

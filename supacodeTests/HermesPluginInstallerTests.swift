@@ -31,9 +31,9 @@ struct HermesPluginInstallerTests {
     defer { try? fileManager.removeItem(at: homeURL) }
     let installer = HermesPluginInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
 
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
     try installer.install()
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
   }
 
   @Test func installStateOutdatedWhenOwnedModuleDiffers() throws {
@@ -45,7 +45,7 @@ struct HermesPluginInstallerTests {
     try "# \(HermesPluginContent.ownershipMarker)\n# old shape"
       .write(to: installer.moduleFileURL, atomically: true, encoding: .utf8)
 
-    #expect(installer.installState() == .outdated)
+    #expect(try installer.installState() == .outdated)
   }
 
   @Test func installStateNotInstalledForUnownedPluginWithSameName() throws {
@@ -56,7 +56,7 @@ struct HermesPluginInstallerTests {
     try "name: supacode-presence\n".write(to: installer.manifestFileURL, atomically: true, encoding: .utf8)
     try "def register(ctx):\n    pass\n".write(to: installer.moduleFileURL, atomically: true, encoding: .utf8)
 
-    #expect(installer.installState() == .notInstalled)
+    #expect(try installer.installState() == .notInstalled)
   }
 
   @Test func uninstallRemovesOwnedPluginDirectory() throws {
@@ -154,11 +154,11 @@ struct HermesPluginInstallerTests {
     try HermesPluginContent.manifest().write(to: installer.manifestFileURL, atomically: true, encoding: .utf8)
     try "# \(HermesPluginContent.ownershipMarker)\n# old shape"
       .write(to: installer.moduleFileURL, atomically: true, encoding: .utf8)
-    #expect(installer.installState() == .outdated)
+    #expect(try installer.installState() == .outdated)
 
     try installer.install()
 
-    #expect(installer.installState() == .installed)
+    #expect(try installer.installState() == .installed)
     #expect(try String(contentsOf: installer.moduleFileURL, encoding: .utf8) == HermesPluginContent.module())
   }
 
@@ -183,5 +183,26 @@ struct HermesPluginInstallerTests {
     try installer.uninstall()
 
     #expect(!fileManager.fileExists(atPath: installer.pluginDirectoryURL.path))
+  }
+
+  @Test func unreadableModuleIsNeitherAbsentNorClobbered() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let installer = HermesPluginInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    try installer.install()
+    try fileManager.setAttributes(
+      [.posixPermissions: 0o000], ofItemAtPath: installer.moduleFileURL.path)
+    defer {
+      try? fileManager.setAttributes(
+        [.posixPermissions: 0o644], ofItemAtPath: installer.moduleFileURL.path)
+    }
+
+    // An unreadable module is not an absent one, must not be overwritten
+    // unchecked, and must not report a removal that never happened.
+    #expect(throws: AgentFileUnreadableError.self) { try installer.installState() }
+    #expect(throws: AgentFileUnreadableError.self) { try installer.install() }
+    #expect(throws: AgentFileUnreadableError.self) { try installer.uninstall() }
+    #expect(fileManager.fileExists(atPath: installer.moduleFileURL.path))
   }
 }

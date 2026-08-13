@@ -15,7 +15,7 @@ nonisolated struct ClaudeSettingsInstaller {
   /// Install state for the unified hook map. The file installer's prune
   /// step covers every event the integration writes, eliminating stale
   /// duplicates left by older Supacode versions.
-  func installState() -> ComponentInstallState {
+  func installState() throws -> ComponentInstallState {
     let groups: [String: [JSONValue]]
     do {
       groups = try ClaudeHookSettings.hooksByEvent()
@@ -23,7 +23,7 @@ nonisolated struct ClaudeSettingsInstaller {
       Self.reportInvalidHookConfiguration(error)
       return .notInstalled
     }
-    return fileInstaller.installState(settingsURL: settingsURL, hookGroupsByEvent: groups)
+    return try fileInstaller.installState(settingsURL: settingsURL, hookGroupsByEvent: groups)
   }
 
   func installAllHooks() throws {

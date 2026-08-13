@@ -41,7 +41,8 @@ nonisolated final class SettingsTestStorage: @unchecked Sendable {
     defer { lock.unlock() }
     reads += 1
     guard let data = dataByURL[url] else {
-      throw SettingsTestStorageError.missing
+      // Mirror the real storages so "absent" is distinguishable from a read error.
+      throw CocoaError(.fileReadNoSuchFile)
     }
     return data
   }
@@ -52,8 +53,4 @@ nonisolated final class SettingsTestStorage: @unchecked Sendable {
     writes += 1
     dataByURL[url] = data
   }
-}
-
-enum SettingsTestStorageError: Error {
-  case missing
 }

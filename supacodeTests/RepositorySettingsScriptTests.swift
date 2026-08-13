@@ -54,6 +54,28 @@ struct RepositorySettingsCodableTests {
     #expect(settings.scripts.first?.command == "npm test")
   }
 
+  @Test func openFileScriptDefaultsToEmptyWhenMissing() throws {
+    let json = """
+      {
+        "setupScript": "",
+        "archiveScript": "",
+        "deleteScript": "",
+        "runScript": "",
+        "openActionID": "automatic"
+      }
+      """
+    let settings = try JSONDecoder().decode(RepositorySettings.self, from: Data(json.utf8))
+    #expect(settings.openFileScript.isEmpty)
+  }
+
+  @Test func openFileScriptRoundTrips() throws {
+    var settings = RepositorySettings.default
+    settings.openFileScript = "nvim \"$SUPACODE_FILE_PATH\""
+    let data = try JSONEncoder().encode(settings)
+    let decoded = try JSONDecoder().decode(RepositorySettings.self, from: data)
+    #expect(decoded.openFileScript == "nvim \"$SUPACODE_FILE_PATH\"")
+  }
+
   @Test func encodeRoundTripPopulatesRunScript() throws {
     // Encoding settings with scripts should derive `runScript` from
     // the first `.run`-kind script's command.
@@ -395,4 +417,23 @@ struct RepositorySettingsScriptTests {
     #expect(store.state.settings.scripts.count == 1)
   }
 
+}
+
+struct GlobalSettingsOpenFileScriptTests {
+  @Test func openFileScriptDefaultsToEmptyWhenMissing() throws {
+    let data = try JSONEncoder().encode(GlobalSettings.default)
+    var object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    object.removeValue(forKey: "openFileScript")
+    let stripped = try JSONSerialization.data(withJSONObject: object)
+    let decoded = try JSONDecoder().decode(GlobalSettings.self, from: stripped)
+    #expect(decoded.openFileScript.isEmpty)
+  }
+
+  @Test func openFileScriptRoundTrips() throws {
+    var settings = GlobalSettings.default
+    settings.openFileScript = "code \"$SUPACODE_FILE_PATH\""
+    let data = try JSONEncoder().encode(settings)
+    let decoded = try JSONDecoder().decode(GlobalSettings.self, from: data)
+    #expect(decoded.openFileScript == "code \"$SUPACODE_FILE_PATH\"")
+  }
 }

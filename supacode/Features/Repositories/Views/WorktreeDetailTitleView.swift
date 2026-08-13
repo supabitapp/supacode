@@ -126,7 +126,7 @@ struct WorktreeToolbarTitleView: View {
         case .folder(let name, let tint, let hostInfo):
           HStack(spacing: 4) {
             Text(name)
-              .font(.callout.weight(.semibold))
+              .appFont(.callout, weight: .semibold)
               .foregroundStyle(tint?.color ?? .primary)
               .lineLimit(1)
               .truncationMode(.middle)
@@ -140,7 +140,7 @@ struct WorktreeToolbarTitleView: View {
           }
         case .git(let payload):
           Text(payload.displayTitle)
-            .font(.callout.weight(.semibold))
+            .appFont(.callout, weight: .semibold)
             .foregroundStyle(payload.worktreeTint?.color ?? .primary)
             .lineLimit(1)
             .truncationMode(.middle)
@@ -164,7 +164,7 @@ struct WorktreeToolbarTitleView: View {
               trail
             }
           }
-          .font(.footnote)
+          .appFont(.footnote)
           .lineLimit(1)
         }
       }

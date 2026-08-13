@@ -46,6 +46,14 @@ public struct RepositoryScriptsSettingsView: View {
           iconColor: .red,
           footerExample: "docker compose down"
         )
+        LifecycleScriptSection(
+          text: $store.settings.openFileScript,
+          title: "Open File Script",
+          subtitle: "Opens a double-clicked file. Empty inherits the global script, then the system app.",
+          icon: "arrow.up.forward.app",
+          iconColor: .teal,
+          footerExample: "nvim \"$SUPACODE_FILE_PATH\""
+        )
 
         // User-defined scripts, each in its own section.
         ForEach($store.settings.scripts) { $script in
@@ -66,7 +74,7 @@ public struct RepositoryScriptsSettingsView: View {
           } header: {
             Label {
               Text("\(script.displayName) Script")
-                .font(.body)
+                .appFont(.body)
                 .bold()
             } icon: {
               Image(systemName: script.resolvedSystemImage).foregroundStyle(script.resolvedTintColor.color)
@@ -118,8 +126,8 @@ public struct RepositoryScriptsSettingsView: View {
   }
 }
 
-/// Reusable section for lifecycle scripts (setup, archive, delete).
-private struct LifecycleScriptSection: View {
+/// Reusable section for lifecycle / hook scripts (setup, archive, delete, open-file).
+struct LifecycleScriptSection: View {
   @Binding var text: String
   let title: String
   let subtitle: String
@@ -134,11 +142,11 @@ private struct LifecycleScriptSection: View {
       Label {
         VStack(alignment: .leading, spacing: 0) {
           Text(title)
-            .font(.body)
+            .appFont(.body)
             .bold()
             .lineLimit(1)
           Text(subtitle)
-            .font(.footnote)
+            .appFont(.footnote)
             .foregroundStyle(.secondary)
             .lineLimit(1)
         }

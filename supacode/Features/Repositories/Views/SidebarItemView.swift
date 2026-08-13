@@ -292,7 +292,7 @@ private struct TitleView: View, Equatable {
     let accentStyle = accent.shapeStyle(emphasized: isEmphasized)
     VStack(alignment: .leading, spacing: 0) {
       let titleText = Text(name)
-        .font(.body)
+        .appFont(.body)
         .lineLimit(1)
       if let customTint, !isEmphasized {
         titleText.foregroundStyle(customTint.color).shimmer(isActive: isBusy)
@@ -304,7 +304,7 @@ private struct TitleView: View, Equatable {
         EmptyView()
       case .plain(let text):
         Text(text)
-          .font(.footnote)
+          .appFont(.footnote)
           .foregroundStyle(accentStyle)
           .lineLimit(1)
       case .highlight(let repo, let repoColor, let trail, let hostInfo):
@@ -336,7 +336,7 @@ private struct TitleView: View, Equatable {
               .lineLimit(1)
           }
         }
-        .font(.footnote)
+        .appFont(.footnote)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(trail.map { "\(repo), \($0)" } ?? repo)
       }
@@ -529,7 +529,7 @@ private struct TrailingView: View {
         if store.kind == .folder, let host = store.host {
           Image(systemName: "wifi")
             .imageScale(.small)
-            .font(.subheadline)
+            .appFont(.subheadline)
             .foregroundStyle(.secondary)
             .help(host.displayAuthority)
             .accessibilityLabel("Remote host \(host.displayAuthority)")
@@ -564,11 +564,11 @@ private struct TrailingView: View {
       .allowsHitTesting(!hasHint)
 
       Text(shortcutHint ?? "")
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .opacity(hasHint ? 1 : 0)
     }
-    .animation(.easeInOut(duration: TerminalTabBarMetrics.fadeAnimationDuration), value: hasHint)
+    .animation(.easeInOut(duration: 0.15), value: hasHint)
   }
 }
 
@@ -580,7 +580,7 @@ private struct SidebarDormantIndicator: View, Equatable {
     // descending tail skews the optical center; compensate to match the wifi glyph.
     Image(systemName: "zzz")
       .imageScale(.small)
-      .font(.subheadline.weight(.semibold))
+      .appFont(.subheadline, weight: .semibold)
       .offset(y: 0.5)
       .foregroundStyle(.secondary)
       .help("Hibernated to save resources. Select to reconnect.")
@@ -593,7 +593,7 @@ private struct PullRequestBadgeContent: View, Equatable {
 
   var body: some View {
     Text(text)
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .transition(.blurReplace)
   }
@@ -625,7 +625,7 @@ private struct DiffStatsContent: View, Equatable {
       Text("-\(removedLines)")
         .foregroundStyle(isEmphasized ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
     }
-    .font(.caption)
+    .appFont(.caption)
     .monospacedDigit()
     .transition(.blurReplace)
   }

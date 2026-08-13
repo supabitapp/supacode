@@ -1,5 +1,7 @@
 import Dependencies
 import Foundation
+import IdentifiedCollections
+import Sharing
 import SupacodeSettingsShared
 import Testing
 
@@ -7,132 +9,130 @@ import Testing
 
 @MainActor
 struct LayoutsIncrementalWriterTests {
-  private func snapshot(dir: String) -> TerminalLayoutSnapshot {
-    TerminalLayoutSnapshot(
-      tabs: [
-        TerminalLayoutSnapshot.TabSnapshot(
-          id: nil,
-          title: "Terminal 1",
-          customTitle: nil,
-          icon: nil,
-          tintColor: nil,
-          layout: .leaf(
-            TerminalLayoutSnapshot.SurfaceSnapshot(id: nil, workingDirectory: dir)
-          ),
-          focusedLeafIndex: 0
-        )
-      ],
-      selectedTabIndex: 0
-    )
+  private func makeDefaults() -> UserDefaults {
+    // A fresh, isolated in-memory store per test so writes never touch disk.
+    .inMemory
   }
 
-  private func readDict(_ storage: SettingsFileStorage, _ url: URL) -> [String: TerminalLayoutSnapshot] {
-    guard let data = try? storage.load(url) else { return [:] }
-    return (try? JSONDecoder().decode([String: TerminalLayoutSnapshot].self, from: data)) ?? [:]
+  private func makeWriter(_ defaults: UserDefaults) -> LayoutsIncrementalWriter {
+    LayoutsIncrementalWriter(store: LayoutsUserDefaultsStore(defaults: defaults))
   }
 
-  @Test func separateFlushesBothSurvive() async {
-    let storage = SettingsFileStorage.inMemory()
-    let url = SupacodePaths.layoutsURL
-    let writer = LayoutsIncrementalWriter(storage: storage, url: url)
-
-    await writer.flush(["w1": .snapshot(snapshot(dir: "/w1"))])
-    await writer.flush(["w2": .snapshot(snapshot(dir: "/w2"))])
-
-    let dict = readDict(storage, url)
-    #expect(Set(dict.keys) == ["w1", "w2"])
+  private func readFile(_ defaults: UserDefaults) -> LayoutsFile? {
+    guard let data = defaults.data(forKey: LayoutsFile.userDefaultsKey) else { return nil }
+    return try? JSONDecoder().decode(LayoutsFile.self, from: data)
   }
 
-  @Test func deleteRemovesOnlyTargetKey() async {
-    let storage = SettingsFileStorage.inMemory()
-    let url = SupacodePaths.layoutsURL
-    let writer = LayoutsIncrementalWriter(storage: storage, url: url)
+  @Test func identicalReflushKeepsASingleEntry() async {
+    let defaults = makeDefaults()
+    let writer = makeWriter(defaults)
 
-    await writer.flush([
-      "w1": .snapshot(snapshot(dir: "/w1")),
-      "w2": .snapshot(snapshot(dir: "/w2")),
-    ])
-    await writer.flush(["w1": .delete])
+    let entry = record("/w1")
+    await writer.flush(records: ["w1": .record(entry)])
+    // Re-splicing the same record changes nothing; the writer skips the write.
+    await writer.flush(records: ["w1": .record(entry)])
 
-    let dict = readDict(storage, url)
-    #expect(Set(dict.keys) == ["w2"])
+    #expect(Set(readFile(defaults)?.worktrees.keys.map { $0 } ?? []) == ["w1"])
   }
 
-  @Test func snapshotOverwritesSameKeyButPreservesOthers() async {
-    let storage = SettingsFileStorage.inMemory()
-    let url = SupacodePaths.layoutsURL
-    let writer = LayoutsIncrementalWriter(storage: storage, url: url)
+  @Test func corruptBlobIsStashedAsideThenRecovers() async {
+    let defaults = makeDefaults()
+    // A wholly-undecodable blob (genuine corruption, or a newer-schema downgrade).
+    let garbage = Data("not json".utf8)
+    defaults.set(garbage, forKey: LayoutsFile.userDefaultsKey)
+    let writer = makeWriter(defaults)
 
-    await writer.flush([
-      "w1": .snapshot(snapshot(dir: "/old")),
-      "w2": .snapshot(snapshot(dir: "/w2")),
-    ])
-    await writer.flush(["w1": .snapshot(snapshot(dir: "/new"))])
+    await writer.flush(records: ["w1": .record(record("/w1"))])
 
-    let dict = readDict(storage, url)
-    #expect(dict["w2"] != nil)
-    let leaf = dict["w1"]?.tabs.first?.layout
-    if case .leaf(let surface) = leaf {
-      #expect(surface.workingDirectory == "/new")
-    } else {
-      Issue.record("Expected a leaf layout for w1")
-    }
-  }
-
-  @Test func identicalReflushSkipsTheWrite() async {
-    let inner = SettingsFileStorage.inMemory()
-    let url = SupacodePaths.layoutsURL
-    let saveCount = LockIsolated(0)
-    let storage = SettingsFileStorage(
-      load: { try inner.load($0) },
-      save: { data, target in
-        if target == url { saveCount.withValue { $0 += 1 } }
-        try inner.save(data, target)
-      }
-    )
-    let writer = LayoutsIncrementalWriter(storage: storage, url: url)
-
-    await writer.flush(["w1": .snapshot(snapshot(dir: "/w1"))])
-    // Re-splicing the same snapshot is a no-op; the second flush must not write.
-    await writer.flush(["w1": .snapshot(snapshot(dir: "/w1"))])
-
-    #expect(saveCount.value == 1)
-    #expect(Set(readDict(storage, url).keys) == ["w1"])
-  }
-
-  @Test func corruptFileIsRotatedAsideAndPersistenceRecovers() async throws {
-    let dir = URL(fileURLWithPath: NSTemporaryDirectory())
-      .appending(path: "LayoutsWriterCorrupt-\(UUID().uuidString)", directoryHint: .isDirectory)
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let url = dir.appending(path: "layouts.json", directoryHint: .notDirectory)
-    // Seed garbage so the decode fails on the next merge read.
-    try Data("not json".utf8).write(to: url)
-
-    let storage = SettingsFileStorage(
-      load: { try Data(contentsOf: $0) },
-      save: { data, target in try data.write(to: target, options: .atomic) }
-    )
-    let writer = LayoutsIncrementalWriter(storage: storage, url: url)
-    await writer.flush(["w1": .snapshot(snapshot(dir: "/w1"))])
-
-    // Self-healed: the new key persisted instead of the flush aborting forever.
-    #expect(readDict(storage, url)["w1"] != nil)
-    // The corrupt bytes were preserved under a rotated name, not overwritten.
-    let rotated = try FileManager.default
-      .contentsOfDirectory(atPath: dir.path(percentEncoded: false))
-      .filter { $0.hasPrefix("layouts.json.corrupt-") }
-    #expect(rotated.count == 1)
+    // The blob is preserved under a sibling key, and the live store recovers to a
+    // fresh value rather than wedging forever.
+    #expect(defaults.data(forKey: LayoutsFile.userDefaultsKey + ".corrupt") == garbage)
+    #expect(readFile(defaults)?.worktrees["w1"] != nil)
   }
 
   @Test func emptyChangesIsNoOp() async {
-    let storage = SettingsFileStorage.inMemory()
-    let url = SupacodePaths.layoutsURL
-    let writer = LayoutsIncrementalWriter(storage: storage, url: url)
+    let defaults = makeDefaults()
+    let writer = makeWriter(defaults)
 
-    await writer.flush(["w1": .snapshot(snapshot(dir: "/w1"))])
-    await writer.flush([:])
+    await writer.flush(records: ["w1": .record(record("/w1"))])
+    await writer.flush(records: [:])
 
-    #expect(Set(readDict(storage, url).keys) == ["w1"])
+    #expect(Set(readFile(defaults)?.worktrees.keys.map { $0 } ?? []) == ["w1"])
+  }
+
+  // MARK: - v2 record flushes.
+
+  private func record(_ marker: String) -> LayoutRecord {
+    let paneID = PaneID()
+    let tabID = TabID()
+    return LayoutRecord(
+      layout: PaneLayout(
+        tree: SplitTree(view: paneID),
+        panes: [
+          Pane(
+            id: paneID,
+            tabs: [
+              TabItem(
+                id: tabID,
+                title: marker,
+                content: ContentSnapshot(
+                  id: ContentID(),
+                  state: .terminal(TerminalContentState(workingDirectory: marker))
+                )
+              )
+            ],
+            selectedTabID: tabID
+          )
+        ],
+        focusedPaneID: paneID
+      )
+    )
+  }
+
+  @Test func recordFlushesStampAndMergeByWorktree() async {
+    let defaults = makeDefaults()
+    let writer = makeWriter(defaults)
+
+    await writer.flush(records: ["w1": .record(record("/w1"))])
+    await writer.flush(records: ["w2": .record(record("/w2"))])
+
+    let file = readFile(defaults)
+    #expect(file?.schemaVersion == LayoutsFile.currentSchemaVersion)
+    #expect(Set(file?.worktrees.keys.map { $0 } ?? []) == ["w1", "w2"])
+  }
+
+  @Test func recordDeleteRemovesOnlyTargetKey() async {
+    let defaults = makeDefaults()
+    let writer = makeWriter(defaults)
+
+    await writer.flush(records: ["w1": .record(record("/w1")), "w2": .record(record("/w2"))])
+    await writer.flush(records: ["w1": .delete])
+
+    #expect(Set(readFile(defaults)?.worktrees.keys.map { $0 } ?? []) == ["w2"])
+  }
+
+  @Test func recordFlushPreservesTheWriteOnceOrigin() async {
+    let defaults = makeDefaults()
+    let writer = makeWriter(defaults)
+    let origin = TerminalLayoutSnapshot(tabs: [], selectedTabIndex: 0)
+
+    // First write lands the migration origin; a later live re-save carries none.
+    await writer.flush(records: ["w1": .record(LayoutRecord(layout: record("/w1").layout, origin: origin))])
+    await writer.flush(records: ["w1": .record(record("/w1b"))])
+
+    #expect(readFile(defaults)?.worktrees["w1"]?.origin != nil)
+  }
+
+  @Test func recordFlushSkipsNewerSchema() async {
+    let defaults = makeDefaults()
+    let newer = LayoutsFile(schemaVersion: LayoutsFile.currentSchemaVersion + 1, worktrees: [:])
+    if let data = try? JSONEncoder().encode(newer) {
+      defaults.set(data, forKey: LayoutsFile.userDefaultsKey)
+    }
+    let writer = makeWriter(defaults)
+
+    await writer.flush(records: ["w1": .record(record("/w1"))])
+
+    #expect(readFile(defaults)?.worktrees.isEmpty == true)
   }
 }

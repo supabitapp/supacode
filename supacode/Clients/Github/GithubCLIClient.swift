@@ -838,6 +838,7 @@ nonisolated private func makeBatchPullRequestsQuery(
           mergeStateStatus
           url
           updatedAt
+          mergedAt
           headRefName
           baseRefName
           commits {

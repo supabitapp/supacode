@@ -8,6 +8,7 @@ struct SupacodeCLI: ParsableCommand {
     subcommands: [
       OpenCommand.self,
       WorktreeCommand.self,
+      PaneCommand.self,
       TabCommand.self,
       SurfaceCommand.self,
       RepoCommand.self,

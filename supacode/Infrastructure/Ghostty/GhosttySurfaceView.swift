@@ -86,9 +86,17 @@ final class GhosttySurfaceView: NSView, Identifiable {
   /// sequences and must not have Ghostty's integration injected.
   private let disableShellIntegration: Bool
   private let fontSize: Float32
+  // Display scale carried from creation-time geometry, authoritative until the
+  // view joins a window.
+  private let initialScale: CGFloat
+  // The scale last pushed to the terminal core; the frozen grid must record
+  // this one, since the applied backing size was measured under it.
+  private var appliedContentScale: CGFloat
   private let context: ghostty_surface_context_e
   private var trackingArea: NSTrackingArea?
-  private var lastBackingSize: CGSize = .zero
+  // Only ever holds sizes actually pushed to ghostty_surface_set_size; a rejected
+  // degenerate size must be re-evaluated on the next layout pass.
+  private var lastAppliedBackingSize: CGSize = .zero
   private var lastPerformKeyEvent: TimeInterval?
   private var currentCursor: NSCursor = .iBeam
   private var focused = false
@@ -220,12 +228,15 @@ final class GhosttySurfaceView: NSView, Identifiable {
     commandWrapper: [String] = [],
     disableShellIntegration: Bool = false,
     fontSize: Float32? = nil,
+    initialGeometry: ContentGeometry,
     context: ghostty_surface_context_e
   ) {
     self.id = id
     self.runtime = runtime
     self.bridge = GhosttySurfaceBridge()
     self.fontSize = fontSize ?? 0
+    self.initialScale = initialGeometry.scale
+    self.appliedContentScale = initialGeometry.scale
     self.context = context
     self.environmentVariables = environmentVariables
     self.commandWrapper = commandWrapper
@@ -248,7 +259,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
     } else {
       initialInputCString = nil
     }
-    super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    // Off-window backing conversion is 1x, so a point frame equal to the intended
+    // pixel size makes ghostty_surface_new spawn the PTY at an honest grid (#780).
+    super.init(frame: NSRect(origin: .zero, size: initialGeometry.pixelSize))
     wantsLayer = true
     bridge.surfaceView = self
     createSurface()
@@ -422,10 +435,12 @@ final class GhosttySurfaceView: NSView, Identifiable {
         // Only reclaim from the no-owner or sibling-terminal case. Stealing
         // from a non-terminal responder (command palette, inline rename text
         // field) mid-rebuild would yank focus from whatever the user is
-        // actively typing into.
+        // actively typing into. The window itself is the no-owner case: AppKit
+        // parks firstResponder there when the previous owner leaves the
+        // hierarchy, e.g. after a split collapse.
         let responder = window.firstResponder
         guard responder !== self else { return }
-        if responder == nil || responder is GhosttySurfaceView {
+        if responder == nil || responder === window || responder is GhosttySurfaceView {
           _ = window.makeFirstResponder(self)
         }
       }
@@ -943,22 +958,48 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   func updateSurfaceSize(contentSize: CGSize? = nil) {
     guard let surface else { return }
+    // Off-window backing conversion is 1x; re-measuring a detached view would
+    // halve the applied size and poison the hibernation freeze.
+    guard window != nil || !hasBeenInWindow else { return }
     let backingSize = convertToBacking(contentSize ?? bounds.size)
-    if backingSize == lastBackingSize {
-      return
-    }
-    lastBackingSize = backingSize
-    let width = UInt32(max(1, Int(backingSize.width.rounded(.down))))
-    let height = UInt32(max(1, Int(backingSize.height.rounded(.down))))
     let currentSize = ghostty_surface_size(surface)
-    guard currentSize.cell_width_px > 0, currentSize.cell_height_px > 0 else {
-      ghostty_surface_set_size(surface, width, height)
-      return
+    let decision = ResizePolicy.decision(
+      backingSize: backingSize,
+      lastAppliedBackingSize: lastAppliedBackingSize,
+      cellWidth: Int(currentSize.cell_width_px),
+      cellHeight: Int(currentSize.cell_height_px)
+    )
+    guard decision == .apply else { return }
+    lastAppliedBackingSize = backingSize
+    ghostty_surface_set_size(
+      surface,
+      UInt32(max(1, Int(backingSize.width.rounded(.down)))),
+      UInt32(max(1, Int(backingSize.height.rounded(.down))))
+    )
+  }
+
+  enum ResizePolicy {
+    enum Decision: Equatable {
+      case skipUnchanged
+      case apply
+      case rejectDegenerate
     }
-    let columns = Int(width) / Int(currentSize.cell_width_px)
-    let rows = Int(height) / Int(currentSize.cell_height_px)
-    guard columns >= 5, rows >= 2 else { return }
-    ghostty_surface_set_size(surface, width, height)
+
+    // Sizes too small for a usable grid are rejected, not remembered; unknown cell
+    // metrics (pre-first-render) always apply so Ghostty can derive them.
+    static func decision(
+      backingSize: CGSize,
+      lastAppliedBackingSize: CGSize,
+      cellWidth: Int,
+      cellHeight: Int
+    ) -> Decision {
+      guard backingSize != lastAppliedBackingSize else { return .skipUnchanged }
+      guard cellWidth > 0, cellHeight > 0 else { return .apply }
+      let columns = max(1, Int(backingSize.width.rounded(.down))) / cellWidth
+      let rows = max(1, Int(backingSize.height.rounded(.down))) / cellHeight
+      guard columns >= 5, rows >= 2 else { return .rejectDegenerate }
+      return .apply
+    }
   }
 
   func updateCellSize(width: UInt32, height: UInt32) {
@@ -973,6 +1014,22 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   func currentCellSize() -> CGSize {
     cellSize
+  }
+
+  /// The grid this surface last actually rendered at, for hibernation freeze;
+  /// nil once the core is gone or while the size is still unknown.
+  func captureFrozenGrid() -> FrozenGrid? {
+    guard let surface else { return nil }
+    let size = ghostty_surface_size(surface)
+    // The stored fontSize is creation-time only; zoom lives in the core.
+    let liveFontSize = ghostty_surface_font_size(surface)
+    return FrozenGrid.from(
+      backingSize: lastAppliedBackingSize,
+      columns: Int(size.columns),
+      rows: Int(size.rows),
+      scale: appliedContentScale,
+      fontSize: liveFontSize == 0 ? nil : liveFontSize
+    )
   }
 
   func shouldShowScrollbar() -> Bool {
@@ -1063,12 +1120,21 @@ final class GhosttySurfaceView: NSView, Identifiable {
     bridge.surface = surface
     lastOcclusion = nil
     lastSurfaceFocus = nil
+    // A new Ghostty surface defaults to focused (solid cursor), but `focused`
+    // starts false, so `focusDidChange(false)` would dedup and never clear it,
+    // leaving every restored pane's cursor solid. Start unfocused to agree with
+    // `focused`; the focus flow sets the truly focused pane solid.
+    setSurfaceFocus(false)
     updateSurfaceSize()
   }
 
   private func updateContentScale() {
     guard let surface else { return }
+    // A detached-but-previously-mounted view has no better scale than the one
+    // already applied; re-pushing the creation scale would churn the renderer.
+    guard window != nil || !hasBeenInWindow else { return }
     let scale = backingScaleFactor()
+    appliedContentScale = scale
     ghostty_surface_set_content_scale(surface, scale, scale)
   }
 
@@ -1076,10 +1142,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     if let window {
       return window.backingScaleFactor
     }
-    if let screen = NSScreen.main {
-      return screen.backingScaleFactor
-    }
-    return 2.0
+    return initialScale
   }
 
   func setOcclusion(_ visible: Bool) {
@@ -2032,7 +2095,7 @@ extension GhosttySurfaceView: NSServicesMenuRequestor {
   }
 }
 
-final class GhosttySurfaceScrollView: NSView {
+final class GhosttySurfaceScrollView: NSView, WindowTintMaskRegion {
   private struct ScrollbarState {
     let total: UInt64
     let offset: UInt64
@@ -2150,6 +2213,14 @@ final class GhosttySurfaceScrollView: NSView {
     synchronizeScrollView()
     synchronizeSurfaceView()
     synchronizeCoreSurface()
+    // This wrapper is the tint's subtract mask; the rebuild runs inline so
+    // the hole lands in the same frame as the surface's geometry.
+    NotificationCenter.default.post(name: .ghosttyTintMaskRegionDidChange, object: self)
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    NotificationCenter.default.post(name: .ghosttyTintMaskRegionDidChange, object: self)
   }
 
   func updateSurfaceSize() {

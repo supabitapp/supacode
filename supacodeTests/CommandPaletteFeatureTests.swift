@@ -75,23 +75,40 @@ struct CommandPaletteFeatureTests {
       from: state,
       ghosttyCommands: [
         GhosttyCommand(
+          title: "Reload Configuration",
+          description: "Reload the configuration file.",
+          action: "reload_config",
+          actionKey: "reload_config"
+        ),
+        // Topology entries are replaced by the app's own layout commands.
+        GhosttyCommand(
           title: "Focus Split Right",
           description: "Focus the split to the right.",
           action: "goto_split:right",
           actionKey: "goto_split"
-        )
+        ),
       ]
     )
 
     let ghosttyItem = items.first {
       if case .ghosttyCommand(let action) = $0.kind {
+        return action == "reload_config"
+      }
+      return false
+    }
+    #expect(ghosttyItem?.title == "Reload Configuration")
+    #expect(ghosttyItem?.subtitle == "Reload the configuration file.")
+
+    let topologyItem = items.first {
+      if case .ghosttyCommand(let action) = $0.kind {
         return action == "goto_split:right"
       }
       return false
     }
+    #expect(topologyItem == nil)
 
-    #expect(ghosttyItem?.title == "Focus Split Right")
-    #expect(ghosttyItem?.subtitle == "Focus the split to the right.")
+    let splitItem = items.first { $0.kind == .layoutCommand(.splitRight) }
+    #expect(splitItem?.title == "Split Right")
   }
 
   @Test func commandPaletteItems_includesRenameBranchOnlyForSelectedWorktree() {
@@ -1928,6 +1945,7 @@ private func makePullRequest(
     mergeable: mergeable,
     mergeStateStatus: mergeStateStatus,
     updatedAt: nil,
+    mergedAt: nil,
     url: "https://example.com/pull/1",
     headRefName: "feature",
     baseRefName: "main",

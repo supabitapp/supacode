@@ -1,29 +1,23 @@
+import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 struct WindowCommands: Commands {
-  let ghosttyShortcuts: GhosttyShortcutManager
-  @FocusedValue(\.closeSurfaceAction) private var closeSurfaceAction
+  @Shared(.settingsFile) private var settingsFile
   @FocusedValue(\.closeTabAction) private var closeTabAction
   @FocusedValue(\.terminateAllTerminalSessionsAction) private var terminateAllTerminalSessionsAction
 
   var body: some Commands {
-    let closeSurfaceHotkey = ghosttyShortcuts.keyboardShortcut(for: "close_surface")
-    let isCloseSurfaceOverlapping = closeSurfaceHotkey?.key == "w" && closeSurfaceHotkey?.modifiers == .command
-
-    let closeSurfaceEnabled = closeSurfaceAction?.isEnabled == true
+    // Close Tab is non-customizable, so it always resolves and always owns ⌘W.
+    let closeTab = AppShortcuts.closeTab.effective(from: settingsFile.global.shortcutOverrides)
+    let closeTabEnabled = closeTabAction?.isEnabled == true
     CommandGroup(replacing: .saveItem) {
-      Button("Close Terminal", systemImage: "xmark") {
-        closeSurfaceAction?()
-      }
-      // Suppress the Ghostty shortcut when the close-surface action is unavailable so Close Window can claim ⌘W.
-      .keyboardShortcut(closeSurfaceEnabled ? ghosttyShortcuts.keyboardShortcut(for: "close_surface") : nil)
-      .disabled(!closeSurfaceEnabled)
-
-      Button("Close Terminal Tab") {
+      Button("Close Tab", systemImage: "xmark") {
         closeTabAction?()
       }
-      .ghosttyKeyboardShortcut("close_tab", in: ghosttyShortcuts)
-      .disabled(closeTabAction?.isEnabled != true)
+      // Suppressed while unavailable so Close Window can claim ⌘W.
+      .appKeyboardShortcut(closeTabEnabled ? closeTab : nil)
+      .disabled(!closeTabEnabled)
 
       Button("Terminate All Terminal Sessions…") {
         terminateAllTerminalSessionsAction?()
@@ -31,9 +25,15 @@ struct WindowCommands: Commands {
       .disabled(terminateAllTerminalSessionsAction?.isEnabled != true)
 
       Button("Close Window") {
+        // Menu clicks land here from a pane window too; close the tab, never
+        // the window (the chord itself is consumed by the pane window).
+        if let paneWindow = NSApp.keyWindow as? PaneWindow, let closeTab = paneWindow.closeSelectedTab {
+          closeTab()
+          return
+        }
         NSApplication.shared.keyWindow?.performClose(nil)
       }
-      .keyboardShortcut(!isCloseSurfaceOverlapping || !closeSurfaceEnabled ? .init("w") : nil)
+      .keyboardShortcut(closeTabEnabled ? nil : .init("w"))
     }
   }
 }

@@ -99,6 +99,199 @@ struct AppFeatureDeeplinkTests {
     #expect(ranTarget)
   }
 
+  @Test(.dependencies) func paneSplitDeeplinkEmitsSplitPaneCommand() async {
+    let worktree = makeWorktree()
+    let token = UUID()
+    let newID = UUID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in false }
+      $0.terminalClient.paneExists = { _, _ in true }
+    }
+    store.exhaustivity = .off
+
+    let splitAction = Deeplink.WorktreeAction.paneSplit(
+      token: token, direction: .vertical, input: nil, id: newID)
+    await store.send(.deeplink(.worktree(id: worktree.id, action: splitAction)))
+    await store.finish()
+    #expect(
+      sent.value.contains {
+        if case .splitPane(let target, let paneToken, let direction, let input, let id, _) = $0 {
+          return target.id == worktree.id && paneToken == token && direction == .vertical && input == nil
+            && id == newID
+        }
+        return false
+      })
+  }
+
+  @Test(.dependencies) func paneZoomDeeplinkEmitsToggleZoomCommand() async {
+    let worktree = makeWorktree()
+    let token = UUID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+      $0.terminalClient.paneExists = { _, _ in true }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .paneZoom(token: token))))
+    await store.finish()
+    #expect(
+      sent.value.contains {
+        if case .toggleZoomPane(let target, let paneToken) = $0 {
+          return target.id == worktree.id && paneToken == token
+        }
+        return false
+      })
+  }
+
+  @Test(.dependencies) func tabMoveDeeplinkEmitsMoveTabCommand() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+      $0.terminalClient.tabExists = { _, _ in true }
+      $0.terminalClient.canMoveTabToNewSplit = { _, _ in true }
+    }
+    store.exhaustivity = .off
+
+    let tabID = UUID()
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .tabMove(tabID: tabID, direction: .right))))
+    await store.finish()
+    #expect(
+      sent.value.contains {
+        if case .moveTabToSplit(let target, let tab, let direction, _) = $0 {
+          return target.id == worktree.id && tab == tabID && direction == .right
+        }
+        return false
+      })
+  }
+
+  @Test(.dependencies) func tabMoveOnAnUnmovablePaneAlertsInsteadOfAcking() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+      $0.terminalClient.tabExists = { _, _ in true }
+      $0.terminalClient.canMoveTabToNewSplit = { _, _ in false }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .tabMove(tabID: UUID(), direction: .right))))
+    await store.finish()
+    #expect(
+      !sent.value.contains {
+        if case .moveTabToSplit = $0 { return true }
+        return false
+      })
+    #expect(store.state.alert != nil)
+  }
+
+  @Test(.dependencies) func paneEqualizeDeeplinkEmitsEqualizeCommand() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .paneEqualize)))
+    await store.finish()
+    #expect(
+      sent.value.contains {
+        if case .equalizeSplits(let target) = $0 { return target.id == worktree.id }
+        return false
+      })
+  }
+
+  @Test(.dependencies) func paneDestroyPresentsConfirmationBeforeClosing() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+      $0.terminalClient.paneExists = { _, _ in true }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .paneDestroy(token: UUID()))))
+    await store.finish()
+    // A destructive pane close waits for confirmation; nothing is torn down yet.
+    #expect(
+      !sent.value.contains {
+        if case .closePane = $0 { return true }
+        return false
+      })
+  }
+
+  @Test(.dependencies) func paneFocusOnMissingPaneAlertsInsteadOfAcking() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+      $0.terminalClient.paneExists = { _, _ in false }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .paneFocus(token: UUID()))))
+    await store.finish()
+    #expect(
+      !sent.value.contains {
+        if case .focusPane = $0 { return true }
+        return false
+      })
+    #expect(store.state.alert != nil)
+  }
+
   /// Bare `run` used to resolve its script from the selected worktree, so a
   /// cross-worktree call ran the wrong repository's script.
   @Test(.dependencies) func runWorktreeDeeplinkResolvesScriptFromTargetNotSelection() async {
@@ -1426,6 +1619,7 @@ struct AppFeatureDeeplinkTests {
       }
       $0.terminalClient.tabExists = { _, _ in true }
       $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in true }
     }
     store.exhaustivity = .off
 
@@ -1487,6 +1681,7 @@ struct AppFeatureDeeplinkTests {
       }
       $0.terminalClient.tabExists = { _, _ in true }
       $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in true }
     }
     store.exhaustivity = .off
 
@@ -1529,6 +1724,7 @@ struct AppFeatureDeeplinkTests {
       }
       $0.terminalClient.tabExists = { _, _ in true }
       $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in true }
     }
     store.exhaustivity = .off
 
@@ -1721,7 +1917,7 @@ struct AppFeatureDeeplinkTests {
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .tab(tabID: tabUUID))))
     await store.receive(\.repositories.selectWorktree)
-    let expected = TerminalClient.Command.selectTab(worktree, tabID: TerminalTabID(rawValue: tabUUID))
+    let expected = TerminalClient.Command.selectTab(worktree, tabID: TabID(rawValue: tabUUID))
     #expect(sent.value.contains(expected))
   }
 
@@ -1913,7 +2109,7 @@ struct AppFeatureDeeplinkTests {
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .tabNew(input: nil, id: nil))))
     let hasCreateTab = sent.value.contains(where: {
-      if case .createTab(let target, _, _, _, _) = $0 { return target.id == worktree.id }
+      if case .createTab(let target, _, _, _, _, _) = $0 { return target.id == worktree.id }
       return false
     })
     #expect(hasCreateTab)
@@ -2043,7 +2239,7 @@ struct AppFeatureDeeplinkTests {
     )
     #expect(
       sent.value.contains(
-        .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: "review")
+        .renameTab(worktree, tabID: TabID(rawValue: tabID), title: "review")
       )
     )
   }
@@ -2075,7 +2271,7 @@ struct AppFeatureDeeplinkTests {
     )
     #expect(
       sent.value.contains(
-        .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: "")
+        .renameTab(worktree, tabID: TabID(rawValue: tabID), title: "")
       )
     )
     #expect(store.state.alert == nil)
@@ -2814,6 +3010,7 @@ struct AppFeatureDeeplinkTests {
       }
       $0.terminalClient.tabExists = { _, _ in true }
       $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in true }
     }
     store.exhaustivity = .off
 
@@ -2863,6 +3060,7 @@ struct AppFeatureDeeplinkTests {
     } withDependencies: {
       $0.terminalClient.tabExists = { _, _ in true }
       $0.terminalClient.surfaceExists = { _, _, _ in false }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in false }
     }
     store.exhaustivity = .off
 
@@ -2886,6 +3084,7 @@ struct AppFeatureDeeplinkTests {
     } withDependencies: {
       $0.terminalClient.tabExists = { _, _ in true }
       $0.terminalClient.surfaceExists = { _, _, _ in false }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in false }
     }
     store.exhaustivity = .off
 
@@ -3250,6 +3449,7 @@ struct AppFeatureDeeplinkTests {
       mergeable: nil,
       mergeStateStatus: nil,
       updatedAt: nil,
+      mergedAt: nil,
       url: "https://example.com/pull/1",
       headRefName: nil,
       baseRefName: "main",
@@ -3297,6 +3497,7 @@ struct AppFeatureDeeplinkTests {
     } withDependencies: {
       $0.terminalClient.tabExists = { _, _ in true }
       $0.terminalClient.surfaceExists = { _, _, _ in true }
+      $0.terminalClient.surfaceExistsInWorktree = { _, _ in true }
     }
     store.exhaustivity = .off
     return store

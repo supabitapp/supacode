@@ -88,15 +88,15 @@ nonisolated struct AntigravitySettingsInstaller {
     }
   }
 
-  private static func featureTogglesEnabled(in mainSettingsObject: [String: JSONValue]?) -> Bool {
-    guard let mainSettingsObject else { return false }
-    return mainSettingsObject[enableJSONHooksSnakeKey]?.boolValue == true
+  private static func featureTogglesEnabled(in mainSettingsObject: [String: JSONValue]) -> Bool {
+    mainSettingsObject[enableJSONHooksSnakeKey]?.boolValue == true
       || mainSettingsObject[enableJSONHooksCamelKey]?.boolValue == true
   }
 
-  func installState() -> ComponentInstallState {
-    guard fileManager.fileExists(atPath: settingsURL.path) else { return .notInstalled }
-
+  func installState() throws -> ComponentInstallState {
+    // Read outside the hooks `do` so its own failure isn't logged against
+    // `hooks.json`, which would send the user to the wrong file.
+    let mainSettingsObject = try mainSettings()
     do {
       let rootObject = try file.load(at: settingsURL)
 
@@ -121,31 +121,28 @@ nonisolated struct AntigravitySettingsInstaller {
       let actualByEvent = Self.actualSupacodeCommandsByEvent(in: supacodeHooks)
       guard !actualByEvent.isEmpty else { return .notInstalled }
 
-      guard Self.featureTogglesEnabled(in: loadMainSettingsForStateCheck()) else {
+      guard Self.featureTogglesEnabled(in: mainSettingsObject) else {
         return .outdated
       }
       let expectedByEvent = Self.expectedCommandsByEvent(from: AntigravityHookSettings.hooksByEvent())
       guard !expectedByEvent.isEmpty else { return .notInstalled }
       return actualByEvent == expectedByEvent ? .installed : .outdated
     } catch {
-      if !JSONHookSettingsFile.isFileNotFound(error) {
-        antigravityInstallerLogger.warning("Failed to inspect Antigravity hooks at \(settingsURL.path): \(error)")
-      }
-      return .notInstalled
+      antigravityInstallerLogger.warning("Failed to inspect Antigravity hooks at \(settingsURL.path): \(error)")
+      throw error
     }
   }
 
-  /// Load the main settings for a read-only state probe, logging (rather than throwing on) a corrupt
-  /// file so a bad `settings.json` surfaces in the logs instead of silently reading as unset flags.
-  private func loadMainSettingsForStateCheck() -> [String: JSONValue]? {
+  /// An unreadable file throws rather than reading as unset flags, which would
+  /// report `.outdated` and arm an unattended rewrite. Logs against its own
+  /// path so a corrupt `settings.json` doesn't send the user to `hooks.json`.
+  private func mainSettings() throws -> [String: JSONValue] {
     do {
       return try file.load(at: mainSettingsURL)
     } catch {
-      if !JSONHookSettingsFile.isFileNotFound(error) {
-        antigravityInstallerLogger.warning(
-          "Failed to inspect Antigravity settings at \(mainSettingsURL.path): \(error)")
-      }
-      return nil
+      antigravityInstallerLogger.warning(
+        "Failed to inspect Antigravity settings at \(mainSettingsURL.path): \(error)")
+      throw error
     }
   }
 
@@ -264,18 +261,20 @@ nonisolated struct AntigravitySettingsInstaller {
   }
 
   private func removeMainSettingsFlagsIfNoHooksRemain(hooksRemain: Bool) throws {
-    guard !hooksRemain, fileManager.fileExists(atPath: mainSettingsURL.path) else { return }
+    guard !hooksRemain else { return }
 
     var mainSettingsObject: [String: JSONValue]
     do {
       mainSettingsObject = try file.load(at: mainSettingsURL)
     } catch {
-      // Corrupt main settings: leave the flags orphaned rather than fail the whole uninstall
-      // (harmless once hooks.json is gone), but log at error since this mutation didn't complete.
+      // Corrupt or unreadable main settings: leave the flags orphaned rather than fail the whole
+      // uninstall (harmless once hooks.json is gone), but log at error since this mutation didn't
+      // complete.
       antigravityInstallerLogger.error(
         "Failed to strip Antigravity hook flags at \(mainSettingsURL.path): \(error)")
       return
     }
+    guard !mainSettingsObject.isEmpty else { return }
 
     mainSettingsObject.removeValue(forKey: Self.enableJSONHooksSnakeKey)
     mainSettingsObject.removeValue(forKey: Self.enableJSONHooksCamelKey)

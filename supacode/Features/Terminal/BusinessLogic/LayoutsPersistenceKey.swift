@@ -5,56 +5,50 @@ import SupacodeSettingsShared
 
 nonisolated struct LayoutsKeyID: Hashable, Sendable {}
 
+/// Load-only reader for the persisted v2 layouts. Absent and unreadable both
+/// fall back to the empty initial value, so readers never see empty state while
+/// real records are persisted.
 nonisolated struct LayoutsKey: SharedKey {
   private static let logger = SupaLogger("Layouts")
 
   var id: LayoutsKeyID { LayoutsKeyID() }
 
   func load(
-    context _: LoadContext<[String: TerminalLayoutSnapshot]>,
-    continuation: LoadContinuation<[String: TerminalLayoutSnapshot]>
+    context _: LoadContext<LayoutsFile>,
+    continuation: LoadContinuation<LayoutsFile>
   ) {
-    @Dependency(\.settingsFileStorage) var storage
-    let data: Data
-    do {
-      data = try storage.load(SupacodePaths.layoutsURL)
-    } catch {
-      // File does not exist yet — expected on first run.
-      continuation.resumeReturningInitialValue()
-      return
-    }
-    do {
-      let layouts = try JSONDecoder().decode([String: TerminalLayoutSnapshot].self, from: data)
-      continuation.resume(returning: layouts)
-    } catch {
-      Self.logger.warning(
-        "Failed to decode layouts from \(SupacodePaths.layoutsURL.path(percentEncoded: false)): \(error)"
-      )
+    // Absent and unreadable both serve the empty initial value here: this
+    // reader only seeds sidebar badges. Destructive consumers (the orphan
+    // reaper) read `LayoutsFile.readPersisted(from:)` directly and skip on
+    // `.unreadable`.
+    @Dependency(\.defaultAppStorage) var store
+    switch LayoutsFile.readPersisted(from: store) {
+    case .file(let file):
+      continuation.resume(returning: file)
+    case .absent, .unreadable:
       continuation.resumeReturningInitialValue()
     }
   }
 
   func subscribe(
-    context _: LoadContext<[String: TerminalLayoutSnapshot]>,
-    subscriber _: SharedSubscriber<[String: TerminalLayoutSnapshot]>
+    context _: LoadContext<LayoutsFile>,
+    subscriber _: SharedSubscriber<LayoutsFile>
   ) -> SharedSubscription {
     SharedSubscription {}
   }
 
   func save(
-    _: [String: TerminalLayoutSnapshot],
+    _: LayoutsFile,
     context _: SaveContext,
     continuation: SaveContinuation
   ) {
-    // No-op: `LayoutsIncrementalWriter` is the sole disk writer for `layouts.json`.
-    // `@Shared(.layouts)` stays the in-memory source of truth; persisting here too
-    // would race the actor's per-key merge with a whole-dict last-writer-wins clobber.
+    // No-op: `LayoutsIncrementalWriter` is the sole writer for the persisted layouts blob.
     continuation.resume()
   }
 }
 
 nonisolated extension SharedReaderKey where Self == LayoutsKey.Default {
   static var layouts: Self {
-    Self[LayoutsKey(), default: [:]]
+    Self[LayoutsKey(), default: LayoutsFile(worktrees: [:])]
   }
 }

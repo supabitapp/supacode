@@ -24,7 +24,7 @@ extension WorktreeScriptCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let id = try resolveWorktreeID(worktree)
+      let id = try IDResolvers.resolveWorktreeID(worktree)
       let items = try QueryDispatcher.query(
         resource: "scripts",
         params: ["worktreeID": id],

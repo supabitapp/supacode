@@ -142,6 +142,7 @@ private func makePullRequest(
     mergeable: nil,
     mergeStateStatus: mergeStateStatus,
     updatedAt: nil,
+    mergedAt: nil,
     url: "https://example.com/pull/1",
     headRefName: "feature",
     baseRefName: "main",

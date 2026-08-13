@@ -54,6 +54,7 @@ nonisolated enum GrokHookSettingsError: Error {
 private nonisolated struct GrokHooksPayload: Encodable {
   static let awaitingInputToolMatcher = "AskUserQuestion|ExitPlanMode"
   private static let hookEnv = AgentHookSettingsCommand.grokHookEnvPassthrough
+  private static let timeout = AgentHookSettingsCommand.timeoutSeconds
 
   private static let busy = AgentHookSettingsCommand.compositeCommand(
     events: [.busy], forwardStdinAsNotification: false, agent: .grok, )
@@ -72,33 +73,33 @@ private nonisolated struct GrokHooksPayload: Encodable {
 
   let hooks: [String: [AgentHookGroup]] = [
     "SessionStart": [
-      .init(hooks: [.init(command: Self.sessionStart, timeout: 5, env: Self.hookEnv)])
+      .init(hooks: [.init(command: Self.sessionStart, timeout: Self.timeout, env: Self.hookEnv)])
     ],
     "UserPromptSubmit": [
-      .init(hooks: [.init(command: Self.busy, timeout: 10, env: Self.hookEnv)])
+      .init(hooks: [.init(command: Self.busy, timeout: Self.timeout, env: Self.hookEnv)])
     ],
     "PreToolUse": [
-      .init(matcher: "", hooks: [.init(command: Self.busy, timeout: 5, env: Self.hookEnv)]),
+      .init(matcher: "", hooks: [.init(command: Self.busy, timeout: Self.timeout, env: Self.hookEnv)]),
       // Array-order: matched-by-name fires AFTER matcher-"", so awaiting wins.
       .init(
         matcher: Self.awaitingInputToolMatcher,
-        hooks: [.init(command: Self.awaitingInput, timeout: 5, env: Self.hookEnv)]
+        hooks: [.init(command: Self.awaitingInput, timeout: Self.timeout, env: Self.hookEnv)]
       ),
     ],
     "PostToolUse": [
-      .init(matcher: "", hooks: [.init(command: Self.idle, timeout: 5, env: Self.hookEnv)])
+      .init(matcher: "", hooks: [.init(command: Self.idle, timeout: Self.timeout, env: Self.hookEnv)])
     ],
     "Notification": [
       .init(
         matcher: "",
-        hooks: [.init(command: Self.awaitingInputAndNotify, timeout: 10, env: Self.hookEnv)]
+        hooks: [.init(command: Self.awaitingInputAndNotify, timeout: Self.timeout, env: Self.hookEnv)]
       )
     ],
     "Stop": [
-      .init(hooks: [.init(command: Self.idleAndNotify, timeout: 10, env: Self.hookEnv)])
+      .init(hooks: [.init(command: Self.idleAndNotify, timeout: Self.timeout, env: Self.hookEnv)])
     ],
     "SessionEnd": [
-      .init(matcher: "", hooks: [.init(command: Self.sessionEndAndIdle, timeout: 5, env: Self.hookEnv)])
+      .init(matcher: "", hooks: [.init(command: Self.sessionEndAndIdle, timeout: Self.timeout, env: Self.hookEnv)])
     ],
   ]
 }

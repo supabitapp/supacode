@@ -102,6 +102,16 @@ else
     "brew install gettext && brew link --force gettext (or, without Homebrew: nix profile install nixpkgs#gettext)"
 fi
 
+# 8. fish. The remote-shell quoting tests run the generated ssh command through
+# a real fish parser, because fish is the shell whose single-quote handling the
+# quoting contract exists for.
+if command -v fish >/dev/null 2>&1; then
+  pass "fish available (remote-shell quoting tests)"
+else
+  fail "fish missing (make test runs the remote-shell quoting tests against it)" \
+    "brew install fish (or, without Homebrew: nix profile install nixpkgs#fish)"
+fi
+
 if [ "${failures}" -gt 0 ]; then
   printf '\n\033[31m%d check(s) failed.\033[0m Fix the above, then re-run `make doctor`.\n' "${failures}" >&2
   exit 1

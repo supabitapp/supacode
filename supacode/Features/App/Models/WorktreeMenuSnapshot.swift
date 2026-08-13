@@ -103,10 +103,10 @@ extension AppFeature.Action {
         return true
       case .notificationReceived, .tabCreated, .tabClosed, .focusChanged,
         .taskStatusChanged, .blockingScriptCompleted, .commandPaletteToggleRequested,
-        .setupScriptConsumed, .worktreeProjectionChanged, .tabProjectionChanged,
-        .tabRemoved, .tabRenamed, .worktreeStateTornDown, .tabProgressDisplayChanged,
+        .setupScriptConsumed, .worktreeProjectionChanged, .surfaceCreated,
+        .tabRemoved, .tabRenamed, .worktreeStateTornDown,
         .surfacesClosed, .agentHookEventReceived, .terminalHasAnySurfaceChanged,
-        .surfaceCreationFailed:
+        .surfaceCreationFailed, .initialTabCreationFailed:
         return false
       }
     // Hot agent-storm paths: per-tab churn never mutates snapshot inputs.
@@ -121,10 +121,13 @@ extension AppFeature.Action {
     case .applicationDidBecomeActive, .applicationDidResignActive,
       .appLaunched, .scenePhaseChanged, .openActionSelectionChanged,
       .refreshInstalledOpenActions, .installedOpenActionsResolved,
+      .refreshWorktreesRequested,
       .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
-      .openWorktree, .openWorktreeFailed, .requestQuit,
-      .requestTerminateAllTerminalSessions, .newTerminal,
-      .selectTerminalTabAtIndex, .splitTerminal, .jumpToLatestUnread,
+      .openWorktree, .openWorktreeFailed, .openFile, .openFileFromExplorer, .requestQuit,
+      .requestTerminateAllTerminalSessions, .newTerminal, .renameSelectedTerminalTab,
+      .selectTerminalTabAtIndex, .selectNextTerminalTab, .selectPreviousTerminalTab,
+      .splitTerminal, .toggleWindowModeForFocusedPane, .toggleSplitZoom,
+      .equalizeSplits, .focusSplit, .jumpToLatestUnread,
       .menuBarWorktreeSelected, .markAllNotificationsRead, .runScript, .runNamedScript,
       .manageRepositoryScripts,
       .stopScript, .stopRunScripts, .closeTab, .closeSurface,
@@ -132,7 +135,8 @@ extension AppFeature.Action {
       .navigateSearchPrevious, .endSearch,
       .systemNotificationsPermissionFailed, .deeplinkReceived,
       .deeplink, .commandAckTimedOut, .deeplinkConfirmationTimedOut,
-      .deeplinkReferenceOpened, .alert, .deeplinkInputConfirmation:
+      .deeplinkReferenceOpened, .settingsRelocationDidNotFinish, .settingsStoreUnreadable,
+      .alert, .deeplinkInputConfirmation:
       return false
     }
   }

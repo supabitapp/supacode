@@ -878,7 +878,11 @@ struct SidebarPersistenceMigratorTests {
       let readFile: (URL) -> Data? = { url in
         url == SupacodePaths.settingsURL ? legacySettings : (try? storage.load(url))
       }
-      let fileExists: (URL) -> Bool = { (try? storage.load($0)) != nil }
+      // The legacy `settings.json` lives only behind `readFile` now (the split
+      // store never writes it), so `fileExists` must report it present to match.
+      let fileExists: (URL) -> Bool = { url in
+        url == SupacodePaths.settingsURL || (try? storage.load(url)) != nil
+      }
 
       let captured = SidebarPersistenceMigrator.captureLegacyRemoteRoots(
         fileExists: fileExists, readFile: readFile)
@@ -1142,6 +1146,60 @@ struct SidebarPersistenceMigratorTests {
     }
   }
 
+  @Test(.dependencies) func remoteIdentityMigrationRekeysV2TerminalLayouts() throws {
+    let storage = InMemorySettingsFileStorage()
+    var sidebar = SidebarState()
+    sidebar.schemaVersion = 1
+    try storage.save(try JSONEncoder().encode(sidebar), SupacodePaths.sidebarURL)
+    // A layouts.json already migrated to the v2 pane topology must re-key the
+    // nested worktrees dict, not bail as unreadable v1.
+    let record = LayoutRecord(layout: PaneLayout())
+    let file = LayoutsFile(worktrees: [
+      "remote://me@box/srv/repo": record,
+      "/tmp/local/wt": record,
+    ])
+    try storage.save(try JSONEncoder().encode(file), SupacodePaths.layoutsURL)
+
+    try withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(load: { try storage.load($0) }, save: { try storage.save($0, $1) })
+      $0.defaultAppStorage = .inMemory
+      $0.date = .constant(Date(timeIntervalSince1970: 1_700_000_000))
+    } operation: {
+      SidebarPersistenceMigrator.migrateRemoteIdentityIfNeeded(
+        capturedLegacy: .none, fileExists: { (try? storage.load($0)) != nil }, readFile: { try? storage.load($0) })
+      let migrated = try JSONDecoder().decode(
+        LayoutsFile.self, from: storage.load(SupacodePaths.layoutsURL))
+      #expect(migrated.schemaVersion == LayoutsFile.currentSchemaVersion)
+      #expect(migrated.worktrees["me@box/srv/repo"] != nil)
+      #expect(migrated.worktrees["/tmp/local/wt"] != nil)
+      #expect(migrated.worktrees["remote://me@box/srv/repo"] == nil)
+    }
+  }
+
+  @Test(.dependencies) func newerSchemaLayoutsAreLeftUntouchedByRekey() throws {
+    let storage = InMemorySettingsFileStorage()
+    var sidebar = SidebarState()
+    sidebar.schemaVersion = 1
+    try storage.save(try JSONEncoder().encode(sidebar), SupacodePaths.sidebarURL)
+    // Re-encoding a newer schema would strip fields this build cannot see;
+    // the migration must proceed without touching the file.
+    let newer = Data(#"{"schemaVersion":9,"worktrees":{"remote://me@box/srv/repo":{"layout":{}}}}"#.utf8)
+    try storage.save(newer, SupacodePaths.layoutsURL)
+
+    try withDependencies {
+      $0.settingsFileStorage = SettingsFileStorage(load: { try storage.load($0) }, save: { try storage.save($0, $1) })
+      $0.defaultAppStorage = .inMemory
+      $0.date = .constant(Date(timeIntervalSince1970: 1_700_000_000))
+    } operation: {
+      SidebarPersistenceMigrator.migrateRemoteIdentityIfNeeded(
+        capturedLegacy: .none, fileExists: { (try? storage.load($0)) != nil }, readFile: { try? storage.load($0) })
+      #expect(try storage.load(SupacodePaths.layoutsURL) == newer)
+      // The pass itself stamped: the untouched newer file must not block it.
+      let state = try JSONDecoder().decode(SidebarState.self, from: storage.load(SupacodePaths.sidebarURL))
+      #expect(state.schemaVersion >= 2)
+    }
+  }
+
   @Test(.dependencies) func backupSnapshotsSettingsAndSidebarBeforeMigrating() throws {
     let storage = InMemorySettingsFileStorage()
     let settingsData = Data(#"{"global":{"remoteRepositories":[]},"repositoryRoots":["/tmp/repo"]}"#.utf8)
@@ -1158,10 +1216,11 @@ struct SidebarPersistenceMigratorTests {
       SidebarPersistenceMigrator.backupBeforeRemoteIdentityMigration(
         fileExists: { (try? storage.load($0)) != nil }, readFile: { try? storage.load($0) })
       let suffix = SidebarPersistenceMigrator.preMigrationBackupSuffix
-      let settingsBak = SupacodePaths.settingsURL.deletingLastPathComponent()
-        .appendingPathComponent(SupacodePaths.settingsURL.lastPathComponent + suffix)
-      let sidebarBak = SupacodePaths.sidebarURL.deletingLastPathComponent()
-        .appendingPathComponent(SupacodePaths.sidebarURL.lastPathComponent + suffix)
+      // Snapshots land in `~/.supacode/.backup`, not next to the source.
+      let settingsBak = SupacodePaths.backupDirectory
+        .appending(path: SupacodePaths.settingsURL.lastPathComponent + suffix, directoryHint: .notDirectory)
+      let sidebarBak = SupacodePaths.backupDirectory
+        .appending(path: SupacodePaths.sidebarURL.lastPathComponent + suffix, directoryHint: .notDirectory)
       #expect((try? storage.load(settingsBak)) == settingsData)
       #expect((try? storage.load(sidebarBak)) == sidebarData)
     }
@@ -1180,9 +1239,10 @@ struct SidebarPersistenceMigratorTests {
     } operation: {
       SidebarPersistenceMigrator.backupBeforeRemoteIdentityMigration(
         fileExists: { (try? storage.load($0)) != nil }, readFile: { try? storage.load($0) })
-      let settingsBak = SupacodePaths.settingsURL.deletingLastPathComponent()
-        .appendingPathComponent(
-          SupacodePaths.settingsURL.lastPathComponent + SidebarPersistenceMigrator.preMigrationBackupSuffix)
+      let settingsBak = SupacodePaths.backupDirectory
+        .appending(
+          path: SupacodePaths.settingsURL.lastPathComponent + SidebarPersistenceMigrator.preMigrationBackupSuffix,
+          directoryHint: .notDirectory)
       #expect((try? storage.load(settingsBak)) == nil)
     }
   }

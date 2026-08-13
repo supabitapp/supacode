@@ -263,9 +263,9 @@ struct AppFeature {
     /// worktree is created, then its first tab resolves the ack.
     case worktreeNew(pendingID: Worktree.ID, worktreeID: Worktree.ID?)
     /// tab close.
-    case tabRemoved(worktreeID: Worktree.ID, tabID: TerminalTabID)
+    case tabRemoved(worktreeID: Worktree.ID, tabID: TabID)
     /// tab rename: resolves when the manager reports whether the title applied.
-    case tabRenamed(worktreeID: Worktree.ID, tabID: TerminalTabID)
+    case tabRenamed(worktreeID: Worktree.ID, tabID: TabID)
     /// surface close (scoped by worktree so a duplicate id elsewhere can't cross-resolve).
     case surfaceClosed(worktreeID: Worktree.ID, surfaceID: UUID)
     /// worktree delete (git worktree removed).
@@ -287,6 +287,7 @@ struct AppFeature {
     case appLaunched
     case scenePhaseChanged(ScenePhase)
     case repositories(RepositoriesFeature.Action)
+    case refreshWorktreesRequested
     case settings(SettingsFeature.Action)
     case updates(UpdatesFeature.Action)
     case commandPalette(CommandPaletteFeature.Action)
@@ -307,10 +308,20 @@ struct AppFeature {
     case revealInFinder
     case openWorktree(OpenWorktreeAction)
     case openWorktreeFailed(OpenActionError)
+    case openFile(URL, with: OpenWorktreeAction?)
+    /// A File Explorer file was double-clicked: run the open-file script, else the system app.
+    case openFileFromExplorer(URL)
     case requestQuit
     case requestTerminateAllTerminalSessions
     case newTerminal
+    case renameSelectedTerminalTab
+    case toggleWindowModeForFocusedPane
+    case toggleSplitZoom
+    case equalizeSplits
+    case focusSplit(TerminalSplitMenuDirection)
     case selectTerminalTabAtIndex(Int)
+    case selectNextTerminalTab
+    case selectPreviousTerminalTab
     case splitTerminal(TerminalSplitMenuDirection)
     case jumpToLatestUnread
     case menuBarWorktreeSelected(worktreeID: Worktree.ID)
@@ -335,6 +346,8 @@ struct AppFeature {
     case commandAckTimedOut(responseFD: Int32, token: Int)
     case deeplinkConfirmationTimedOut(responseFD: Int32, token: Int)
     case deeplinkReferenceOpened
+    case settingsRelocationDidNotFinish(problems: [String])
+    case settingsStoreUnreadable
     case alert(PresentationAction<Alert>)
     case deeplinkInputConfirmation(PresentationAction<DeeplinkInputConfirmationFeature.Action>)
     case terminalEvent(TerminalClient.Event)
@@ -349,6 +362,7 @@ struct AppFeature {
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
   @Dependency(AppLifecycleClient.self) private var appLifecycleClient
+  @Dependency(ContentRuntime.self) private var contentRuntime
   @Dependency(DeeplinkClient.self) private var deeplinkClient
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
   @Dependency(WorkspaceClient.self) private var workspaceClient
@@ -400,18 +414,28 @@ struct AppFeature {
             // Reap crash / force-quit orphans, then resurrect agent badges
             // from embedded records. Races with `.task` under `.merge`; the
             // `repositoriesChanged` handler drains layout-seeded surfaces if restore wins.
-            @SharedReader(.layouts) var layouts: [String: TerminalLayoutSnapshot] = [:]
-            let known = Set(layouts.values.flatMap { $0.allSurfaceIDs })
-            let staged = AgentPresenceFeature.stageRestore(fromLayouts: layouts.values)
-            await terminalClient.reapOrphanSessions(known)
-            await send(.agentPresence(.restoreFromSnapshot(staged: staged)))
+            @Dependency(\.defaultAppStorage) var defaults
+            switch LayoutsFile.readPersisted(from: defaults) {
+            case .file(let layouts):
+              let staged = AgentPresenceFeature.stageRestore(from: layouts)
+              await terminalClient.reapOrphanSessions(layouts.allKnownSurfaceIDs)
+              await send(.agentPresence(.restoreFromSnapshot(staged: staged)))
+            case .absent:
+              // A fresh start owns nothing; stray supa-* sessions are orphans.
+              await terminalClient.reapOrphanSessions([])
+            case .unreadable:
+              // Never destroy on no signal: an unreadable store must not
+              // masquerade as empty, or the sweep would kill every detached
+              // session. Skip this launch; the next successful read reaps.
+              break
+            }
           }
         )
 
       case .agentPresence(.delegate(.surfacesChanged(let surfaces))):
         // Persist on every presence delta, debounced, so a crash mid-session
         // doesn't lose the most recent agent state. The save only touches
-        // worktrees with a live `WorktreeTerminalState`, so it can't write
+        // worktrees with a live content host, so it can't write
         // rows the user hasn't selected yet.
         let agentsBySurface = state.agentPresence.agentsBySurface()
         return .merge(
@@ -429,19 +453,36 @@ struct AppFeature {
       case .agentPresence:
         return .none
 
+      case .refreshWorktreesRequested:
+        return .merge(
+          .send(.repositories(.refreshWorktrees)),
+          .run { _ in
+            await worktreeInfoWatcher.send(.refresh)
+          }
+        )
+
       case .scenePhaseChanged(let phase):
         switch phase {
         case .active:
           return .merge(
             .send(.repositories(.refreshWorktrees)),
+            // Freshen the files inspector after external edits made while
+            // the app was inactive (Finder, editors).
+            .send(.repositories(.fileExplorer(.applicationBecameActive))),
             // Re-probe agent integrations on activation so the sidebar
             // card reflects external installs (e.g. `claude install`)
             // for users who keep the app open across days.
             .send(.settings(.refreshAgentIntegrationStates)),
+            // Resume background git polling only while foreground-active so an
+            // idle / backgrounded app stays quiet.
+            .run { _ in await worktreeInfoWatcher.send(.setActive(true)) },
             .run { send in
               while !Task.isCancelled {
                 try? await ContinuousClock().sleep(for: .seconds(30))
                 guard !Task.isCancelled else { return }
+                // Worktree discovery stays ungated so externally created /
+                // removed worktrees still sync; the setting gates status
+                // polling (line counts, branch, PR, remote SSH) in the watcher.
                 await send(.repositories(.refreshWorktrees))
                 await send(.refreshInstalledOpenActions)
               }
@@ -455,6 +496,7 @@ struct AppFeature {
           let agentsBySurface = state.agentPresence.agentsBySurface()
           return .merge(
             .cancel(id: CancelID.periodicRefresh),
+            .run { _ in await worktreeInfoWatcher.send(.setActive(false)) },
             .run { [clock] _ in
               try await clock.sleep(for: .seconds(1))
               await MainActor.run {
@@ -464,9 +506,15 @@ struct AppFeature {
             .cancellable(id: CancelID.backgroundPersist, cancelInFlight: true)
           )
         case .inactive:
-          return .cancel(id: CancelID.periodicRefresh)
+          return .merge(
+            .cancel(id: CancelID.periodicRefresh),
+            .run { _ in await worktreeInfoWatcher.send(.setActive(false)) }
+          )
         @unknown default:
-          return .cancel(id: CancelID.periodicRefresh)
+          return .merge(
+            .cancel(id: CancelID.periodicRefresh),
+            .run { _ in await worktreeInfoWatcher.send(.setActive(false)) }
+          )
         }
 
       case .repositories(.delegate(.selectedWorktreeChanged(let worktree))):
@@ -503,9 +551,28 @@ struct AppFeature {
         state.repositories.$sidebar.withLock { sidebar in
           sidebar.focusedWorktreeID = lastFocusedWorktreeID
         }
+        // A freshly created worktree emits `selectedWorktreeChanged` before
+        // `worktreeCreated`, so this bootstrap can create the tab first; carry
+        // the same setup-script intent or the later, setup-aware call finds the
+        // tab already made and `enableSetupScriptIfNeeded` refuses to re-arm it.
+        let runSetupScriptIfNew =
+          state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending
+        // `shouldFocusTerminal` may already be armed before this delegate fires
+        // (launch restore, or a sidebar selection that requested focus first),
+        // so read it here and drive focus through the activation command: the
+        // content host is created after the view appears, so view-level
+        // auto-focus races host creation and loses. The flag itself is consumed
+        // by the detail view on appear.
+        let wantsFocus = state.repositories.sidebarItems[id: worktree.id]?.shouldFocusTerminal == true
         return .merge(
           .run { _ in
             await terminalClient.send(.setSelectedWorktreeID(worktree.id))
+          },
+          .run { _ in
+            // A worktree selected for the first time (fresh install, empty
+            // migration) still needs its bootstrap tab; no-op when populated.
+            await terminalClient.send(
+              .ensureInitialTab(worktree, runSetupScriptIfNew: runSetupScriptIfNew, focusing: wantsFocus))
           },
           .run { _ in
             await worktreeInfoWatcher.send(.setSelectedWorktreeID(worktree.id))
@@ -702,6 +769,11 @@ struct AppFeature {
               .setPullRequestTrackingEnabled(settings.githubIntegrationEnabled)
             )
           },
+          .run { _ in
+            await worktreeInfoWatcher.send(
+              .setAutomaticRefreshEnabled(settings.automaticRepositoryRefreshEnabled)
+            )
+          },
           .run { send in
             guard shouldCheckSystemNotificationPermission else { return }
             let status = await systemNotificationClient.authorizationStatus()
@@ -803,6 +875,36 @@ struct AppFeature {
         }
         return openWorktreeEffect(worktree: worktree, action: action, source: .toolbar, state: state)
 
+      case .openFile(let fileURL, let explicitAction):
+        // An explicit pick comes from the Open With submenu; the default open
+        // resolves like the toolbar does, so the menu label and the launched
+        // app can't disagree when the stored editor isn't installed.
+        let action =
+          explicitAction
+          ?? OpenWorktreeAction.availableSelection(
+            state.openActionSelection,
+            installed: state.installedOpenActions
+          )
+        return .run { @MainActor send in
+          guard let error = await workspaceClient.openFile(fileURL, action) else { return }
+          send(.openWorktreeFailed(error))
+        }
+
+      case .openFileFromExplorer(let fileURL):
+        // No script (or no/remote worktree): open with the system default app.
+        let openWithDefaultApp = Effect<Action>.run { @MainActor send in
+          guard let error = await workspaceClient.openFile(fileURL, nil) else { return }
+          send(.openWorktreeFailed(error))
+        }
+        // Explorer is local-only; the host guard keeps a script off a remote path defensively.
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          worktree.host == nil
+        else { return openWithDefaultApp }
+        let script = resolveOpenFileScript(in: worktree)
+        guard !script.isEmpty else { return openWithDefaultApp }
+        let input = Self.openFileCommandInput(script: script, fileURL: fileURL)
+        return .run { _ in await terminalClient.send(.openFileWithScript(worktree, input: input)) }
+
       case .openWorktreeFailed(let error):
         state.alert = AlertState {
           TextState(error.title)
@@ -879,6 +981,17 @@ struct AppFeature {
           await terminalClient.send(.createTab(worktree, runSetupScriptIfNew: shouldRunSetupScript))
         }
 
+      case .renameSelectedTerminalTab:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing,
+          let tabID = terminalClient.selectedTabID(worktree.id)
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.beginTabRename(worktree, tabID: tabID))
+        }
+
       case .selectTerminalTabAtIndex(let tabNumber):
         // Works regardless of first responder (menu key-equivalent), so ⌘-number
         // switches tabs even when the sidebar holds focus. The index is clamped to
@@ -892,6 +1005,26 @@ struct AppFeature {
           await terminalClient.send(.selectTabAtIndex(worktree, index: tabNumber))
         }
 
+      case .selectNextTerminalTab:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.selectRelativeTab(worktree, forward: true))
+        }
+
+      case .selectPreviousTerminalTab:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.selectRelativeTab(worktree, forward: false))
+        }
+
       case .splitTerminal(let direction):
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
           !worktree.isMissing
@@ -899,7 +1032,47 @@ struct AppFeature {
           return .none
         }
         return .run { _ in
-          await terminalClient.send(.performBindingAction(worktree, action: direction.ghosttyBinding))
+          await terminalClient.send(.splitFocusedPane(worktree, direction: direction))
+        }
+
+      case .toggleWindowModeForFocusedPane:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.toggleWindowModeForFocusedPane(worktree))
+        }
+
+      case .toggleSplitZoom:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.toggleSplitZoom(worktree))
+        }
+
+      case .equalizeSplits:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.equalizeSplits(worktree))
+        }
+
+      case .focusSplit(let direction):
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.focusSplit(worktree, direction: direction))
         }
 
       case .jumpToLatestUnread:
@@ -1188,6 +1361,46 @@ struct AppFeature {
         state.isDeeplinkReferenceRequested = false
         return .none
 
+      case .settingsStoreUnreadable:
+        // The settings store loaded degraded (a file was present but unreadable),
+        // so saves are refused this session to avoid overwriting the real data.
+        state.alert = AlertState {
+          TextState("Settings couldn't be read")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState(
+            """
+            Supacode couldn't read your settings this launch, so changes you make now \
+            won't be saved until you relaunch. Your existing settings are safe. This is \
+            usually a permissions or disk issue; relaunching after it clears will restore \
+            normal saving.
+            """
+          )
+        }
+        return .none
+
+      case .settingsRelocationDidNotFinish(let problems):
+        // The relocation preserves the originals in place on any failure, so this
+        // is reassurance plus a concrete next step, not a data-loss warning.
+        state.alert = AlertState {
+          TextState("Settings move incomplete")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          let detail = problems.isEmpty ? "" : "\n\n" + problems.joined(separator: "\n")
+          return TextState(
+            """
+            Supacode couldn't finish moving your settings to ~/.config/supacode. \
+            Your existing settings are safe and untouched in ~/.supacode (and ~/.supacode/.backup).\(detail)
+
+            This is usually low disk space or a permissions issue. Free up space or check \
+            permissions on ~/.config/supacode, then relaunch. Supacode will retry automatically.
+            """
+          )
+        }
+        return .none
+
       case .systemNotificationsPermissionFailed(let errorMessage):
         return .concatenate(
           .send(.settings(.setSystemNotificationsEnabled(false))),
@@ -1301,11 +1514,21 @@ struct AppFeature {
           return false
         }
 
-      case .repositories(.worktreeDeleted(let worktreeID, _, _, _)):
-        return resolveCommandAcks(ok: true, state: &state) { match in
-          if case .worktreeRemoved(let ackWorktree) = match { return ackWorktree == worktreeID }
-          return false
-        }
+      case .repositories(.worktreeDeleted(let worktreeID, let repositoryID, _, _)):
+        // Deleting a worktree deletes its layout, sessions, and persisted
+        // record, host or no host; roster prune cannot reach a hostless
+        // layout without risking a merely-unloaded repository's records.
+        let remoteHost = state.repositories.repositories[id: repositoryID]?.host
+        return .merge(
+          resolveCommandAcks(ok: true, state: &state) { match in
+            if case .worktreeRemoved(let ackWorktree) = match { return ackWorktree == worktreeID }
+            return false
+          },
+          .run { _ in
+            await terminalClient.send(
+              .removeWorktreeLayout(worktreeID: worktreeID, remoteHost: remoteHost))
+          }
+        )
 
       case .repositories(.archiveWorktreeApplied(let worktreeID)):
         return resolveCommandAcks(ok: true, state: &state) { match in
@@ -1442,6 +1665,37 @@ struct AppFeature {
           .repositories(.sidebarItems(.element(id: worktreeID, action: .focusTerminalRequested)))
         )
 
+      case .commandPalette(.delegate(.toggleWindowMode)):
+        return .send(.toggleWindowModeForFocusedPane)
+
+      case .commandPalette(.delegate(.layoutCommand(let command))):
+        switch command {
+        case .newTerminalTab:
+          return .send(.newTerminal)
+        case .closeTab:
+          return .send(.closeTab)
+        case .splitRight:
+          return .send(.splitTerminal(.right))
+        case .splitLeft:
+          return .send(.splitTerminal(.left))
+        case .splitDown:
+          return .send(.splitTerminal(.down))
+        case .splitUp:
+          return .send(.splitTerminal(.up))
+        case .focusSplitRight:
+          return .send(.focusSplit(.right))
+        case .focusSplitLeft:
+          return .send(.focusSplit(.left))
+        case .focusSplitDown:
+          return .send(.focusSplit(.down))
+        case .focusSplitUp:
+          return .send(.focusSplit(.up))
+        case .toggleSplitZoom:
+          return .send(.toggleSplitZoom)
+        case .equalizeSplits:
+          return .send(.equalizeSplits)
+        }
+
       case .commandPalette(.delegate(.checkForUpdates)):
         return .send(.updates(.checkForUpdates))
 
@@ -1481,7 +1735,7 @@ struct AppFeature {
         return .send(.repositories(.selectArchivedWorktrees))
 
       case .commandPalette(.delegate(.refreshWorktrees)):
-        return .send(.repositories(.refreshWorktrees))
+        return .send(.refreshWorktreesRequested)
 
       case .commandPalette(.delegate(.ghosttyCommand(let action))):
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
@@ -1490,6 +1744,8 @@ struct AppFeature {
         // Ghostty void actions emit bare tag names; no colon.
         let command: TerminalClient.Command
         if action == "prompt_surface_title" || action == "prompt_tab_title" {
+          // Skip missing worktrees so the palette matches the rename shortcut's guard.
+          guard !worktree.isMissing else { return .none }
           // Capture the focused tab synchronously so a fast tab switch between dispatch
           // and effect execution can't redirect the rename to the wrong tab.
           let tabID = terminalClient.selectedTabID(worktree.id)
@@ -1594,7 +1850,7 @@ struct AppFeature {
           .send(.commandPalette(.togglePresentInMode(.commands)))
         )
       case .terminalEvent(.setupScriptConsumed(let worktreeID)):
-        return .send(.repositories(.consumeSetupScript(worktreeID)))
+        return .send(.repositories(.worktreeCreationSettled(worktreeID)))
 
       case .terminalEvent(.blockingScriptCompleted(let worktreeID, let kind, let exitCode, let tabId)):
         switch kind {
@@ -1642,60 +1898,67 @@ struct AppFeature {
             )
           )
         )
-        guard !restoredAddedSurfaces.isEmpty else { return projectionEffect }
+        // Backstop the `.tabCreated` one-shot: a surface-bearing projection
+        // re-resolves the worktree-new ack and settles progress if that event
+        // was shed, so the CLI never rides its watchdog.
+        var readyEffect: Effect<Action> = .none
+        if !projection.surfaceIDs.isEmpty {
+          let ackBackstop = resolveCommandAcks(
+            ok: true, resourceID: Self.percentEncodedID(worktreeID.rawValue), state: &state
+          ) { match in
+            if case .worktreeNew(_, let boundID?) = match { return boundID == worktreeID }
+            return false
+          }
+          let settle: Effect<Action> =
+            row.lifecycle == .pending
+            ? .send(.repositories(.worktreeCreationSettled(worktreeID)))
+            : .none
+          readyEffect = .merge(ackBackstop, settle)
+        }
+        guard !restoredAddedSurfaces.isEmpty else { return .merge(projectionEffect, readyEffect) }
         // Keep the delegate hop here: `projectionEffect` must apply
         // `terminalProjectionChanged` first so the fan-out reads the updated
         // `surfaceIDs`. A direct `agentPresenceFanOutEffect(...)` would
         // capture pre-projection state and miss the new surface.
-        return .concatenate(
-          projectionEffect,
-          .send(.agentPresence(.delegate(.surfacesChanged(restoredAddedSurfaces))))
+        return .merge(
+          .concatenate(
+            projectionEffect,
+            .send(.agentPresence(.delegate(.surfacesChanged(restoredAddedSurfaces))))
+          ),
+          readyEffect
         )
 
-      case .terminalEvent(.tabProjectionChanged(let worktreeID, let projection)):
-        // Resolve tab-new / surface-split acks once the supplied id appears.
-        let ackEffect = resolveCommandAcks(ok: true, state: &state) { match in
+      case .terminalEvent(.surfaceCreated(let worktreeID, let id)):
+        // Resolve tab-new / surface-split acks once the supplied id lands.
+        return resolveCommandAcks(ok: true, state: &state) { match in
           switch match {
           case .tabInWorktree(let ackWorktree, let tabID):
-            return ackWorktree == worktreeID && projection.tabID.rawValue == tabID
+            return ackWorktree == worktreeID && tabID == id
           case .surfaceSplit(let ackWorktree, let surfaceID):
-            return ackWorktree == worktreeID && projection.surfaceIDs.contains(surfaceID)
+            return ackWorktree == worktreeID && surfaceID == id
           default:
             return false
           }
         }
-        // Only a brand-new tab consumes this snapshot; existing tabs already
-        // track agent state, so skip the rollup on their projection churn.
-        let initialAgentSnapshot =
-          state.terminals.terminalTabs[id: projection.tabID] == nil
-          ? state.agentPresence.rowSnapshot(
-            across: projection.surfaceIDs,
-            badgesEnabled: state.lastKnownAgentPresenceBadgesEnabled
-          )
-          : AgentPresenceFeature.RowSnapshot()
-        return .merge(
-          .send(
-            .terminals(
-              .tabProjectionChanged(
-                worktreeID: worktreeID,
-                projection: projection,
-                initialAgentSnapshot: initialAgentSnapshot
-              )
-            )
-          ),
-          ackEffect)
 
       case .terminalEvent(.tabCreated(let worktreeID)):
         // Resolve worktree-new acks once the new worktree's first tab exists,
         // returning the created worktree id to the CLI.
-        return resolveCommandAcks(
+        let ackEffect = resolveCommandAcks(
           ok: true, resourceID: Self.percentEncodedID(worktreeID.rawValue), state: &state
         ) { match in
           if case .worktreeNew(_, let boundID?) = match { return boundID == worktreeID }
           return false
         }
+        // A hosted tab is the worktree's readiness condition, so clear the
+        // creation-progress state here regardless of the setup-script path
+        // (empty script, skip, or hydrated layout never emit `.setupScriptConsumed`).
+        return .merge(ackEffect, .send(.repositories(.worktreeCreationSettled(worktreeID))))
 
       case .terminalEvent(.surfaceCreationFailed(let worktreeID, let attemptedID, let message)):
+        // An ordinary tab / split failure: resolve only its own ack. It never
+        // touches `.pending` or the worktree-new ack, which belong to the
+        // initial-tab bootstrap (`.initialTabCreationFailed`).
         return resolveCommandAcks(ok: false, error: message, state: &state) { match in
           switch match {
           case .tabInWorktree(let ackWorktree, let tabID):
@@ -1707,6 +1970,16 @@ struct AppFeature {
           }
         }
 
+      case .terminalEvent(.initialTabCreationFailed(let worktreeID, let message)):
+        // The first tab could not be hosted: fail the worktree-new ack and
+        // settle the creation-progress state so the worktree shows with no tabs
+        // (a valid empty state to retry from).
+        let ackEffect = resolveCommandAcks(ok: false, error: message, state: &state) { match in
+          if case .worktreeNew(_, let boundID?) = match { return boundID == worktreeID }
+          return false
+        }
+        return .merge(ackEffect, .send(.repositories(.worktreeCreationSettled(worktreeID))))
+
       case .terminalEvent(.tabRemoved(let worktreeID, let tabID)):
         let ackEffect = resolveCommandAcks(ok: true, state: &state) { match in
           if case .tabRemoved(let ackWorktree, let removed) = match {
@@ -1714,8 +1987,7 @@ struct AppFeature {
           }
           return false
         }
-        return .merge(
-          .send(.terminals(.tabRemoved(worktreeID: worktreeID, tabID: tabID))), ackEffect)
+        return ackEffect
 
       case .terminalEvent(.tabRenamed(let worktreeID, let tabID, let applied)):
         return resolveCommandAcks(
@@ -1727,13 +1999,28 @@ struct AppFeature {
           return ackWorktree == worktreeID && renamed == tabID
         }
 
-      case .terminalEvent(.worktreeStateTornDown(let worktreeID)):
-        return .send(.terminals(.worktreeStateTornDown(worktreeID: worktreeID)))
+      case .terminalEvent(.worktreeStateTornDown):
+        // The manager already detached the layout; nothing app-level remains.
+        return .none
 
-      case .terminalEvent(.tabProgressDisplayChanged(_, let tabID, let display)):
-        return .send(
-          .terminals(.terminalTabs(.element(id: tabID, action: .progressDisplayChanged(display))))
-        )
+      case .terminals(.layouts(.element(let worktreeID, .wakeTab(let tabID)))):
+        // A woken content is a fresh instance whose chrome missed any presence
+        // fan-out that ran while the tab was unprovisioned (restored layouts);
+        // replay the current snapshot. Effect-deferred: the core reducer runs
+        // before the terminals scope, so the wake has not provisioned yet.
+        guard
+          let contentID = state.terminals.layouts[id: worktreeID]?.layout
+            .pane(containingTab: tabID)?.tabs[id: tabID]?.content.id
+        else { return .none }
+        let presence = state.agentPresence
+        return .run { @MainActor _ in
+          @Shared(.settingsFile) var settingsFile: SettingsFile
+          writeAgentChrome(
+            for: [contentID.rawValue],
+            presence: presence,
+            badgesEnabled: settingsFile.global.agentPresenceBadgesEnabled
+          )
+        }
 
       case .terminals:
         return .none
@@ -1913,17 +2200,27 @@ struct AppFeature {
         )
       )
     }
-    // Per-tab fanout: any tab containing an affected surface re-projects its
-    // agent snapshot. Each tab reads its own `agentSnapshot`, so per-tab
-    // mutations don't invalidate sibling tab leaves.
-    for tab in state.terminals.terminalTabs
-    where tab.surfaceIDs.contains(where: tabSurfaceIDs.contains) {
-      let snapshot = presence.rowSnapshot(across: tab.surfaceIDs, badgesEnabled: badgesEnabled)
-      effects.append(
-        .send(.terminals(.terminalTabs(.element(id: tab.id, action: .agentSnapshotChanged(snapshot)))))
-      )
-    }
+    // Per-tab badge fan-out: write each affected content's chrome directly.
+    // Chrome is content-owned and observable, so the strips re-render per tab
+    // without routing terminal state through the layout reducer.
+    writeAgentChrome(for: tabSurfaceIDs, presence: presence, badgesEnabled: badgesEnabled)
     return .merge(effects)
+  }
+
+  private func writeAgentChrome(
+    for surfaceIDs: some Sequence<UUID>,
+    presence: AgentPresenceFeature.State,
+    badgesEnabled: Bool
+  ) {
+    for surfaceID in surfaceIDs {
+      guard
+        let chrome = contentRuntime.content(for: ContentID(rawValue: surfaceID))?.chrome
+          as? TerminalTabChrome
+      else { continue }
+      let snapshot = presence.rowSnapshot(across: [surfaceID], badgesEnabled: badgesEnabled)
+      chrome.agents = snapshot.agents
+      chrome.isWorking = snapshot.isWorking
+    }
   }
 
   // MARK: - Open worktree.
@@ -2257,12 +2554,13 @@ struct AppFeature {
     // user can actually clear the orphan.
     let spawnsShell: Bool
     switch action {
-    case .run, .runScript, .tabNew, .surfaceSplit:
+    case .run, .runScript, .tabNew, .surfaceSplit, .paneSplit:
       spawnsShell = true
     case .surface(_, _, let input):
       spawnsShell = input?.isEmpty == false
     case .select, .stop, .stopScript, .tab, .tabRename, .tabDestroy, .surfaceDestroy,
-      .archive, .unarchive, .delete, .pin, .unpin, .appearance:
+      .archive, .unarchive, .delete, .pin, .unpin, .appearance,
+      .tabMove, .paneFocus, .paneFocusDirection, .paneDestroy, .paneZoom, .paneWindow, .paneEqualize:
       spawnsShell = false
     }
     if spawnsShell, let worktree = state.repositories.worktree(for: worktreeID), worktree.isMissing {
@@ -2413,20 +2711,36 @@ struct AppFeature {
     case .tab(let tabID):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
       return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
-        .selectTab(worktree, tabID: TerminalTabID(rawValue: tabID))
+        .selectTab(worktree, tabID: TabID(rawValue: tabID))
       }
-    case .tabNew(let input, let id, let title):
+    case .tabNew(let input, let id, let title, let pane):
       // A new tab has no override to clear, so a blank title would be dropped silently.
-      if let title, TerminalTabManager.normalizedCustomTitle(title) == nil {
+      if let title, TabItem.normalizedCustomTitle(title) == nil {
         deeplinkLogger.warning("Rejecting blank tab title in worktree \(worktreeID)")
         state.alert = blankTabTitleAlert(
           message: "The tab title is blank. Omit the title to keep the terminal title.")
         return .none
       }
-      // Reject explicit IDs that collide with an existing or in-flight tab, so a
-      // duplicate id can't have one creation resolve the other's ack.
+      // A pane anchor that resolves nothing must fail loudly, not fall back
+      // to a pane the caller didn't ask for. The anchor is a pane token, so it
+      // resolves a pane, tab, or content id (matching `createTabAsync`).
+      if let pane, !terminalClient.paneExists(worktreeID, pane) {
+        deeplinkLogger.warning("Rejecting unknown pane anchor \(pane) in worktree \(worktreeID)")
+        state.alert = AlertState {
+          TextState("Pane not found")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState("No pane, tab, or content \(pane.uuidString) exists in this worktree to anchor the new tab.")
+        }
+        return .none
+      }
+      // Reject explicit IDs colliding with a tab or content id in any worktree
+      // (the runtime and hibernation key globally), or an in-flight creation, so
+      // a duplicate id can't have one creation resolve the other's ack.
       if let id,
-        terminalClient.tabExists(worktreeID, TerminalTabID(rawValue: id))
+        terminalClient.tabExists(worktreeID, TabID(rawValue: id))
+          || terminalClient.idExistsAnywhere(id)
           || Self.hasPendingCreationAck(id: id, state: state)
       {
         state.alert = AlertState {
@@ -2440,7 +2754,9 @@ struct AppFeature {
       }
       guard let input, !input.isEmpty else {
         let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
-          .createTab(worktree, runSetupScriptIfNew: true, id: id, title: title, focusing: !background)
+          .createTab(
+            worktree, runSetupScriptIfNew: true, id: id, title: title, focusing: !background,
+            anchor: pane)
         }
         return awaitingCompletion(
           effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
@@ -2458,7 +2774,8 @@ struct AppFeature {
           runSetupScriptIfNew: false,
           id: id,
           title: title,
-          focusing: !background
+          focusing: !background,
+          anchor: pane
         )
       }
       return awaitingCompletion(
@@ -2469,13 +2786,13 @@ struct AppFeature {
       // A blank title clears the override, but one that survives only as control
       // characters would wipe it while reporting the rename as applied.
       let clearsTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      if !clearsTitle, TerminalTabManager.normalizedCustomTitle(title) == nil {
+      if !clearsTitle, TabItem.normalizedCustomTitle(title) == nil {
         deeplinkLogger.warning("Rejecting unrenderable tab title in worktree \(worktreeID)")
         state.alert = blankTabTitleAlert(
           message: "The tab title has no visible characters. Pass an empty title to clear it.")
         return .none
       }
-      guard terminalClient.tabCanRename(worktreeID, TerminalTabID(rawValue: tabID)) else {
+      guard terminalClient.tabCanRename(worktreeID, TabID(rawValue: tabID)) else {
         deeplinkLogger.warning("Tab \(tabID) has a locked title in worktree \(worktreeID)")
         state.alert = AlertState {
           TextState("Tab cannot be renamed")
@@ -2489,10 +2806,10 @@ struct AppFeature {
         return .none
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
-        .renameTab(worktree, tabID: TerminalTabID(rawValue: tabID), title: title)
+        .renameTab(worktree, tabID: TabID(rawValue: tabID), title: title)
       }
       return awaitingCompletion(
-        effect, match: .tabRenamed(worktreeID: worktreeID, tabID: TerminalTabID(rawValue: tabID)),
+        effect, match: .tabRenamed(worktreeID: worktreeID, tabID: TabID(rawValue: tabID)),
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .tabDestroy(let tabID):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
@@ -2507,10 +2824,10 @@ struct AppFeature {
           background: background)
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
-        .destroyTab(worktree, tabID: TerminalTabID(rawValue: tabID), focusing: !background)
+        .destroyTab(worktree, tabID: TabID(rawValue: tabID), focusing: !background)
       }
       return awaitingCompletion(
-        effect, match: .tabRemoved(worktreeID: worktreeID, tabID: TerminalTabID(rawValue: tabID)),
+        effect, match: .tabRemoved(worktreeID: worktreeID, tabID: TabID(rawValue: tabID)),
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .surface(let tabID, let surfaceID, let input):
       guard validateSurface(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, state: &state) else {
@@ -2526,16 +2843,18 @@ struct AppFeature {
       // Focus has no reliable completion signal (the event only fires when
       // focus actually moves), so this acks immediately.
       return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
-        .focusSurface(worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID, input: input)
+        .focusSurface(worktree, tabID: TabID(rawValue: tabID), surfaceID: surfaceID, input: input)
       }
     case .surfaceSplit(let tabID, let surfaceID, let direction, let input, let id):
       guard validateSurface(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, state: &state) else {
         return .none
       }
-      // Reject explicit IDs that collide with an existing or in-flight surface, so
-      // a duplicate id can't have one split resolve the other's ack.
+      // Reject explicit IDs colliding with a tab or content id in any worktree
+      // (the runtime and hibernation key globally), or an in-flight split, so a
+      // duplicate id can't have one split resolve the other's ack.
       if let id,
         terminalClient.surfaceExistsInWorktree(worktreeID, id)
+          || terminalClient.idExistsAnywhere(id)
           || Self.hasPendingCreationAck(id: id, state: state)
       {
         state.alert = AlertState {
@@ -2556,7 +2875,7 @@ struct AppFeature {
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .splitSurface(
-          worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID,
+          worktree, tabID: TabID(rawValue: tabID), surfaceID: surfaceID,
           direction: direction, input: input, id: id, focusing: !background)
       }
       return awaitingCompletion(
@@ -2578,11 +2897,101 @@ struct AppFeature {
       }
       let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .destroySurface(
-          worktree, tabID: TerminalTabID(rawValue: tabID), surfaceID: surfaceID, focusing: !background)
+          worktree, tabID: TabID(rawValue: tabID), surfaceID: surfaceID, focusing: !background)
       }
       return awaitingCompletion(
         effect, match: .surfaceClosed(worktreeID: worktreeID, surfaceID: surfaceID),
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
+    case .tabMove(let tabID, let direction):
+      guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
+      // A single-tab or windowed pane refuses the move; report that instead of
+      // a phantom success.
+      guard terminalClient.canMoveTabToNewSplit(worktreeID, tabID) else {
+        deeplinkLogger.warning("Tab \(tabID) cannot move to a new split in worktree \(worktreeID)")
+        state.alert = AlertState {
+          TextState("Tab cannot be moved")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState("Its pane has only this tab, or is in window mode, so there is nothing to split off.")
+        }
+        return .none
+      }
+      // Layout topology has no distinct completion signal, so this acks immediately.
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .moveTabToSplit(worktree, tabID: tabID, direction: direction, focusing: !background)
+      }
+    case .paneFocus(let token):
+      guard validatePane(worktreeID: worktreeID, token: token, state: &state) else { return .none }
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .focusPane(worktree, paneToken: token)
+      }
+    case .paneFocusDirection(let direction):
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .focusSplit(worktree, direction: direction)
+      }
+    case .paneSplit(let token, let direction, let input, let id):
+      guard validatePane(worktreeID: worktreeID, token: token, state: &state) else { return .none }
+      // Reject explicit IDs colliding with a tab or content id in any worktree
+      // (the runtime and hibernation key globally), or an in-flight split, so a
+      // duplicate id can't have one split resolve the other's ack.
+      if let id,
+        terminalClient.surfaceExistsInWorktree(worktreeID, id)
+          || terminalClient.idExistsAnywhere(id)
+          || Self.hasPendingCreationAck(id: id, state: state)
+      {
+        state.alert = AlertState {
+          TextState("Surface ID already exists")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState("A surface with ID \(id.uuidString) already exists.")
+        }
+        return .none
+      }
+      if let input, !input.isEmpty,
+        requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation)
+      {
+        return presentDeeplinkConfirmation(
+          worktreeID: worktreeID, responseFD: responseFD, timeoutSeconds: timeoutSeconds,
+          message: .command(input), action: action, state: &state, background: background)
+      }
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .splitPane(
+          worktree, paneToken: token, direction: direction, input: input, id: id, focusing: !background)
+      }
+      return awaitingCompletion(
+        effect, match: id.map { .surfaceSplit(worktreeID: worktreeID, surfaceID: $0) },
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
+    case .paneDestroy(let token):
+      guard validatePane(worktreeID: worktreeID, token: token, state: &state) else { return .none }
+      guard bypassConfirmation else {
+        return presentDeeplinkConfirmation(
+          worktreeID: worktreeID,
+          responseFD: responseFD,
+          timeoutSeconds: timeoutSeconds,
+          message: .confirmation("Close pane \(token.uuidString.prefix(8))… and its tabs?"),
+          action: action,
+          state: &state,
+          background: background)
+      }
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .closePane(worktree, paneToken: token)
+      }
+    case .paneZoom(let token):
+      guard validatePane(worktreeID: worktreeID, token: token, state: &state) else { return .none }
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .toggleZoomPane(worktree, paneToken: token)
+      }
+    case .paneWindow(let token):
+      guard validatePane(worktreeID: worktreeID, token: token, state: &state) else { return .none }
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .toggleWindowModeForPane(worktree, paneToken: token)
+      }
+    case .paneEqualize:
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .equalizeSplits(worktree)
+      }
     }
   }
 
@@ -2705,6 +3114,28 @@ struct AppFeature {
   /// Resolves a script by ID across the worktree's repo scripts and the user's globals.
   private func resolveScript(scriptID: UUID, in worktree: Worktree) -> ScriptDefinition? {
     mergedScripts(in: worktree).first(where: { $0.id == scriptID })
+  }
+
+  /// The repo open-file script, else the global one; repo wins. Reads the repo via
+  /// `currentSettings()` (fresh from disk) so a double-click uses today's script. A blank
+  /// value counts as unset; "" means "use the system default app".
+  private func resolveOpenFileScript(in worktree: Worktree) -> String {
+    let repositorySettings = RepositorySettingsKey(
+      rootURL: worktree.repositoryRootURL,
+      host: worktree.host
+    ).currentSettings()
+    if !repositorySettings.openFileScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return repositorySettings.openFileScript
+    }
+    @SharedReader(.settingsFile) var settingsFile
+    let global = settingsFile.global.openFileScript
+    return global.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : global
+  }
+
+  /// The script with the file's path exported as `SUPACODE_FILE_PATH`, quoted so it stays literal.
+  static func openFileCommandInput(script: String, fileURL: URL) -> String {
+    let quotedPath = BlockingScriptRunner.shellSingleQuoted(fileURL.path(percentEncoded: false))
+    return "export SUPACODE_FILE_PATH=\(quotedPath); \(script)"
   }
 
   private func scriptAlert(title: String, message: String) -> AlertState<Alert> {
@@ -3318,13 +3749,37 @@ struct AppFeature {
 
   // MARK: Validation helpers.
 
+  /// Validates that a pane token (a pane, tab, or content id) resolves to a pane
+  /// in the worktree, showing an alert if not. Keeps the CLI ack honest instead
+  /// of reporting a silent no-op as success.
+  private func validatePane(
+    worktreeID: Worktree.ID,
+    token: UUID,
+    state: inout State
+  ) -> Bool {
+    guard terminalClient.paneExists(worktreeID, token) else {
+      deeplinkLogger.warning("Pane token \(token) not found in worktree \(worktreeID)")
+      state.alert = AlertState {
+        TextState("Pane not found")
+      } actions: {
+        ButtonState(role: .cancel, action: .dismiss) {
+          TextState("OK")
+        }
+      } message: {
+        TextState("No pane matching the deeplink could be found. It may have been closed.")
+      }
+      return false
+    }
+    return true
+  }
+
   /// Validates that a tab exists in the given worktree, showing an alert if not.
   private func validateTab(
     worktreeID: Worktree.ID,
     tabID: UUID,
     state: inout State
   ) -> Bool {
-    guard terminalClient.tabExists(worktreeID, TerminalTabID(rawValue: tabID)) else {
+    guard terminalClient.tabExists(worktreeID, TabID(rawValue: tabID)) else {
       deeplinkLogger.warning("Tab \(tabID) not found in worktree \(worktreeID)")
       state.alert = AlertState {
         TextState("Tab not found")
@@ -3347,8 +3802,14 @@ struct AppFeature {
     surfaceID: UUID,
     state: inout State
   ) -> Bool {
+    // Surface-first: the tab segment is a hint. Migration moves surfaces
+    // between tabs and long-running shells hold stale pairs by design, so a
+    // resolvable surface is valid wherever it lives now.
+    if terminalClient.surfaceExistsInWorktree(worktreeID, surfaceID) {
+      return true
+    }
     guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return false }
-    guard terminalClient.surfaceExists(worktreeID, TerminalTabID(rawValue: tabID), surfaceID) else {
+    guard terminalClient.surfaceExists(worktreeID, TabID(rawValue: tabID), surfaceID) else {
       deeplinkLogger.warning("Surface \(surfaceID) not found in tab \(tabID) of worktree \(worktreeID)")
       state.alert = AlertState {
         TextState("Surface not found")

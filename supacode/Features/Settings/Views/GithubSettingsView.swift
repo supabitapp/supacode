@@ -78,7 +78,7 @@ struct GithubSettingsView: View {
               Text("GitHub CLI not found")
               Text("Install `gh` to enable pull request checks.")
                 .foregroundStyle(.secondary)
-                .font(.callout)
+                .appFont(.callout)
             }
           } icon: {
             Image(systemName: "xmark.circle")
@@ -92,7 +92,7 @@ struct GithubSettingsView: View {
               Text("Not authenticated")
               Text("Run `gh auth login` in a terminal to authenticate.")
                 .foregroundStyle(.secondary)
-                .font(.callout)
+                .appFont(.callout)
             }
           } icon: {
             Image(systemName: "exclamationmark.triangle")
@@ -106,7 +106,7 @@ struct GithubSettingsView: View {
               Text("GitHub CLI outdated")
               Text("Update to the latest version for full support.")
                 .foregroundStyle(.secondary)
-                .font(.callout)
+                .appFont(.callout)
             }
           } icon: {
             Image(systemName: "exclamationmark.triangle")
@@ -128,7 +128,7 @@ struct GithubSettingsView: View {
               Text("Error checking status")
               Text(message)
                 .foregroundStyle(.secondary)
-                .font(.callout)
+                .appFont(.callout)
             }
           } icon: {
             Image(systemName: "exclamationmark.triangle")
@@ -167,11 +167,15 @@ struct GithubSettingsView: View {
           }
         } label: {
           Text("When a pull request is merged")
+          let scopeNote =
+            " Only applies to worktrees created before the pull request was merged, and not to remote repositories."
           switch store.mergedWorktreeAction {
           case .archive:
-            Text("Archives the worktree when its pull request is merged.")
+            Text("Archives the worktree when its pull request is merged.\(scopeNote)")
           case .delete:
-            Text("Follows the \"Delete local branch with worktree\" option in Worktrees settings.")
+            Text(
+              "Follows the \"Delete local branch with worktree\" option in Worktrees settings.\(scopeNote)"
+            )
           case nil:
             EmptyView()
           }

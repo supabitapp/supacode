@@ -37,7 +37,7 @@ nonisolated struct CodexSettingsInstaller {
 
   /// Install state for the unified hook map. See
   /// `ClaudeSettingsInstaller.installState()` for rationale.
-  func installState() -> ComponentInstallState {
+  func installState() throws -> ComponentInstallState {
     let groups: [String: [JSONValue]]
     do {
       groups = try CodexHookSettings.hooksByEvent()
@@ -45,8 +45,8 @@ nonisolated struct CodexSettingsInstaller {
       Self.reportInvalidHookConfiguration(error)
       return .notInstalled
     }
-    let hooksState = fileInstaller.installState(settingsURL: settingsURL, hookGroupsByEvent: groups)
-    let featuresState = featuresConfigState()
+    let hooksState = try fileInstaller.installState(settingsURL: settingsURL, hookGroupsByEvent: groups)
+    let featuresState = try featuresConfigState()
     switch (hooksState, featuresState) {
     case (.installed, .upToDate): return .installed
     case (.notInstalled, .absent): return .notInstalled
@@ -84,10 +84,12 @@ nonisolated struct CodexSettingsInstaller {
   /// lines so a TOML array value (`plugins = ["x"]`) inside the section
   /// can't truncate detection, and a commented-out `# codex_hooks = true`
   /// can't false-positive as `.legacy`.
-  private func featuresConfigState() -> FeaturesConfigState {
+  private func featuresConfigState() throws -> FeaturesConfigState {
     let url = homeDirectoryURL.appending(
       path: ".codex/config.toml", directoryHint: .notDirectory)
-    guard let contents = try? String(contentsOf: url, encoding: .utf8) else { return .absent }
+    // Throws rather than reporting `.absent`: reading the flag as unset would
+    // send the auto-update off to rewrite a config file we never managed to read.
+    guard let contents = try AgentFileProbe.text(at: url) else { return .absent }
     let flags = Self.featuresFlags(in: contents)
     if flags.legacy { return .legacy }
     if flags.modern { return .upToDate }
@@ -235,7 +237,7 @@ nonisolated struct CodexSettingsInstaller {
     // Source the user's rc so a version-manager Codex on the interactive PATH is found (#504).
     // `codex_hooks` was renamed to `hooks` in newer Codex versions; the legacy name is deprecated.
     let (shell, command) = ShellClient.loginShellCommandInvocation(
-      "codex features enable hooks", userShell: loginShellURL())
+      "codex features enable hooks", userShell: loginShellURL(), workingDirectory: nil)
     process.executableURL = shell
     process.arguments = ["-l", "-c", command]
     let errorPipe = Pipe()

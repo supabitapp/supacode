@@ -5,6 +5,9 @@ inputs:
   disable-tools:
     description: Comma-separated mise tools to skip, so CI installs only what it needs.
     default: spm:swiftlang/swift-format,npm:create-dmg
+  install-fish:
+    description: Install Fish for shell-compatibility regression tests.
+    default: "false"
 
 runs:
   using: composite
@@ -27,6 +30,10 @@ runs:
       with:
         version: 2026.3.0
         cache: true
+    - name: Install Fish
+      if: ${{ inputs.install-fish == 'true' }}
+      shell: bash
+      run: brew list fish >/dev/null 2>&1 || brew install fish
     - name: Authenticate with Tuist
       if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       shell: bash
@@ -49,7 +56,7 @@ runs:
       uses: actions/cache@v5
       with:
         path: .build/ghostty
-        key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.XCODE_VERSION }}-ghostty-v3-${{ env.GHOSTTY_SHA }}-${{ hashFiles('scripts/build-ghostty.sh', 'mise.toml', '.gitmodules', 'patches/*.patch') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.XCODE_VERSION }}-ghostty-v3-${{ env.GHOSTTY_SHA }}-${{ hashFiles('scripts/build-ghostty.sh', 'mise.toml', '.gitmodules', 'patches/ghostty/*.patch') }}
     - name: Build ghostty
       if: steps.ghostty_cache.outputs.cache-hit != 'true'
       shell: bash
@@ -61,7 +68,7 @@ runs:
       uses: actions/cache@v5
       with:
         path: .build/zmx
-        key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.XCODE_VERSION }}-zmx-v1-${{ env.ZMX_SHA }}-${{ hashFiles('scripts/build-zmx.sh', 'mise.toml', '.gitmodules') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.XCODE_VERSION }}-zmx-v1-${{ env.ZMX_SHA }}-${{ hashFiles('scripts/build-zmx.sh', 'mise.toml', '.gitmodules', 'patches/zmx/*.patch') }}
     - name: Build zmx
       if: steps.zmx_cache.outputs.cache-hit != 'true'
       shell: bash

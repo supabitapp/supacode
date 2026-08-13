@@ -337,13 +337,13 @@ struct AgentHookSettingsFileInstallerTests {
     let groups = sampleHookGroups()
     try installer.install(settingsURL: url, hookGroupsByEvent: groups)
 
-    #expect(installer.installState(settingsURL: url, hookGroupsByEvent: groups) == .installed)
+    #expect(try installer.installState(settingsURL: url, hookGroupsByEvent: groups) == .installed)
   }
 
-  @Test func containsMatchingHooksReturnsFalseWhenMissing() {
+  @Test func containsMatchingHooksReturnsFalseWhenMissing() throws {
     let url = makeTempURL()
     let installer = makeInstaller()
-    #expect(installer.installState(settingsURL: url, hookGroupsByEvent: sampleHookGroups()) != .installed)
+    #expect(try installer.installState(settingsURL: url, hookGroupsByEvent: sampleHookGroups()) != .installed)
   }
 
   @Test func containsMatchingHooksLogsInvalidJSONErrors() throws {
@@ -365,12 +365,14 @@ struct AgentHookSettingsFileInstallerTests {
       }
     )
 
-    #expect(installer.installState(settingsURL: url, hookGroupsByEvent: sampleHookGroups()) != .installed)
+    #expect(throws: (any Error).self) {
+      try installer.installState(settingsURL: url, hookGroupsByEvent: sampleHookGroups())
+    }
     #expect(warnings.value.count == 1)
     #expect(warnings.value[0].contains(url.path))
   }
 
-  @Test func containsMatchingHooksDoesNotLogMissingFile() {
+  @Test func containsMatchingHooksDoesNotLogMissingFile() throws {
     let url = makeTempURL()
     let warnings = LockIsolated<[String]>([])
     let installer = AgentHookSettingsFileInstaller(
@@ -381,7 +383,7 @@ struct AgentHookSettingsFileInstallerTests {
       }
     )
 
-    #expect(installer.installState(settingsURL: url, hookGroupsByEvent: sampleHookGroups()) != .installed)
+    #expect(try installer.installState(settingsURL: url, hookGroupsByEvent: sampleHookGroups()) != .installed)
     #expect(warnings.value.isEmpty)
   }
 
@@ -420,6 +422,87 @@ struct AgentHookSettingsFileInstallerTests {
     } catch let error as TestInstallerError {
       #expect(error == .invalidRootObject)
     }
+  }
+
+  // MARK: - Unreadable vs absent.
+
+  @Test func installStateIsNotInstalledWhenTheFileGenuinelyDoesNotExist() throws {
+    // The fresh-install path: no file, no parent directory, still `.notInstalled`.
+    let installer = makeInstaller()
+    let state = try installer.installState(
+      settingsURL: makeTempURL(), hookGroupsByEvent: sampleHookGroups())
+
+    #expect(state == .notInstalled)
+  }
+
+  @Test func installStateThrowsWhenTheFileExistsButCannotBeRead() throws {
+    // The file is there but the OS refuses the read, which must not resolve to
+    // `.notInstalled`.
+    let url = makeTempURL()
+    try fileManager.createDirectory(
+      at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("{}".utf8).write(to: url)
+    try fileManager.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
+    defer { try? fileManager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path) }
+
+    let installer = makeInstaller()
+    #expect(throws: AgentFileUnreadableError.self) {
+      try installer.installState(settingsURL: url, hookGroupsByEvent: sampleHookGroups())
+    }
+  }
+
+  @Test func probeTreatsNonUTF8ContentAsUnreadableNotAbsent() throws {
+    let url = makeTempURL()
+    try fileManager.createDirectory(
+      at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+    try Data([0xFF, 0xFE, 0xFD]).write(to: url)
+
+    #expect(throws: AgentFileUnreadableError.self) { try AgentFileProbe.text(at: url) }
+  }
+
+  @Test func directoryProbeSeparatesAbsentFromNotADirectory() throws {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("supacode-dirprobe-\(UUID().uuidString)")
+    try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? fileManager.removeItem(at: root) }
+
+    let directory = root.appendingPathComponent("config", isDirectory: true)
+    try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+    let regularFile = root.appendingPathComponent("plain", isDirectory: false)
+    try Data("x".utf8).write(to: regularFile)
+
+    #expect(try AgentFileProbe.directoryExists(at: directory, fileManager: fileManager))
+    // A regular file at the config path is not the agent's config directory.
+    #expect(try !AgentFileProbe.directoryExists(at: regularFile, fileManager: fileManager))
+    #expect(
+      try !AgentFileProbe.directoryExists(
+        at: root.appendingPathComponent("missing", isDirectory: true), fileManager: fileManager))
+  }
+
+  @Test func directoryProbeFollowsSymlinks() throws {
+    // The gate must not call a symlinked config directory absent, which would
+    // tell the user to go install an agent they already have.
+    let root = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("supacode-symlink-\(UUID().uuidString)")
+    try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? fileManager.removeItem(at: root) }
+
+    let target = root.appendingPathComponent("real", isDirectory: true)
+    try fileManager.createDirectory(at: target, withIntermediateDirectories: true)
+    let link = root.appendingPathComponent("link", isDirectory: true)
+    try fileManager.createSymbolicLink(at: link, withDestinationURL: target)
+
+    #expect(try AgentFileProbe.directoryExists(at: link, fileManager: fileManager))
+  }
+
+  @Test func probeReportsAbsenceOnlyForFileNotFound() throws {
+    // `FileManager.fileExists` collapses every errno into false, which is why
+    // the probe classifies the read error instead of asking it.
+    #expect(try AgentFileProbe.data(at: makeTempURL()) == nil)
+    #expect(AgentFileProbe.isFileNotFound(CocoaError(.fileReadNoSuchFile)))
+    #expect(!AgentFileProbe.isFileNotFound(CocoaError(.fileReadNoPermission)))
+    #expect(!AgentFileProbe.isFileNotFound(NSError(domain: NSPOSIXErrorDomain, code: Int(EIO))))
   }
 }
 

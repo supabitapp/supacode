@@ -97,6 +97,45 @@ struct WorktreeEnvironmentTests {
     )
   }
 
+  @Test func commandInputTerminatesSoTheCommandAutoSubmits() {
+    // Without the terminator the command reaches the pty via initial_input and just sits at the prompt.
+    #expect(BlockingScriptRunner.makeCommandInput(script: "echo hi") == "echo hi\n")
+  }
+
+  @Test func commandInputTrimsSurroundingWhitespaceBeforeTerminating() {
+    #expect(BlockingScriptRunner.makeCommandInput(script: "  echo hi \n") == "echo hi\n")
+  }
+
+  @Test func commandInputReturnsNilForWhitespaceOnlyScripts() {
+    #expect(BlockingScriptRunner.makeCommandInput(script: " \n\t ") == nil)
+  }
+
+  @Test func combinedInitialInputTerminatesACommandOnlyTab() {
+    // #786 regressed tab-new -i by joining the command raw; it must be terminated to auto-submit.
+    #expect(
+      BlockingScriptRunner.combinedInitialInput(setupInput: nil, command: "echo hi") == "echo hi\n"
+    )
+  }
+
+  @Test func combinedInitialInputAppendsTheCommandAfterTheSetupScript() {
+    #expect(
+      BlockingScriptRunner.combinedInitialInput(setupInput: "make setup\n", command: "echo hi")
+        == "make setup\necho hi\n"
+    )
+  }
+
+  @Test func combinedInitialInputPassesThroughASetupScriptWithNoCommand() {
+    #expect(
+      BlockingScriptRunner.combinedInitialInput(setupInput: "make setup\n", command: nil)
+        == "make setup\n"
+    )
+  }
+
+  @Test func combinedInitialInputReturnsNilWhenNothingToRun() {
+    #expect(BlockingScriptRunner.combinedInitialInput(setupInput: nil, command: "  ") == nil)
+    #expect(BlockingScriptRunner.combinedInitialInput(setupInput: nil, command: nil) == nil)
+  }
+
   @Test func userScriptSurfaceEnvironmentCarriesIDKindAndScope() {
     let definition = ScriptDefinition(id: UUID(), kind: .test, name: "Unit", command: "make test")
     let env = BlockingScriptKind.script(definition).surfaceEnvironmentVariables(scope: .repo)
@@ -190,6 +229,95 @@ struct WorktreeEnvironmentTests {
     #expect(line?.contains("'echo hi'") == true)
     // No local blocking-script temp dir is referenced for the remote path.
     #expect(line?.contains("supacode-blocking-script-") == false)
+  }
+
+  @Test(arguments: LoginShellProbe.quotingContractShells)
+  func remoteBlockingScriptRunsThroughLoginShell(_ shell: String) async throws {
+    try await LoginShellProbe.withTemporaryDirectory("blocking-script-\(shell)") { root in
+      // A worktree path and a script payload that both carry the bytes the
+      // login shell would rewrite; `/` would skip the `cd` branch entirely.
+      let worktree = root.appending(path: #"worktree:it's\literal"#)
+      try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+      let marker = #"ran:it's\literal"#
+      let commandLine = try #require(
+        BlockingScriptRunner.remoteCommand(
+          host: RemoteHost(alias: "devbox"),
+          script: #"printf '%s\n' "$(pwd -P)"; printf '%s\n' 'ran:it'"'"'s\literal'"#,
+          remoteWorktreePath: worktree.path
+        )
+      )
+      // Mirror ssh's argv hand-off: the local `/bin/sh` tokenizes the line and
+      // the remote login shell receives the last word as its command.
+      let tokenizer = try await LoginShellProbe.run(
+        "sh",
+        command: """
+          set -- \(commandLine)
+          for remote_command
+          do
+            :
+          done
+          printf '%s' "$remote_command"
+          """,
+        configRoot: root
+      )
+      #expect(
+        tokenizer.status == 0,
+        "Could not tokenize the ssh command line: \(tokenizer.stderr)"
+      )
+
+      let result = try await LoginShellProbe.run(
+        shell,
+        command: tokenizer.stdout,
+        configRoot: root
+      )
+
+      #expect(result.status == 0, "\(shell) rejected the remote blocking script: \(result.stderr)")
+      #expect(
+        result.stdout.contains("\n\(marker)\n"),
+        "The remote blocking script did not run: \(result.stdout.debugDescription)"
+      )
+      #expect(
+        result.stdout.contains(LoginShellProbe.physicalPath(of: worktree)),
+        "The blocking script did not run in the worktree: \(result.stdout.debugDescription)"
+      )
+      #expect(result.stdout.components(separatedBy: "\u{1b}]133;D;").count == 2)
+    }
+  }
+
+  @Test(arguments: LoginShellProbe.quotingContractShells)
+  func remoteBlockingScriptAbortsAndFramesAMissingWorktree(_ shell: String) async throws {
+    try await LoginShellProbe.withTemporaryDirectory("blocking-abort-\(shell)") { root in
+      let marker = "must-not-run"
+      let commandLine = try #require(
+        BlockingScriptRunner.remoteCommand(
+          host: RemoteHost(alias: "devbox"),
+          script: "printf '%s\\n' '\(marker)'",
+          remoteWorktreePath: root.appending(path: "removed-on-the-host").path
+        )
+      )
+      let tokenizer = try await LoginShellProbe.run(
+        "sh",
+        command: """
+          set -- \(commandLine)
+          for remote_command
+          do
+            :
+          done
+          printf '%s' "$remote_command"
+          """,
+        configRoot: root
+      )
+      #expect(tokenizer.status == 0, "Could not tokenize: \(tokenizer.stderr)")
+
+      let result = try await LoginShellProbe.run(shell, command: tokenizer.stdout, configRoot: root)
+
+      // The abort still has to frame the command for Ghostty, exactly once, or
+      // the surface hangs waiting for a completion that never arrives.
+      #expect(result.stdout.components(separatedBy: "\u{1b}]133;D;").count == 2)
+      #expect(result.stdout.contains("\u{1b}]133;D;1\u{7}"))
+      #expect(!result.stdout.contains(marker), "The script ran outside its worktree")
+      #expect(result.status == 1, "\(shell) lost the abort exit code: \(result.stderr)")
+    }
   }
 
   @Test func remoteCommandReturnsNilForEmptyScript() {

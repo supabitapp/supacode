@@ -16,27 +16,14 @@ nonisolated struct PiSettingsInstaller {
 
   // MARK: - Check.
 
-  func installState() -> ComponentInstallState {
-    let indexURL = extensionIndexURL
-    guard fileManager.fileExists(atPath: indexURL.path(percentEncoded: false)) else {
-      return .notInstalled
-    }
-    // Treat an unreadable file (permissions, non-UTF8 contents) as not-installed
-    // but log it, so a permission or encoding fault stays diagnosable. The next
-    // Install attempt rethrows the real read error to the reducer.
-    do {
-      let contents = try String(contentsOf: indexURL, encoding: .utf8)
-      guard contents.contains(PiExtensionContent.ownershipMarker) else {
-        return .notInstalled
-      }
-      // Marker present but content drift = older Supacode wrote this file;
-      // surface as outdated so the user gets an Update affordance.
-      return contents == PiExtensionContent.indexTs ? .installed : .outdated
-    } catch {
-      piInstallerLogger.warning(
-        "Pi extension at \(indexURL.path(percentEncoded: false)) is unreadable: \(error)")
-      return .notInstalled
-    }
+  /// Throws when the extension exists but can't be read: an unreadable file is
+  /// not an absent one, and reporting absence hides the fault from the user.
+  func installState() throws -> ComponentInstallState {
+    guard let contents = try AgentFileProbe.text(at: extensionIndexURL) else { return .notInstalled }
+    guard contents.contains(PiExtensionContent.ownershipMarker) else { return .notInstalled }
+    // Marker present but content drift = older Supacode wrote this file;
+    // surface as outdated so the user gets an Update affordance.
+    return contents == PiExtensionContent.indexTs ? .installed : .outdated
   }
 
   // MARK: - Install.
@@ -45,20 +32,17 @@ nonisolated struct PiSettingsInstaller {
     // Refuse to clobber a user-authored extension at the managed path so
     // Install is symmetric with Uninstall's ownership guard.
     let indexPath = extensionIndexURL.path(percentEncoded: false)
-    if fileManager.fileExists(atPath: indexPath) {
-      let contents: String
-      do {
-        contents = try String(contentsOf: extensionIndexURL, encoding: .utf8)
-      } catch {
-        // Surface the path so the reducer's generic localizedDescription
-        // alone does not lose the file we were trying to probe.
-        piInstallerLogger.warning(
-          "Pi install pre-check: unable to read \(indexPath): \(error)")
-        throw error
-      }
-      guard contents.contains(PiExtensionContent.ownershipMarker) else {
-        throw PiSettingsInstallerError.extensionNotManaged
-      }
+    let contents: String?
+    do {
+      contents = try AgentFileProbe.text(at: extensionIndexURL)
+    } catch {
+      // Surface the path so the reducer's generic localizedDescription
+      // alone does not lose the file we were trying to probe.
+      piInstallerLogger.warning("Pi install pre-check: unable to read \(indexPath): \(error)")
+      throw error
+    }
+    if let contents, !contents.contains(PiExtensionContent.ownershipMarker) {
+      throw PiSettingsInstallerError.extensionNotManaged
     }
     let dirPath = extensionDirectoryURL.path(percentEncoded: false)
     try fileManager.createDirectory(atPath: dirPath, withIntermediateDirectories: true)
@@ -75,8 +59,9 @@ nonisolated struct PiSettingsInstaller {
   func uninstall() throws {
     let dirPath = extensionDirectoryURL.path(percentEncoded: false)
     guard fileManager.fileExists(atPath: dirPath) else { return }
-    let indexPath = extensionIndexURL.path(percentEncoded: false)
-    guard fileManager.fileExists(atPath: indexPath) else {
+    // Probe rather than stat: a read that merely failed must not be mistaken
+    // for an empty directory, which would delete whatever is really in there.
+    guard let contents = try AgentFileProbe.text(at: extensionIndexURL) else {
       try fileManager.removeItem(atPath: dirPath)
       piInstallerLogger.info("Removed stale empty Pi extension directory at \(dirPath)")
       return
@@ -84,7 +69,6 @@ nonisolated struct PiSettingsInstaller {
     // Refuse to remove a user-authored extension at the managed path;
     // surface it as a typed error so the reducer can show `.failed(…)`
     // instead of silently flipping the UI to "not installed".
-    let contents = try String(contentsOf: extensionIndexURL, encoding: .utf8)
     guard contents.contains(PiExtensionContent.ownershipMarker) else {
       throw PiSettingsInstallerError.extensionNotManaged
     }

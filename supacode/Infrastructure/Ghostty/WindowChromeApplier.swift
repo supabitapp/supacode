@@ -12,8 +12,24 @@ struct WindowAppearanceState: Equatable {
   let backgroundColorKey: String
 }
 
+/// A window that resolves its own tint instead of following the app-focused
+/// surface (a pane window carries its pane's surface color).
+@MainActor
+protocol WindowTintColorProviding: NSWindow {
+  var tintColor: (() -> NSColor?)? { get }
+}
+
 @MainActor
 enum WindowChromeApplier {
+  /// The window's tint: a self-providing window resolves its own surface,
+  /// everything else follows the app-focused surface.
+  static func tintColor(for window: NSWindow?, runtime: GhosttyRuntime) -> NSColor {
+    if let providing = window as? WindowTintColorProviding, let color = providing.tintColor?() {
+      return color
+    }
+    return runtime.windowTintColor()
+  }
+
   // Each observer site owns its own `lastApplied` so they don't fight.
   static func apply(
     window: NSWindow,
@@ -22,7 +38,7 @@ enum WindowChromeApplier {
   ) {
     guard window.isVisible else { return }
     let opacity = runtime.backgroundOpacity()
-    let tintColor = runtime.windowTintColor()
+    let tintColor = Self.tintColor(for: window, runtime: runtime)
     let next = WindowAppearanceState(
       opacity: opacity,
       isFullScreen: window.styleMask.contains(.fullScreen),
@@ -84,7 +100,7 @@ enum WindowChromeApplier {
   // (focus / OSC 11 / config), never window key/occlusion/alert events: those
   // would re-assign the same appearance and flash the window.
   static func applyWindowAppearance(window: NSWindow, runtime: GhosttyRuntime) {
-    let name: NSAppearance.Name = runtime.windowTintColor().isLightColor ? .aqua : .darkAqua
+    let name: NSAppearance.Name = Self.tintColor(for: window, runtime: runtime).isLightColor ? .aqua : .darkAqua
     guard window.appearance?.name != name else { return }
     window.appearance = NSAppearance(named: name)
   }
@@ -341,8 +357,21 @@ final class TintBackdropView: NSView {
     observers.append(
       center.addObserver(
         forName: .ghosttyTintMaskRegionDidChange, object: nil, queue: nil
-      ) { [weak self] _ in
-        MainActor.assumeIsolated { self?.rebuildMask() }
+      ) { [weak self] notification in
+        // Delivered inline on the posting main thread (queue: nil).
+        nonisolated(unsafe) let notification = notification
+        MainActor.assumeIsolated {
+          guard let self else { return }
+          // An attached region rebuilds only its own window's backdrop; a
+          // detached one (window nil) may be leaving any window, so everyone
+          // rebuilds and the vacated hole heals.
+          if let region = notification.object as? NSView, let regionWindow = region.window,
+            regionWindow !== self.window
+          {
+            return
+          }
+          self.rebuildMask()
+        }
       }
     )
     observers.append(
@@ -367,7 +396,8 @@ final class TintBackdropView: NSView {
   private func refreshColor() {
     guard let layer else { return }
     layer.backgroundColor =
-      runtime.windowTintColor().withAlphaComponent(runtime.backgroundOpacity()).cgColor
+      WindowChromeApplier.tintColor(for: window, runtime: runtime)
+      .withAlphaComponent(runtime.backgroundOpacity()).cgColor
   }
 
   private func setNeedsMaskRebuild() {
@@ -380,11 +410,14 @@ final class TintBackdropView: NSView {
     }
   }
 
-  // The terminal body region is punched as a hole so behind it there is only
-  // blur, and each surface paints its own OSC 11 color over that blur at the same
-  // opacity (no double background, seamless with the chrome). The hole tracks the
-  // stable container, not individual surfaces: the container's frame is known
-  // before any surface paints, so a surface can never present over uncut tint.
+  // Each mounted surface wrapper is punched as a hole so behind it there is
+  // only blur, and the surface paints its own OSC 11 color over that blur at
+  // the same opacity (no double background, seamless with the chrome). A
+  // wrapper posts from its own layout pass and the rebuild runs inline on
+  // that post, so the hole lands in the same pass as the geometry it tracks.
+  private var lastAppliedHoleRects: [CGRect]?
+  private var lastAppliedMaskBounds = CGRect.null
+
   private func rebuildMask() {
     guard layer != nil else { return }
     var holeRects: [CGRect] = []
@@ -404,6 +437,13 @@ final class TintBackdropView: NSView {
       // No holes get punched, so the tint would double behind the terminal body.
       chromeLogger.warning("Tint backdrop has no superview; mask rebuilt without region holes")
     }
+    // Most layout passes move nothing relative to the backdrop; skip the
+    // layer churn when the mask would be identical.
+    if holeRects == lastAppliedHoleRects, bounds == lastAppliedMaskBounds {
+      return
+    }
+    lastAppliedHoleRects = holeRects
+    lastAppliedMaskBounds = bounds
     let path = CGMutablePath()
     for rect in WindowChromeApplier.maskHoleRects(holeRects: holeRects, bounds: bounds) {
       path.addRect(rect)

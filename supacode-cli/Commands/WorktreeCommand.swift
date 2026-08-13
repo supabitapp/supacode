@@ -144,7 +144,7 @@ extension WorktreeCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let id = try resolveWorktreeID(worktree)
+      let id = try IDResolvers.resolveWorktreeID(worktree)
       let items: [[String: String]]
       do {
         items = try QueryDispatcher.query(
@@ -177,7 +177,7 @@ extension WorktreeCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let id = try resolveWorktreeID(worktree)
+      let id = try IDResolvers.resolveWorktreeID(worktree)
       try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.worktreeSelect(worktreeID: id),
         timeoutSeconds: timeoutOption.timeout
@@ -201,7 +201,7 @@ extension WorktreeCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let id = try resolveWorktreeID(worktree)
+      let id = try IDResolvers.resolveWorktreeID(worktree)
       guard let script else {
         try Dispatcher.dispatch(
           deeplinkURL: backgroundOption.applied(
@@ -210,7 +210,7 @@ extension WorktreeCommand {
         )
         return
       }
-      let scriptID = try validatedScriptID(script)
+      let scriptID = try IDResolvers.validatedScriptID(script)
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.scriptRun(worktreeID: id, scriptID: scriptID)),
@@ -235,7 +235,7 @@ extension WorktreeCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let id = try resolveWorktreeID(worktree)
+      let id = try IDResolvers.resolveWorktreeID(worktree)
       guard let script else {
         try Dispatcher.dispatch(
           deeplinkURL: backgroundOption.applied(
@@ -244,7 +244,7 @@ extension WorktreeCommand {
         )
         return
       }
-      let scriptID = try validatedScriptID(script)
+      let scriptID = try IDResolvers.validatedScriptID(script)
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.scriptStop(worktreeID: id, scriptID: scriptID)),
@@ -264,7 +264,7 @@ extension WorktreeCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let id = try resolveWorktreeID(worktree)
+      let id = try IDResolvers.resolveWorktreeID(worktree)
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.worktreeAction("archive", worktreeID: id)),
@@ -284,7 +284,7 @@ extension WorktreeCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let id = try resolveWorktreeID(worktree)
+      let id = try IDResolvers.resolveWorktreeID(worktree)
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.worktreeAction("unarchive", worktreeID: id)),
@@ -304,7 +304,7 @@ extension WorktreeCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let id = try resolveWorktreeID(worktree)
+      let id = try IDResolvers.resolveWorktreeID(worktree)
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.worktreeAction("delete", worktreeID: id)),
@@ -324,7 +324,7 @@ extension WorktreeCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let id = try resolveWorktreeID(worktree)
+      let id = try IDResolvers.resolveWorktreeID(worktree)
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.worktreeAction("pin", worktreeID: id)),
@@ -344,7 +344,7 @@ extension WorktreeCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let id = try resolveWorktreeID(worktree)
+      let id = try IDResolvers.resolveWorktreeID(worktree)
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.worktreeAction("unpin", worktreeID: id)),
@@ -370,7 +370,7 @@ extension WorktreeCommand {
     @OptionGroup var timeoutOption: TimeoutOption
 
     func run() throws {
-      let id = try resolveWorktreeID(worktree)
+      let id = try IDResolvers.resolveWorktreeID(worktree)
       guard title != nil || color != nil else {
         let items = try QueryDispatcher.query(
           resource: "worktreeAppearance",

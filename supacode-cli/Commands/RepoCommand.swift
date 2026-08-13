@@ -119,7 +119,7 @@ extension RepoCommand {
     }
 
     func run() throws {
-      let rID = try resolveRepoID(repo)
+      let rID = try IDResolvers.resolveRepoID(repo)
       // An empty `upstream` query value means "no upstream"; omitted means automatic.
       let resolvedUpstream = noUpstream ? "" : upstream
       let id = try Dispatcher.dispatch(

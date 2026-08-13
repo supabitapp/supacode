@@ -194,7 +194,7 @@ private struct WorktreeRefPickerField<TopRows: View>: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(title)
         Text(caption)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
       }
       HStack(spacing: 8) {
@@ -309,7 +309,7 @@ private struct WorktreeRefFilterResults: View {
   var body: some View {
     if matches.isEmpty {
       Text("No matching branches")
-        .font(.callout)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
     } else {
       VStack(alignment: .leading, spacing: 0) {
@@ -329,7 +329,7 @@ private struct WorktreeRefFilterResults: View {
         .padding(.horizontal, -4)
         if total > matches.count {
           Text("\(rangeStart) to \(rangeEnd), out of \(total)")
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
             .padding(.top, 2)
         }
@@ -359,7 +359,7 @@ private struct WorktreeRefResultRow: View {
           .truncationMode(.middle)
         Spacer(minLength: 8)
         Text(display.scope)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
       }
       .padding(.vertical, 3)

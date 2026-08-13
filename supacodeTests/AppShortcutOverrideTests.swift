@@ -247,7 +247,7 @@ struct AppShortcutOverrideTests {
 
   @Test func ghosttyKeybindSpecialKeys() {
     let cases: [(Int, String)] = [
-      (kVK_Return, "return"),
+      (kVK_Return, "enter"),
       (kVK_Escape, "escape"),
       (kVK_Delete, "backspace"),
       (kVK_Tab, "tab"),

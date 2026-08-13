@@ -26,12 +26,12 @@ nonisolated enum AntigravityHookSettings {
     let stop = AgentHookSettingsCommand.claudeStopCommand(agent: .antigravity)
 
     let events: [EventSpec] = [
-      .init(name: "SessionStart", command: sessionStart, timeout: 5),
-      .init(name: "PreInvocation", command: busy, timeout: 5),
-      .init(name: "PreToolUse", command: busy, timeout: 5),
-      .init(name: "PostInvocation", command: idle, timeout: 5),
-      .init(name: "PostToolUse", command: idle, timeout: 5),
-      .init(name: "Stop", command: stop, timeout: 10),
+      .init(name: "SessionStart", command: sessionStart, timeout: AgentHookSettingsCommand.timeoutSeconds),
+      .init(name: "PreInvocation", command: busy, timeout: AgentHookSettingsCommand.timeoutSeconds),
+      .init(name: "PreToolUse", command: busy, timeout: AgentHookSettingsCommand.timeoutSeconds),
+      .init(name: "PostInvocation", command: idle, timeout: AgentHookSettingsCommand.timeoutSeconds),
+      .init(name: "PostToolUse", command: idle, timeout: AgentHookSettingsCommand.timeoutSeconds),
+      .init(name: "Stop", command: stop, timeout: AgentHookSettingsCommand.timeoutSeconds),
     ]
 
     var result: [String: [JSONValue]] = [:]

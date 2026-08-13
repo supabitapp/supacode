@@ -23,6 +23,8 @@ jobs:
         with:
           submodules: recursive
       - uses: ./.github/actions/setup-macos
+        with:
+          install-fish: true
       - parallel:
           - run: make lint
           - run: make inspect-dependencies

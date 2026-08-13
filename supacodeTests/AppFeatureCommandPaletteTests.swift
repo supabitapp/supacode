@@ -2,6 +2,7 @@ import ComposableArchitecture
 import DependenciesTestSupport
 import Foundation
 import IdentifiedCollections
+import SwiftUI
 import Testing
 
 @testable import SupacodeSettingsFeature
@@ -56,13 +57,61 @@ struct AppFeatureCommandPaletteTests {
   }
 
   @Test(.dependencies) func refreshWorktreesDispatchesRefresh() async {
+    let watcherCommands = LockIsolated<[WorktreeInfoWatcherClient.Command]>([])
     let store = TestStore(initialState: AppFeature.State()) {
       AppFeature()
+    } withDependencies: {
+      $0.worktreeInfoWatcher.send = { command in
+        watcherCommands.withValue { $0.append(command) }
+      }
     }
     store.exhaustivity = .off
 
     await store.send(.commandPalette(.delegate(.refreshWorktrees)))
+    await store.receive(\.refreshWorktreesRequested)
     await store.receive(\.repositories.refreshWorktrees)
+    await store.receive(\.repositories.reloadRepositories)
+    await store.finish()
+
+    #expect(watcherCommands.value == [.refresh])
+  }
+
+  @Test(.dependencies) func scenePhaseChangesToggleWatcherActiveState() async {
+    let watcherCommands = LockIsolated<[WorktreeInfoWatcherClient.Command]>([])
+    let store = TestStore(initialState: AppFeature.State()) {
+      AppFeature()
+    } withDependencies: {
+      $0.worktreeInfoWatcher.send = { command in
+        watcherCommands.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    // `.inactive` cancels the periodic-refresh loop `.active` starts.
+    await store.send(.scenePhaseChanged(.active))
+    await store.send(.scenePhaseChanged(.inactive))
+    await store.finish()
+
+    #expect(watcherCommands.value.contains(.setActive(true)))
+    #expect(watcherCommands.value.contains(.setActive(false)))
+  }
+
+  @Test(.dependencies) func repositoryRefreshDoesNotForceWorktreeInfoRefresh() async {
+    let watcherCommands = LockIsolated<[WorktreeInfoWatcherClient.Command]>([])
+    let store = TestStore(initialState: AppFeature.State()) {
+      AppFeature()
+    } withDependencies: {
+      $0.worktreeInfoWatcher.send = { command in
+        watcherCommands.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.repositories(.refreshWorktrees))
+    await store.receive(\.repositories.reloadRepositories)
+    await store.finish()
+
+    #expect(watcherCommands.value.isEmpty)
   }
 
   @Test(.dependencies) func viewArchivedWorktreesDispatchesSelectArchived() async {
@@ -205,7 +254,7 @@ struct AppFeatureCommandPaletteTests {
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)
-    let capturedTabID = TerminalTabID()
+    let capturedTabID = TabID()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
@@ -237,7 +286,7 @@ struct AppFeatureCommandPaletteTests {
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)
-    let capturedTabID = TerminalTabID()
+    let capturedTabID = TabID()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
       initialState: AppFeature.State(
@@ -269,8 +318,8 @@ struct AppFeatureCommandPaletteTests {
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [repository]
     repositoriesState.selection = .worktree(worktree.id)
-    let firstTabID = TerminalTabID()
-    let secondTabID = TerminalTabID()
+    let firstTabID = TabID()
+    let secondTabID = TabID()
     let currentTabID = LockIsolated(firstTabID)
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = TestStore(
@@ -325,6 +374,39 @@ struct AppFeatureCommandPaletteTests {
     await store.finish()
 
     #expect(sent.value == [.beginTabRename(worktree, tabID: nil)])
+  }
+
+  @Test(.dependencies) func promptTitleGhosttyCommandDoesNothingForMissingWorktree() async {
+    let worktree = Worktree(
+      id: WorktreeID("/tmp/repo-ghostty/missing"),
+      name: "wt-1",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo-ghostty/missing"),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo-ghostty"),
+      isMissing: true
+    )
+    let repository = makeRepository(id: "/tmp/repo-ghostty", worktrees: [worktree])
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.selection = .worktree(worktree.id)
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+
+    await store.send(.commandPalette(.delegate(.ghosttyCommand("prompt_tab_title"))))
+    await store.finish()
+
+    #expect(sent.value.isEmpty)
   }
 
   @Test(.dependencies) func nonPromptTitleGhosttyCommandFallsThroughToBindingAction() async {
