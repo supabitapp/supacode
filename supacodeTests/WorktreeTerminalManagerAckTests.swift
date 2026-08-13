@@ -90,7 +90,7 @@ struct WorktreeTerminalManagerAckTests {
       var events: [TerminalClient.Event] = []
       while events.count < count, let event = await iterator.next() {
         switch event {
-        case .tabCreated, .surfaceCreated, .surfaceCreationFailed:
+        case .tabCreated, .surfaceCreated, .surfaceCreationFailed, .initialTabCreationFailed:
           events.append(event)
         default:
           continue
@@ -133,6 +133,26 @@ struct WorktreeTerminalManagerAckTests {
     }
     #expect(worktreeID == worktree.id)
     #expect(attemptedID == id)
+  }
+
+  @Test(.dependencies) func ensureInitialTabWithoutAStoreEmitsInitialTabFailure() async {
+    // The initial bootstrap emits its own failure event so only it settles the
+    // worktree-new ack and the creation-progress overlay.
+    let worktree = makeWorktree()
+    let manager = withDependencies {
+      $0.zmxClient = .noop
+    } operation: {
+      WorktreeTerminalManager(runtime: GhosttyRuntime())
+    }
+    let pump = CreationEvents(manager)
+    manager.handleCommand(.ensureInitialTab(worktree, runSetupScriptIfNew: false, focusing: false))
+
+    let events = await pump.next(1)
+    guard case .initialTabCreationFailed(let worktreeID, _) = events.first else {
+      Issue.record("Expected initialTabCreationFailed, got \(events)")
+      return
+    }
+    #expect(worktreeID == worktree.id)
   }
 
   @Test(.dependencies) func collidingContentIDCreateFailsInsteadOfFalselyAcking() async {

@@ -160,6 +160,208 @@ struct AppFeatureCommandAckTests {
     #expect(response?["id"] as? String == expectedID)
   }
 
+  @Test(.dependencies) func tabCreatedResolvesWorktreeNewAckAndClearsPending() async {
+    // The CLI `worktree new` path: the first tab both resolves the worktree-new
+    // ack and clears the creation-progress overlay in one reduction, so the
+    // `.merge(ackEffect, ready)` halves must not shadow each other.
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .pending
+    repositoriesState.applyPostReduceCacheRecomputes()
+    var initial = AppFeature.State(
+      repositories: repositoriesState,
+      settings: SettingsFeature.State()
+    )
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1,
+      match: .worktreeNew(pendingID: WorktreeID("pending:cli-1"), worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.terminalEvent(.tabCreated(worktreeID: worktree.id)))
+    await store.receive(\.repositories.worktreeCreationSettled)
+    await store.receive(\.repositories.sidebarItems)
+    await store.finish()
+
+    // Ack half drains ok with the created id; readiness half clears the overlay.
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+    #expect(store.state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .idle)
+  }
+
+  @Test(.dependencies) func surfaceBearingProjectionResolvesWorktreeNewAck() async {
+    // Drop-resistant backstop: if `.tabCreated` is shed, the replayed
+    // surface-bearing projection still drains the worktree-new ack so the CLI
+    // never waits on its watchdog.
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .pending
+    repositoriesState.applyPostReduceCacheRecomputes()
+    var initial = AppFeature.State(
+      repositories: repositoriesState,
+      settings: SettingsFeature.State()
+    )
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1,
+      match: .worktreeNew(pendingID: WorktreeID("pending:cli-1"), worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in }
+      $0.date = .constant(Date(timeIntervalSince1970: 0))
+      $0.continuousClock = ImmediateClock()
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .terminalEvent(
+        .worktreeProjectionChanged(
+          worktree.id,
+          WorktreeRowProjection(
+            surfaceIDs: [UUID()],
+            isProgressBusy: false,
+            hasUnseenNotifications: false,
+            notifications: []
+          ))))
+    await store.finish()
+
+    await store.receive(\.repositories.worktreeCreationSettled)
+    await store.receive(\.repositories.sidebarItems)
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    let response = readPipeJSON(readFD)
+    #expect(response?["ok"] as? Bool == true)
+    let expectedID = worktree.id.rawValue.addingPercentEncoding(
+      withAllowedCharacters: CharacterSet.urlPathAllowed.subtracting(.init(charactersIn: "/")))
+    #expect(response?["id"] as? String == expectedID)
+    // The same reduction settles the overlay, not just the ack.
+    #expect(store.state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .idle)
+  }
+
+  @Test(.dependencies) func surfaceCreationFailedDoesNotResolveWorktreeNewAck() async {
+    // An ordinary tab / split failure must not fail the worktree-new ack; only
+    // the initial-tab bootstrap (`.initialTabCreationFailed`) resolves it.
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    var initial = AppFeature.State(
+      repositories: makeRepositoriesState(worktree: worktree),
+      settings: SettingsFeature.State()
+    )
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1,
+      match: .worktreeNew(pendingID: WorktreeID("pending:cli-1"), worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .terminalEvent(.surfaceCreationFailed(worktreeID: worktree.id, attemptedID: UUID(), message: "boom")))
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
+  }
+
+  @Test(.dependencies) func initialTabCreationFailedFailsWorktreeNewAckAndSettles() async {
+    // A failed initial-tab bootstrap fails the worktree-new ack and settles the
+    // overlay so the worktree shows with no tabs.
+    let worktree = makeWorktree()
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    var repositoriesState = makeRepositoriesState(worktree: worktree)
+    repositoriesState.reconcileSidebarForTesting()
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .pending
+    repositoriesState.applyPostReduceCacheRecomputes()
+    var initial = AppFeature.State(
+      repositories: repositoriesState,
+      settings: SettingsFeature.State()
+    )
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1,
+      match: .worktreeNew(pendingID: WorktreeID("pending:cli-1"), worktreeID: worktree.id))
+    let store = TestStore(initialState: initial) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.terminalEvent(.initialTabCreationFailed(worktreeID: worktree.id, message: "boom")))
+    await store.receive(\.repositories.worktreeCreationSettled)
+    await store.receive(\.repositories.sidebarItems)
+    await store.finish()
+
+    // Ack half fails, readiness half settles the overlay to the empty state.
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+    #expect(store.state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .idle)
+  }
+
+  @Test(.dependencies) func cancellingCreationResolvesWorktreeNewAckEvenIfGitSucceeds() async {
+    // A CLI worktree-new cancelled around the time git materializes it must
+    // still drain its ack (via cliWorktreeAckCancelled), never ride the watchdog.
+    let created = Worktree(
+      id: WorktreeID("/tmp/repo/wt-new"),
+      name: "wt-new",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-new"),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
+    )
+    let pendingID = WorktreeID("pending:cli-1")
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    var repositoriesState = makeRepositoriesState(worktree: makeWorktree())
+    repositoriesState.pendingWorktrees = [
+      PendingWorktree(
+        id: pendingID,
+        repositoryID: "/tmp/repo",
+        progress: WorktreeCreationProgress(stage: .creatingWorktree, worktreeName: "wt-new")
+      )
+    ]
+    var initial = AppFeature.State(
+      repositories: repositoriesState,
+      settings: SettingsFeature.State()
+    )
+    initial.pendingCommandAcks[id: writeFD] = AppFeature.PendingCommandAck(
+      responseFD: writeFD, token: 1,
+      match: .worktreeNew(pendingID: pendingID, worktreeID: nil))
+    let store = TestStore(initialState: initial) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in }
+      $0.gitClient.removeWorktree = { worktree, _ in worktree.workingDirectory }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.repositories(.cancelPendingWorktree(pendingID)))
+    await store.send(
+      .repositories(.createRandomWorktreeSucceeded(created, repositoryID: "/tmp/repo", pendingID: pendingID)))
+    await store.finish()
+
+    // The ack drained as cancelled instead of waiting on the watchdog.
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == false)
+  }
+
   @Test(.dependencies) func worktreeNewAckFailsByPendingID() async {
     let worktree = makeWorktree()
     let pendingID = WorktreeID("pending:cli-77")

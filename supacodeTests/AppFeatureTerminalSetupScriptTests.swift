@@ -33,7 +33,7 @@ struct AppFeatureTerminalSetupScriptTests {
 
     await store.send(.newTerminal)
     await store.send(.terminalEvent(.setupScriptConsumed(worktreeID: worktree.id)))
-    await store.receive(\.repositories.consumeSetupScript)
+    await store.receive(\.repositories.worktreeCreationSettled)
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.lifecycle = .idle
       $0.repositories.applyPostReduceCacheRecomputes(
@@ -70,7 +70,10 @@ struct AppFeatureTerminalSetupScriptTests {
     #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: false, id: nil)])
   }
 
-  @Test(.dependencies) func tabCreatedDoesNotConsumeSetupScript() async {
+  @Test(.dependencies) func tabCreatedClearsPending() async {
+    // A hosted tab is the readiness condition, so `.tabCreated` clears the
+    // creation-progress state even when no setup script runs (empty script,
+    // skip, or hydrated layout never emit `.setupScriptConsumed`).
     let worktree = makeWorktree()
     let repositoriesState = makeRepositoriesState(
       worktree: worktree,
@@ -87,8 +90,209 @@ struct AppFeatureTerminalSetupScriptTests {
     }
 
     await store.send(.terminalEvent(.tabCreated(worktreeID: worktree.id)))
-    #expect(store.state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending)
+    await store.receive(\.repositories.worktreeCreationSettled)
+    await store.receive(\.repositories.sidebarItems) {
+      $0.repositories.sidebarItems[id: worktree.id]?.lifecycle = .idle
+      $0.repositories.applyPostReduceCacheRecomputes(
+        [.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice]
+      )
+    }
     await store.finish()
+  }
+
+  @Test(.dependencies) func setupScriptConsumedThenTabCreatedClearsOnce() async {
+    // The setup-script fast path and the tab-created readiness both clear the
+    // same pending latch; the second arrival is an idempotent no-op.
+    let worktree = makeWorktree()
+    let repositoriesState = makeRepositoriesState(
+      worktree: worktree,
+      pendingSetupScript: true,
+      selected: true
+    )
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(.terminalEvent(.setupScriptConsumed(worktreeID: worktree.id)))
+    await store.receive(\.repositories.worktreeCreationSettled)
+    await store.receive(\.repositories.sidebarItems) {
+      $0.repositories.sidebarItems[id: worktree.id]?.lifecycle = .idle
+      $0.repositories.applyPostReduceCacheRecomputes(
+        [.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice]
+      )
+    }
+    // The later readiness signal re-fires but the row is already idle: the
+    // guard makes it inert (no follow-up `sidebarItems` mutation).
+    await store.send(.terminalEvent(.tabCreated(worktreeID: worktree.id)))
+    await store.receive(\.repositories.worktreeCreationSettled)
+    await store.finish()
+  }
+
+  @Test(.dependencies) func surfaceCreationFailedKeepsPending() async {
+    // A failure must NOT clear `.pending`: `.surfaceCreationFailed` also covers
+    // ordinary tab / split failures, so clearing here would strand an unrelated
+    // failure onto the initial bootstrap's overlay.
+    let worktree = makeWorktree()
+    let repositoriesState = makeRepositoriesState(
+      worktree: worktree,
+      pendingSetupScript: true,
+      selected: true
+    )
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(
+      .terminalEvent(.surfaceCreationFailed(worktreeID: worktree.id, attemptedID: UUID(), message: "boom"))
+    )
+    await store.finish()
+    #expect(store.state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending)
+  }
+
+  @Test(.dependencies) func initialTabCreationFailedSettlesPending() async {
+    // A failed initial-tab bootstrap settles the overlay so the worktree shows
+    // with no tabs (a valid empty state), unlike an ordinary surface failure.
+    let worktree = makeWorktree()
+    let repositoriesState = makeRepositoriesState(
+      worktree: worktree,
+      pendingSetupScript: true,
+      selected: true
+    )
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(.terminalEvent(.initialTabCreationFailed(worktreeID: worktree.id, message: "boom")))
+    await store.receive(\.repositories.worktreeCreationSettled)
+    await store.receive(\.repositories.sidebarItems) {
+      $0.repositories.sidebarItems[id: worktree.id]?.lifecycle = .idle
+      $0.repositories.applyPostReduceCacheRecomputes(
+        [.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice]
+      )
+    }
+    await store.finish()
+  }
+
+  @Test(.dependencies) func worktreeCreationSettledIgnoresNonPendingLifecycle() async {
+    // The settle only clears `.pending`; a late signal during teardown must not
+    // resurrect a `.deleting` row.
+    let worktree = makeWorktree()
+    var repositoriesState = makeRepositoriesState(
+      worktree: worktree,
+      pendingSetupScript: false,
+      selected: true
+    )
+    repositoriesState.sidebarItems[id: worktree.id]?.lifecycle = .deleting
+    repositoriesState.applyPostReduceCacheRecomputes()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(.terminalEvent(.tabCreated(worktreeID: worktree.id)))
+    await store.receive(\.repositories.worktreeCreationSettled)
+    await store.finish()
+    #expect(store.state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .deleting)
+  }
+
+  @Test(.dependencies) func projectionWithSurfacesClearsPending() async {
+    // Drop-resistant backstop: a pending row that now hosts a tab is ready,
+    // even if the one-shot `.tabCreated` / `.setupScriptConsumed` was missed.
+    let worktree = makeWorktree()
+    let repositoriesState = makeRepositoriesState(
+      worktree: worktree,
+      pendingSetupScript: true,
+      selected: true
+    )
+    // A surface-bearing selected row's cache recompute reads the live
+    // date/clock, so supply test values to keep the store hermetic.
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.date = .constant(Date(timeIntervalSince1970: 0))
+      $0.continuousClock = ImmediateClock()
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .terminalEvent(
+        .worktreeProjectionChanged(
+          worktree.id,
+          WorktreeRowProjection(
+            surfaceIDs: [UUID()],
+            isProgressBusy: false,
+            hasUnseenNotifications: false,
+            notifications: []
+          )
+        )
+      )
+    )
+    await store.receive(\.repositories.worktreeCreationSettled)
+    // Drive the follow-up lifecycle flip so the non-exhaustive store applies it
+    // before the assertion (the projection also fans out its own
+    // `sidebarItems` action, hence exhaustivity off).
+    await store.receive(\.repositories.sidebarItems)
+    #expect(store.state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .idle)
+    await store.finish()
+  }
+
+  @Test(.dependencies) func projectionWithoutSurfacesKeepsPending() async {
+    // An empty projection is not readiness: the pending latch must survive it.
+    let worktree = makeWorktree()
+    let repositoriesState = makeRepositoriesState(
+      worktree: worktree,
+      pendingSetupScript: true,
+      selected: true
+    )
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .terminalEvent(
+        .worktreeProjectionChanged(
+          worktree.id,
+          WorktreeRowProjection(
+            surfaceIDs: [],
+            isProgressBusy: false,
+            hasUnseenNotifications: false,
+            notifications: []
+          )
+        )
+      )
+    )
+    await store.finish()
+    #expect(store.state.repositories.sidebarItems[id: worktree.id]?.lifecycle == .pending)
   }
 
   @Test(.dependencies) func setupScriptConsumedEventClearsPending() async {
@@ -108,7 +312,7 @@ struct AppFeatureTerminalSetupScriptTests {
     }
 
     await store.send(.terminalEvent(.setupScriptConsumed(worktreeID: worktree.id)))
-    await store.receive(\.repositories.consumeSetupScript)
+    await store.receive(\.repositories.worktreeCreationSettled)
     await store.receive(\.repositories.sidebarItems) {
       $0.repositories.sidebarItems[id: worktree.id]?.lifecycle = .idle
       $0.repositories.applyPostReduceCacheRecomputes(

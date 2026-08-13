@@ -467,7 +467,10 @@ struct RepositoriesFeature {
       name: String?,
       baseDirectory: URL
     )
-    case consumeSetupScript(Worktree.ID)
+    /// A worktree's creation flow settled: its first tab is hosted, or the
+    /// initial-tab bootstrap failed and it rests tab-less (a valid empty state).
+    /// Clears creation progress; idempotent, so a late or repeated signal is harmless.
+    case worktreeCreationSettled(Worktree.ID)
     case consumeTerminalFocus(Worktree.ID)
     case scriptCompleted(
       worktreeID: Worktree.ID, kind: BlockingScriptKind, exitCode: Int?, tabId: TabID?)
@@ -4246,7 +4249,7 @@ struct RepositoriesFeature {
         }
         return .merge(effects)
 
-      case .consumeSetupScript(let id):
+      case .worktreeCreationSettled(let id):
         guard state.sidebarItems[id: id]?.lifecycle == .pending else { return .none }
         return .send(.sidebarItems(.element(id: id, action: .lifecycleChanged(.idle))))
 

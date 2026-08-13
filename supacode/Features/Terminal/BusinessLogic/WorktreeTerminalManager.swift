@@ -901,7 +901,8 @@ final class WorktreeTerminalManager {
     tabID: UUID? = nil,
     customTitle: String? = nil,
     focusing: Bool = true,
-    anchor: UUID? = nil
+    anchor: UUID? = nil,
+    isInitialTab: Bool = false
   ) {
     let host = host(for: worktree) { runSetupScriptIfNew }
     // Mint upfront so a title-only request still has a rename target, keeping
@@ -909,9 +910,7 @@ final class WorktreeTerminalManager {
     let mintedID = tabID ?? UUID()
     guard let layout = layoutState(for: worktree.id)?.layout else {
       // Drain a waiting CLI ack now instead of stranding it until the timeout.
-      emit(
-        .surfaceCreationFailed(
-          worktreeID: worktree.id, attemptedID: mintedID, message: "Could not create the tab."))
+      emitTabCreationFailure(for: worktree, attemptedID: mintedID, isInitialTab: isInitialTab)
       return
     }
     let setupInput = consumeSetupScriptInput(for: worktree, host: host)
@@ -951,9 +950,7 @@ final class WorktreeTerminalManager {
         .tabs[id: TabID(rawValue: mintedID)]?.content.id.rawValue == mintedID
     guard created else {
       // Drain a waiting CLI ack now instead of stranding it until the timeout.
-      emit(
-        .surfaceCreationFailed(
-          worktreeID: worktree.id, attemptedID: mintedID, message: "Could not create the tab."))
+      emitTabCreationFailure(for: worktree, attemptedID: mintedID, isInitialTab: isInitialTab)
       return
     }
     emit(.tabCreated(worktreeID: worktree.id))
@@ -1005,7 +1002,19 @@ final class WorktreeTerminalManager {
       emit(.tabCreated(worktreeID: worktree.id))
       return
     }
-    createTabAsync(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, focusing: focusing)
+    createTabAsync(
+      in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, focusing: focusing, isInitialTab: true)
+  }
+
+  /// Emits the right failure event for a refused tab creation: the initial-tab
+  /// bootstrap gets its own event so only it settles the worktree-new ack and
+  /// creation-progress state, never an ordinary tab / split failure.
+  private func emitTabCreationFailure(for worktree: Worktree, attemptedID: UUID, isInitialTab: Bool) {
+    let message = "Could not create the tab."
+    emit(
+      isInitialTab
+        ? .initialTabCreationFailed(worktreeID: worktree.id, message: message)
+        : .surfaceCreationFailed(worktreeID: worktree.id, attemptedID: attemptedID, message: message))
   }
 
   /// Launches a blocking script in a locked, ephemeral tab.

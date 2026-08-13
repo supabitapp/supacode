@@ -517,7 +517,7 @@ extension RepositoriesFeature.Action {
     case .createRandomWorktreeSucceeded, .createRandomWorktreeFailed,
       .pendingWorktreeProgressUpdated, .cancelPendingWorktree,
       .archiveScriptCompleted, .deleteScriptCompleted, .scriptCompleted,
-      .consumeSetupScript,
+      .worktreeCreationSettled,
       .pinWorktree, .unpinWorktree:
       return [.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice]
 

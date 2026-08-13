@@ -157,6 +157,10 @@ struct TerminalClient {
     /// blocking-script tab, or the layout insert threw). Lets a CLI completion
     /// ack report the failure instead of waiting for its timeout.
     case surfaceCreationFailed(worktreeID: Worktree.ID, attemptedID: UUID, message: String)
+    /// The initial-tab bootstrap for a new worktree failed. Distinct from
+    /// `surfaceCreationFailed` so only this resolves the worktree-new ack and
+    /// settles creation progress; the worktree then rests with no tabs.
+    case initialTabCreationFailed(worktreeID: Worktree.ID, message: String)
   }
 }
 

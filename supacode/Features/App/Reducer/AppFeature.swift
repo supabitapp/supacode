@@ -1810,7 +1810,7 @@ struct AppFeature {
           .send(.commandPalette(.togglePresentInMode(.commands)))
         )
       case .terminalEvent(.setupScriptConsumed(let worktreeID)):
-        return .send(.repositories(.consumeSetupScript(worktreeID)))
+        return .send(.repositories(.worktreeCreationSettled(worktreeID)))
 
       case .terminalEvent(.blockingScriptCompleted(let worktreeID, let kind, let exitCode, let tabId)):
         switch kind {
@@ -1858,14 +1858,34 @@ struct AppFeature {
             )
           )
         )
-        guard !restoredAddedSurfaces.isEmpty else { return projectionEffect }
+        // Backstop the `.tabCreated` one-shot: a surface-bearing projection
+        // re-resolves the worktree-new ack and settles progress if that event
+        // was shed, so the CLI never rides its watchdog.
+        var readyEffect: Effect<Action> = .none
+        if !projection.surfaceIDs.isEmpty {
+          let ackBackstop = resolveCommandAcks(
+            ok: true, resourceID: Self.percentEncodedID(worktreeID.rawValue), state: &state
+          ) { match in
+            if case .worktreeNew(_, let boundID?) = match { return boundID == worktreeID }
+            return false
+          }
+          let settle: Effect<Action> =
+            row.lifecycle == .pending
+            ? .send(.repositories(.worktreeCreationSettled(worktreeID)))
+            : .none
+          readyEffect = .merge(ackBackstop, settle)
+        }
+        guard !restoredAddedSurfaces.isEmpty else { return .merge(projectionEffect, readyEffect) }
         // Keep the delegate hop here: `projectionEffect` must apply
         // `terminalProjectionChanged` first so the fan-out reads the updated
         // `surfaceIDs`. A direct `agentPresenceFanOutEffect(...)` would
         // capture pre-projection state and miss the new surface.
-        return .concatenate(
-          projectionEffect,
-          .send(.agentPresence(.delegate(.surfacesChanged(restoredAddedSurfaces))))
+        return .merge(
+          .concatenate(
+            projectionEffect,
+            .send(.agentPresence(.delegate(.surfacesChanged(restoredAddedSurfaces))))
+          ),
+          readyEffect
         )
 
       case .terminalEvent(.surfaceCreated(let worktreeID, let id)):
@@ -1884,28 +1904,41 @@ struct AppFeature {
       case .terminalEvent(.tabCreated(let worktreeID)):
         // Resolve worktree-new acks once the new worktree's first tab exists,
         // returning the created worktree id to the CLI.
-        return resolveCommandAcks(
+        let ackEffect = resolveCommandAcks(
           ok: true, resourceID: Self.percentEncodedID(worktreeID.rawValue), state: &state
         ) { match in
           if case .worktreeNew(_, let boundID?) = match { return boundID == worktreeID }
           return false
         }
+        // A hosted tab is the worktree's readiness condition, so clear the
+        // creation-progress state here regardless of the setup-script path
+        // (empty script, skip, or hydrated layout never emit `.setupScriptConsumed`).
+        return .merge(ackEffect, .send(.repositories(.worktreeCreationSettled(worktreeID))))
 
       case .terminalEvent(.surfaceCreationFailed(let worktreeID, let attemptedID, let message)):
+        // An ordinary tab / split failure: resolve only its own ack. It never
+        // touches `.pending` or the worktree-new ack, which belong to the
+        // initial-tab bootstrap (`.initialTabCreationFailed`).
         return resolveCommandAcks(ok: false, error: message, state: &state) { match in
           switch match {
           case .tabInWorktree(let ackWorktree, let tabID):
             return ackWorktree == worktreeID && tabID == attemptedID
           case .surfaceSplit(let ackWorktree, let surfaceID):
             return ackWorktree == worktreeID && surfaceID == attemptedID
-          case .worktreeNew(_, let boundID):
-            // The initial-tab bootstrap failed; the worktree-new ack must not
-            // ride the watchdog.
-            return boundID == worktreeID
           default:
             return false
           }
         }
+
+      case .terminalEvent(.initialTabCreationFailed(let worktreeID, let message)):
+        // The first tab could not be hosted: fail the worktree-new ack and
+        // settle the creation-progress state so the worktree shows with no tabs
+        // (a valid empty state to retry from).
+        let ackEffect = resolveCommandAcks(ok: false, error: message, state: &state) { match in
+          if case .worktreeNew(_, let boundID?) = match { return boundID == worktreeID }
+          return false
+        }
+        return .merge(ackEffect, .send(.repositories(.worktreeCreationSettled(worktreeID))))
 
       case .terminalEvent(.tabRemoved(let worktreeID, let tabID)):
         let ackEffect = resolveCommandAcks(ok: true, state: &state) { match in
