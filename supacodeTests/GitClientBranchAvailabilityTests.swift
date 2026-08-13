@@ -79,6 +79,50 @@ struct GitClientBranchAvailabilityTests {
     #expect(availability == .checkedOut(worktreePath: "/repo/od\td dir"))
   }
 
+  /// A branch with no worktree emits `name\t` with nothing after the tab, and
+  /// `ShellClient` trims trailing whitespace off the whole command output — so
+  /// the *last* such line arrives with its tab gone. Read as a bare name it must
+  /// still classify as reusable; skipping it reported the last unused branch as
+  /// `.absent`, which sent creation into `git worktree add -b` and a "branch
+  /// already exists" failure.
+  @Test func trailingTablessLineIsReusable() {
+    #expect(
+      GitClient.parseBranchAvailability(
+        "main\t/repo\nunused\t\nused",
+        branch: "used",
+        directoryExists: { _ in true }
+      ) == .reusable(stalePrunePath: nil)
+    )
+  }
+
+  /// The same line mid-output, where the tab survives, must agree.
+  @Test func tablessAndTabbedFormsAgree() {
+    let withTab = GitClient.parseBranchAvailability(
+      "used\t\nmain\t/repo",
+      branch: "used",
+      directoryExists: { _ in true }
+    )
+    let withoutTab = GitClient.parseBranchAvailability(
+      "main\t/repo\nused",
+      branch: "used",
+      directoryExists: { _ in true }
+    )
+    #expect(withTab == withoutTab)
+    #expect(withTab == .reusable(stalePrunePath: nil))
+  }
+
+  /// A bare name still has to match exactly: an unrelated branch must not be
+  /// adopted just because its line lost the tab.
+  @Test func tablessLineStillRequiresANameMatch() {
+    #expect(
+      GitClient.parseBranchAvailability(
+        "main\t/repo\nused",
+        branch: "unused",
+        directoryExists: { _ in true }
+      ) == .absent
+    )
+  }
+
   @Test func emptyOutputIsAbsent() {
     #expect(
       GitClient.parseBranchAvailability("", branch: "anything", directoryExists: { _ in true })
@@ -140,7 +184,44 @@ struct GitClientBranchAvailabilityTests {
 
     // And pruning clears it, which is what makes the subsequent checkout work.
     try await client.pruneWorktrees(for: repo)
-    #expect(try await client.branchAvailability("used", for: repo) == .reusable(stalePrunePath: nil))
+    let prunedAvailability = try await client.branchAvailability("used", for: repo)
+    if prunedAvailability != .reusable(stalePrunePath: nil) {
+      // The classification is derived entirely from git's own output, so report
+      // that output: a prune that left the admin entry behind and a path that
+      // merely still reads as present on disk are indistinguishable otherwise.
+      let repoPath = repo.path(percentEncoded: false)
+      let stalePath = usedWorktree.path(percentEncoded: false)
+      Issue.record(
+        """
+        Expected pruned branch to be plainly reusable, got \(prunedAvailability).
+        for-each-ref:
+        \(Self.gitOutput(["-C", repoPath, "for-each-ref", "--format=%(refname:short)\t%(worktreepath)", "refs/heads"]))
+        worktree list:
+        \(Self.gitOutput(["-C", repoPath, "worktree", "list", "--porcelain"]))
+        stale directory still present: \(FileManager.default.fileExists(atPath: stalePath))
+        """
+      )
+    }
+  }
+
+  /// Captures stdout+stderr of a raw git invocation for failure diagnostics.
+  /// Deliberately inherits the ambient environment, since that is what
+  /// `GitClient` itself runs under.
+  private static func gitOutput(_ arguments: [String]) -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.arguments = arguments
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    do {
+      try process.run()
+    } catch {
+      return "<failed to run git: \(error)>"
+    }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return String(bytes: data, encoding: .utf8) ?? "<non-UTF8 output>"
   }
 
   /// Hermetic git: the user's global config must not leak in (gpg signing in

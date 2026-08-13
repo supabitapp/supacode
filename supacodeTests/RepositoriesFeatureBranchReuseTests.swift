@@ -19,15 +19,26 @@ struct RepositoriesFeatureBranchReuseTests {
 
   /// Records what the creation stream was ultimately asked to build, so a test
   /// can tell "reused the branch" from "created a new one".
-  private final class StreamRecorder: @unchecked Sendable {
+  /// `nonisolated` because the git dependency closures that drive it are called
+  /// off the main actor; the module compiles with `-default-isolation=MainActor`,
+  /// which would otherwise make these members unreachable from there. The
+  /// `NSLock` — not actor isolation — is what makes the class safe to share.
+  private nonisolated final class StreamRecorder: @unchecked Sendable {
+    /// One creation request, as the stream received it.
+    struct Invocation: Equatable {
+      let name: String
+      let baseRef: String
+      let directory: URL?
+    }
+
     private let lock = NSLock()
-    private var invocations: [(name: String, baseRef: String, directory: URL?)] = []
+    private var invocations: [Invocation] = []
     private(set) var pruneCount = 0
 
     func record(name: String, baseRef: String, directory: URL?) {
       lock.lock()
       defer { lock.unlock() }
-      invocations.append((name, baseRef, directory))
+      invocations.append(Invocation(name: name, baseRef: baseRef, directory: directory))
     }
 
     func recordPrune() {
@@ -36,7 +47,7 @@ struct RepositoriesFeatureBranchReuseTests {
       pruneCount += 1
     }
 
-    var snapshot: [(name: String, baseRef: String, directory: URL?)] {
+    var snapshot: [Invocation] {
       lock.lock()
       defer { lock.unlock() }
       return invocations
@@ -179,9 +190,14 @@ struct RepositoriesFeatureBranchReuseTests {
     #expect(recorder.snapshot.count == 1)
     #expect(recorder.snapshot.first?.name == "feature/x")
     #expect(recorder.snapshot.first?.baseRef == "")
-    // `wt sw` refuses to adopt an existing branch without an explicit --path,
-    // so the resolved directory has to be passed through.
-    #expect(recorder.snapshot.first?.directory != nil)
+    // `wt sw` dies with "branch exists without worktree" unless it is given an
+    // explicit --path, so reuse has to resolve one. With no placement override
+    // it must resolve to `<base>/<branch>` — what `wt` would have picked itself —
+    // so supplying the argument does not relocate the worktree.
+    // Compared component-wise: the URL is built with `directoryHint: .isDirectory`,
+    // so its path carries a trailing slash.
+    let directory = recorder.snapshot.first?.directory
+    #expect(directory.map { Array($0.pathComponents.suffix(2)) } == ["feature", "x"])
     #expect(recorder.pruneCount == 0)
   }
 

@@ -1502,9 +1502,11 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
-      $0.gitClient.localBranchNames = { _ in
+      // Prompt validation probes branch availability, so that is the call the
+      // cancel has to interrupt.
+      $0.gitClient.branchAvailability = { _, _ in
         try? await validationClock.sleep(for: .seconds(1))
-        return []
+        return .absent
       }
     }
 
@@ -3023,7 +3025,10 @@ struct RepositoriesFeatureTests {
         baseRef: "origin/main",
         fetchOrigin: false,
         placement: WorktreePlacementOverride(),
-        duplicateMessage: nil
+        // `.absent` is what the old `duplicateMessage: nil` meant: nothing blocks
+        // the name, so creation proceeds and the pin survives the round trip.
+        availability: .absent,
+        reuseExistingBranch: false
       )
     )
     await store.receive(\.createWorktreeInRepository)

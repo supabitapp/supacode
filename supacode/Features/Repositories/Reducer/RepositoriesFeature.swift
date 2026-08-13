@@ -2148,13 +2148,27 @@ struct RepositoriesFeature {
               )
               return
             }
-            let worktreeDirectoryURL = SupacodePaths.resolvedWorktreeDirectory(
-              defaultBaseDirectory: worktreeBaseDirectory,
-              repositoryRootURL: repository.rootURL,
-              nameOverride: placement?.name,
-              pathOverride: placement?.path,
-              branchName: name
-            )
+            // `wt sw` refuses to adopt a branch that exists without a worktree
+            // unless it is given an explicit `--path`, so reuse always resolves a
+            // concrete directory. With no overrides that resolves to
+            // `<base>/<branch>` — the same placement `wt` picks on its own — so
+            // this only supplies the argument, it does not relocate anything.
+            let worktreeDirectoryURL =
+              isReusingExistingBranch
+              ? SupacodePaths.previewWorktreeDirectory(
+                defaultBaseDirectory: worktreeBaseDirectory,
+                repositoryRootURL: repository.rootURL,
+                nameOverride: placement?.name,
+                pathOverride: placement?.path,
+                branchName: name
+              )
+              : SupacodePaths.resolvedWorktreeDirectory(
+                defaultBaseDirectory: worktreeBaseDirectory,
+                repositoryRootURL: repository.rootURL,
+                nameOverride: placement?.name,
+                pathOverride: placement?.path,
+                branchName: name
+              )
             progress.worktreeName = name
             progress.stage = .checkingRepositoryMode
             await send(

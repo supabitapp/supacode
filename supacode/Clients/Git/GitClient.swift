@@ -556,11 +556,20 @@ struct GitClient {
     guard !target.isEmpty else { return .absent }
     for line in output.split(whereSeparator: \.isNewline) {
       // Split on the first tab only: a worktree path may legitimately contain one.
-      guard let separator = line.firstIndex(of: "\t") else { continue }
-      let name = String(line[line.startIndex..<separator]).lowercased()
+      // The tab can also be missing entirely — a branch with no worktree emits a
+      // trailing tab, and the shell client trims trailing whitespace off the
+      // command's output, which eats it on the last line. A bare name is exactly
+      // that case, so read it as a branch nothing holds rather than skipping the
+      // line (which would report the last unused branch as `.absent`).
+      let separator = line.firstIndex(of: "\t")
+      let nameSlice = separator.map { line[line.startIndex..<$0] } ?? line[...]
+      let name = nameSlice.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
       guard name == target else { continue }
-      let worktreePath = String(line[line.index(after: separator)...])
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+      let worktreePath =
+        separator.map {
+          String(line[line.index(after: $0)...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        } ?? ""
       if worktreePath.isEmpty {
         return .reusable(stalePrunePath: nil)
       }

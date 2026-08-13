@@ -377,7 +377,15 @@ struct AppFeatureCommandAckTests {
   /// the load reports what the path became.
   @Test(.dependencies) func repoOpenSocketDeeplinkDefersItsAck() async {
     let worktree = makeWorktree()
-    let store = makeStore(worktree: worktree, tabExists: true)
+    let loadGate = TestClock()
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.gitClient.repoRoot = { _ in
+        try? await loadGate.sleep(for: .seconds(1))
+        // Rethrows into the same not-a-git-path branch the ungated test covers,
+        // so only *when* the load finishes changes here, not what it decides.
+        throw GitClientError.commandFailed(command: "git rev-parse", message: "gated")
+      }
+    }
     let (readFD, writeFD) = makePipe()
     defer { close(readFD) }
 
@@ -390,13 +398,29 @@ struct AppFeatureCommandAckTests {
       )
     )
 
+    // Asserted while the load is still in flight: an open that resolves (or
+    // fails) before `send` returns answers the fd on its way through and would
+    // hide whether the ack was ever deferred at all.
     #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
     #expect(readPipeJSON(readFD) == nil)
+
+    await loadGate.advance(by: .seconds(1))
+    await store.finish()
   }
 
   @Test(.dependencies) func repoOpenSocketDeeplinkResolvesWithTheAdoptedWorktreeID() async {
     let worktree = makeWorktree()
-    let store = makeStore(worktree: worktree, tabExists: true)
+    // Held open so the outcome below — not the load's own verdict — is what
+    // resolves the ack.
+    let loadGate = TestClock()
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.gitClient.repoRoot = { _ in
+        try? await loadGate.sleep(for: .seconds(1))
+        // Rethrows into the same not-a-git-path branch the ungated test covers,
+        // so only *when* the load finishes changes here, not what it decides.
+        throw GitClientError.commandFailed(command: "git rev-parse", message: "gated")
+      }
+    }
     let (readFD, writeFD) = makePipe()
     defer { close(readFD) }
 
@@ -420,13 +444,14 @@ struct AppFeatureCommandAckTests {
         )
       )
     )
+    await loadGate.advance(by: .seconds(1))
     await store.finish()
 
     #expect(store.state.pendingCommandAcks.isEmpty)
     let response = readPipeJSON(readFD)
     #expect(response?["ok"] as? Bool == true)
     // The CLI prints this, so `repo open <worktree>` names what it adopted.
-    #expect(response?["id"] as? String != nil)
+    #expect(response?["id"] is String)
   }
 
   /// The other half of the fix: adopting nothing must exit non-zero, which means
@@ -469,7 +494,17 @@ struct AppFeatureCommandAckTests {
   /// An outcome for a different path must not drain this command's ack.
   @Test(.dependencies) func repoOpenAckIgnoresOutcomesForOtherPaths() async {
     let worktree = makeWorktree()
-    let store = makeStore(worktree: worktree, tabExists: true)
+    // The load has to stay in flight: once it finishes it answers this ack
+    // itself, and the unrelated outcome's non-effect would be unobservable.
+    let loadGate = TestClock()
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.gitClient.repoRoot = { _ in
+        try? await loadGate.sleep(for: .seconds(1))
+        // Rethrows into the same not-a-git-path branch the ungated test covers,
+        // so only *when* the load finishes changes here, not what it decides.
+        throw GitClientError.commandFailed(command: "git rev-parse", message: "gated")
+      }
+    }
     let (readFD, writeFD) = makePipe()
     defer { close(readFD) }
 
@@ -496,6 +531,9 @@ struct AppFeatureCommandAckTests {
 
     #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
     #expect(readPipeJSON(readFD) == nil)
+
+    await loadGate.advance(by: .seconds(1))
+    await store.finish()
   }
 
   // MARK: - immediate ack.
