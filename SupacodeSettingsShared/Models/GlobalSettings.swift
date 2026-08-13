@@ -82,6 +82,23 @@ public nonisolated enum GhosttyUserConfigMode: String, Codable, CaseIterable, Se
   }
 }
 
+/// Whether moving the pointer over a split pane focuses it (focus follows
+/// mouse), and for which content kinds. An enum rather than a Bool so future
+/// content kinds can opt in independently.
+public nonisolated enum HoverFocusMode: String, Codable, CaseIterable, Sendable {
+  /// Focus never follows the pointer. The default.
+  case never
+  /// Hovering a terminal split pane focuses it, within the key window.
+  case terminals
+
+  public var label: String {
+    switch self {
+    case .never: "Never"
+    case .terminals: "Terminals"
+    }
+  }
+}
+
 public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var appearanceMode: AppearanceMode
   public var defaultEditorID: String
@@ -145,6 +162,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   /// Gates all background repository polling (remote SSH, PR checks, reconcile).
   /// On by default; disable to stop SSH passphrase prompts or GitHub rate limiting.
   public var automaticRepositoryRefreshEnabled: Bool
+  /// Whether hovering a split pane focuses it (focus follows mouse). Off by default.
+  public var hoverFocusMode: HoverFocusMode
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -227,7 +246,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     appVisibility: AppVisibility = .dockAndMenuBar,
     terminalHibernationEnabled: Bool = true,
     chromeTextSize: ChromeTextSize = .default,
-    automaticRepositoryRefreshEnabled: Bool = true
+    automaticRepositoryRefreshEnabled: Bool = true,
+    hoverFocusMode: HoverFocusMode = .never
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -269,6 +289,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.terminalHibernationEnabled = terminalHibernationEnabled
     self.chromeTextSize = chromeTextSize
     self.automaticRepositoryRefreshEnabled = automaticRepositoryRefreshEnabled
+    self.hoverFocusMode = hoverFocusMode
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -471,5 +492,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     automaticRepositoryRefreshEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .automaticRepositoryRefreshEnabled)
       ?? Self.default.automaticRepositoryRefreshEnabled
+    // Decode the raw string so an unrecognized future mode falls back rather
+    // than throwing (which would reset the whole file to defaults).
+    hoverFocusMode =
+      ((try? container.decodeIfPresent(String.self, forKey: .hoverFocusMode)) ?? nil)
+      .flatMap(HoverFocusMode.init(rawValue:))
+      ?? Self.default.hoverFocusMode
   }
 }

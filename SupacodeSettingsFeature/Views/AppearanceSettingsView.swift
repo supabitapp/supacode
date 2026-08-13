@@ -71,7 +71,7 @@ public struct AppearanceSettingsView: View {
           Text(store.confirmQuitMode.subtitle)
         }
       }
-      Section("Editor") {
+      Section("Editor & Layout") {
         // The stored id deliberately keeps naming an uninstalled editor, so the choice
         // survives a reinstall. No row is tagged with it though, and an untagged
         // selection renders blank, so normalize for display and write back raw.
@@ -97,6 +97,14 @@ public struct AppearanceSettingsView: View {
         } label: {
           Text("Global editor")
           Text("Applies to Worktrees without repository overrides.")
+        }
+        Picker(selection: $store.hoverFocusMode) {
+          ForEach(HoverFocusMode.allCases, id: \.self) { mode in
+            DefaultTaggedLabel(label: mode.label, isDefault: mode == .never).tag(mode)
+          }
+        } label: {
+          Text("Focus panes on hover")
+          Text("Move focus to a split pane as the pointer moves over it, within the active window.")
         }
       }
       Section("Accessibility") {

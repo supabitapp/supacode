@@ -87,6 +87,7 @@ public struct SettingsFeature {
     public var terminalHibernationEnabled: Bool
     public var chromeTextSize: ChromeTextSize
     public var automaticRepositoryRefreshEnabled: Bool
+    public var hoverFocusMode: HoverFocusMode
     public var cliInstallState = CLIInstallState.checking
     /// Installed editors in menu order, resolved once off the picker's body.
     public var installedOpenActions: [OpenWorktreeAction]
@@ -172,6 +173,7 @@ public struct SettingsFeature {
       terminalHibernationEnabled = settings.terminalHibernationEnabled
       chromeTextSize = settings.chromeTextSize
       automaticRepositoryRefreshEnabled = settings.automaticRepositoryRefreshEnabled
+      hoverFocusMode = settings.hoverFocusMode
       defaultWorktreeBaseDirectoryPath =
         SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath) ?? ""
     }
@@ -219,7 +221,8 @@ public struct SettingsFeature {
         appVisibility: appVisibility,
         terminalHibernationEnabled: terminalHibernationEnabled,
         chromeTextSize: chromeTextSize,
-        automaticRepositoryRefreshEnabled: automaticRepositoryRefreshEnabled
+        automaticRepositoryRefreshEnabled: automaticRepositoryRefreshEnabled,
+        hoverFocusMode: hoverFocusMode
       )
     }
   }
@@ -378,6 +381,7 @@ public struct SettingsFeature {
         state.terminalHibernationEnabled = normalizedSettings.terminalHibernationEnabled
         state.chromeTextSize = normalizedSettings.chromeTextSize
         state.automaticRepositoryRefreshEnabled = normalizedSettings.automaticRepositoryRefreshEnabled
+        state.hoverFocusMode = normalizedSettings.hoverFocusMode
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
         state.syncGlobalDefaults(from: normalizedSettings)
         synchronizeRepositorySelection(for: &state)

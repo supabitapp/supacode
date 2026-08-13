@@ -1040,6 +1040,74 @@ struct SettingsFilePersistenceTests {
     #expect(reloaded.global.chromeTextSize == .extraLarge)
   }
 
+  @Test(.dependencies) func decodesUnrecognizedHoverFocusModeAsDefaultWithoutDiscardingTheFile() throws {
+    // An unknown mode (older build, hand-edit) must fall back by itself rather
+    // than throwing, which would reset every other setting in the file.
+    let json = """
+      {"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
+      "updatesAutomaticallyDownloadUpdates":false,"hoverFocusMode":"someFutureMode"}
+      """
+    let storage = MutableTestStorage(initialData: Data(json.utf8))
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.hoverFocusMode == .never)
+    #expect(settings.global.appearanceMode == .light)
+  }
+
+  @Test(.dependencies) func decodesMistypedHoverFocusModeAsDefaultWithoutDiscardingTheFile() throws {
+    // A hand-edit can produce the wrong JSON type, not just an unknown string;
+    // the `try?` on the String decode must swallow it so one bad field can't
+    // reset the file.
+    let json = """
+      {"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
+      "updatesAutomaticallyDownloadUpdates":false,"hoverFocusMode":3}
+      """
+    let storage = MutableTestStorage(initialData: Data(json.utf8))
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.hoverFocusMode == .never)
+    #expect(settings.global.appearanceMode == .light)
+  }
+
+  @Test(.dependencies) func roundTripsExplicitHoverFocusMode() throws {
+    let storage = SettingsTestStorage()
+
+    withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      $settings.withLock { $0.global.hoverFocusMode = .terminals }
+    }
+
+    let reloaded: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var reloaded: SettingsFile
+      return reloaded
+    }
+
+    #expect(reloaded.global.hoverFocusMode == .terminals)
+  }
+
+  @Test func hoverFocusModeRawValuesAreStableAcrossReleases() {
+    // The raw values are the on-disk representation; renaming one silently
+    // resets every user's choice on the next load.
+    #expect(HoverFocusMode.never.rawValue == "never")
+    #expect(HoverFocusMode.terminals.rawValue == "terminals")
+  }
+
   @Test(.dependencies) func roundTripsExplicitNotificationRetentionLimit() throws {
     let storage = SettingsTestStorage()
 

@@ -198,6 +198,37 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.automaticRepositoryRefreshEnabled == false)
   }
 
+  @Test(.dependencies) func togglingHoverFocusModePersistsChanges() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    await store.send(.binding(.set(\.hoverFocusMode, .terminals))) {
+      $0.hoverFocusMode = .terminals
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.hoverFocusMode == .terminals)
+  }
+
+  @Test(.dependencies) func settingsLoadedAppliesHoverFocusMode() async {
+    var loaded = GlobalSettings.default
+    loaded.hoverFocusMode = .terminals
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = loaded }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.settingsLoaded(loaded))
+    #expect(store.state.hoverFocusMode == .terminals)
+    await store.skipReceivedActions()
+  }
+
   @Test(.dependencies) func confirmCloseSurfacePersistsChanges() async {
     var initialSettings = GlobalSettings.default
     initialSettings.confirmCloseSurface = true
