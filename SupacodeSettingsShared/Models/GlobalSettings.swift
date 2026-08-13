@@ -115,7 +115,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var crashReportsEnabled: Bool
   public var githubIntegrationEnabled: Bool
   public var deleteBranchOnDeleteWorktree: Bool
-  public var mergedWorktreeAction: MergedWorktreeAction?
+  public var mergedWorktreeAction: MergedWorktreeAction
   public var promptForWorktreeCreation: Bool
   public var fetchOriginBeforeWorktreeCreation: Bool
   public var defaultWorktreeBaseDirectoryPath: String?
@@ -181,7 +181,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     crashReportsEnabled: true,
     githubIntegrationEnabled: true,
     deleteBranchOnDeleteWorktree: true,
-    mergedWorktreeAction: nil,
+    mergedWorktreeAction: .ignore,
     promptForWorktreeCreation: true,
     fetchOriginBeforeWorktreeCreation: true,
     copyIgnoredOnWorktreeCreate: false,
@@ -222,7 +222,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     crashReportsEnabled: Bool,
     githubIntegrationEnabled: Bool,
     deleteBranchOnDeleteWorktree: Bool,
-    mergedWorktreeAction: MergedWorktreeAction? = nil,
+    mergedWorktreeAction: MergedWorktreeAction = .ignore,
     promptForWorktreeCreation: Bool,
     fetchOriginBeforeWorktreeCreation: Bool = true,
     copyIgnoredOnWorktreeCreate: Bool = false,
@@ -355,21 +355,17 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     deleteBranchOnDeleteWorktree =
       try container.decodeIfPresent(Bool.self, forKey: .deleteBranchOnDeleteWorktree)
       ?? Self.default.deleteBranchOnDeleteWorktree
-    // `try?` intentionally swallows decoding errors (e.g. unrecognized raw values
-    // from a future app version) and falls through to the legacy migration path,
-    // which defaults to `nil`. Silently resetting the preference is acceptable
-    // because `nil` (do nothing) is the safest default.
+    // An unrecognized raw value (`try?`) or an absent key both resolve to `.ignore`
+    // (do nothing) via the legacy path, the safe default.
     if let action = try? container.decodeIfPresent(MergedWorktreeAction.self, forKey: .mergedWorktreeAction) {
       mergedWorktreeAction = action
+    } else if let legacyBool = try legacy.decodeIfPresent(
+      Bool.self,
+      forKey: LegacyCodingKey(stringValue: "automaticallyArchiveMergedWorktrees")!
+    ) {
+      mergedWorktreeAction = legacyBool ? .archive : Self.default.mergedWorktreeAction
     } else {
-      if let legacyBool = try legacy.decodeIfPresent(
-        Bool.self,
-        forKey: LegacyCodingKey(stringValue: "automaticallyArchiveMergedWorktrees")!
-      ) {
-        mergedWorktreeAction = legacyBool ? .archive : Self.default.mergedWorktreeAction
-      } else {
-        mergedWorktreeAction = Self.default.mergedWorktreeAction
-      }
+      mergedWorktreeAction = Self.default.mergedWorktreeAction
     }
     promptForWorktreeCreation =
       try container.decodeIfPresent(Bool.self, forKey: .promptForWorktreeCreation)

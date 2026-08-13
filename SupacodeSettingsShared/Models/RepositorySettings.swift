@@ -18,6 +18,8 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
   public var copyIgnoredOnWorktreeCreate: Bool?
   public var copyUntrackedOnWorktreeCreate: Bool?
   public var pullRequestMergeStrategy: PullRequestMergeStrategy?
+  /// Action when a worktree's pull request is merged. `nil` inherits the global setting.
+  public var mergedWorktreeAction: MergedWorktreeAction?
 
   private enum CodingKeys: String, CodingKey {
     case setupScript
@@ -32,6 +34,7 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     case copyIgnoredOnWorktreeCreate
     case copyUntrackedOnWorktreeCreate
     case pullRequestMergeStrategy
+    case mergedWorktreeAction
   }
 
   public static let `default` = RepositorySettings(
@@ -47,6 +50,7 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     copyIgnoredOnWorktreeCreate: nil,
     copyUntrackedOnWorktreeCreate: nil,
     pullRequestMergeStrategy: nil,
+    mergedWorktreeAction: nil,
   )
 
   public init(
@@ -61,7 +65,8 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     worktreeBaseDirectoryPath: String? = nil,
     copyIgnoredOnWorktreeCreate: Bool? = nil,
     copyUntrackedOnWorktreeCreate: Bool? = nil,
-    pullRequestMergeStrategy: PullRequestMergeStrategy? = nil
+    pullRequestMergeStrategy: PullRequestMergeStrategy? = nil,
+    mergedWorktreeAction: MergedWorktreeAction? = nil
   ) {
     self.setupScript = setupScript
     self.archiveScript = archiveScript
@@ -75,6 +80,7 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     self.copyIgnoredOnWorktreeCreate = copyIgnoredOnWorktreeCreate
     self.copyUntrackedOnWorktreeCreate = copyUntrackedOnWorktreeCreate
     self.pullRequestMergeStrategy = pullRequestMergeStrategy
+    self.mergedWorktreeAction = mergedWorktreeAction
   }
 
   public init(from decoder: Decoder) throws {
@@ -119,6 +125,9 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     pullRequestMergeStrategy =
       try container.decodeIfPresent(PullRequestMergeStrategy.self, forKey: .pullRequestMergeStrategy)
       ?? Self.default.pullRequestMergeStrategy
+    mergedWorktreeAction =
+      try container.decodeIfPresent(MergedWorktreeAction.self, forKey: .mergedWorktreeAction)
+      ?? Self.default.mergedWorktreeAction
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -141,5 +150,6 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     try container.encodeIfPresent(copyIgnoredOnWorktreeCreate, forKey: .copyIgnoredOnWorktreeCreate)
     try container.encodeIfPresent(copyUntrackedOnWorktreeCreate, forKey: .copyUntrackedOnWorktreeCreate)
     try container.encodeIfPresent(pullRequestMergeStrategy, forKey: .pullRequestMergeStrategy)
+    try container.encodeIfPresent(mergedWorktreeAction, forKey: .mergedWorktreeAction)
   }
 }

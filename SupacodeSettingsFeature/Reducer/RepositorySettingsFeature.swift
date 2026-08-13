@@ -15,6 +15,7 @@ public struct RepositorySettingsFeature {
     public var globalCopyIgnoredOnWorktreeCreate: Bool = false
     public var globalCopyUntrackedOnWorktreeCreate: Bool = false
     public var globalPullRequestMergeStrategy: PullRequestMergeStrategy = .merge
+    public var globalMergedWorktreeAction: MergedWorktreeAction = .ignore
     public var isBareRepository = false
     public var branchOptions: [String] = []
     public var defaultWorktreeBaseRef = "origin/main"
@@ -40,6 +41,7 @@ public struct RepositorySettingsFeature {
       globalCopyIgnoredOnWorktreeCreate: Bool = false,
       globalCopyUntrackedOnWorktreeCreate: Bool = false,
       globalPullRequestMergeStrategy: PullRequestMergeStrategy = .merge,
+      globalMergedWorktreeAction: MergedWorktreeAction = .ignore,
       isBareRepository: Bool = false,
       branchOptions: [String] = [],
       defaultWorktreeBaseRef: String = "origin/main",
@@ -53,6 +55,7 @@ public struct RepositorySettingsFeature {
       self.globalCopyIgnoredOnWorktreeCreate = globalCopyIgnoredOnWorktreeCreate
       self.globalCopyUntrackedOnWorktreeCreate = globalCopyUntrackedOnWorktreeCreate
       self.globalPullRequestMergeStrategy = globalPullRequestMergeStrategy
+      self.globalMergedWorktreeAction = globalMergedWorktreeAction
       self.isBareRepository = isBareRepository
       self.branchOptions = branchOptions
       self.defaultWorktreeBaseRef = defaultWorktreeBaseRef
@@ -73,7 +76,8 @@ public struct RepositorySettingsFeature {
       globalDefaultWorktreeBaseDirectoryPath: String?,
       globalCopyIgnoredOnWorktreeCreate: Bool,
       globalCopyUntrackedOnWorktreeCreate: Bool,
-      globalPullRequestMergeStrategy: PullRequestMergeStrategy
+      globalPullRequestMergeStrategy: PullRequestMergeStrategy,
+      globalMergedWorktreeAction: MergedWorktreeAction
     )
     case branchDataLoaded([String], defaultBaseRef: String)
     case addScript(ScriptKind)
@@ -107,6 +111,7 @@ public struct RepositorySettingsFeature {
         let globalCopyIgnored = global.copyIgnoredOnWorktreeCreate
         let globalCopyUntracked = global.copyUntrackedOnWorktreeCreate
         let globalMergeStrategy = global.pullRequestMergeStrategy
+        let globalMergedWorktreeAction = global.mergedWorktreeAction
         let gitClient = gitClient
         return .run { send in
           // Folders don't expose the general settings page, so skip
@@ -121,7 +126,8 @@ public struct RepositorySettingsFeature {
                 globalDefaultWorktreeBaseDirectoryPath: globalDefaultWorktreeBaseDirectoryPath,
                 globalCopyIgnoredOnWorktreeCreate: globalCopyIgnored,
                 globalCopyUntrackedOnWorktreeCreate: globalCopyUntracked,
-                globalPullRequestMergeStrategy: globalMergeStrategy
+                globalPullRequestMergeStrategy: globalMergeStrategy,
+                globalMergedWorktreeAction: globalMergedWorktreeAction
               )
             )
             await send(.branchDataLoaded([], defaultBaseRef: "HEAD"))
@@ -135,7 +141,8 @@ public struct RepositorySettingsFeature {
               globalDefaultWorktreeBaseDirectoryPath: globalDefaultWorktreeBaseDirectoryPath,
               globalCopyIgnoredOnWorktreeCreate: globalCopyIgnored,
               globalCopyUntrackedOnWorktreeCreate: globalCopyUntracked,
-              globalPullRequestMergeStrategy: globalMergeStrategy
+              globalPullRequestMergeStrategy: globalMergeStrategy,
+              globalMergedWorktreeAction: globalMergedWorktreeAction
             )
           )
           let branches: [String]
@@ -158,7 +165,8 @@ public struct RepositorySettingsFeature {
         let globalDefaultWorktreeBaseDirectoryPath,
         let globalCopyIgnoredOnWorktreeCreate,
         let globalCopyUntrackedOnWorktreeCreate,
-        let globalPullRequestMergeStrategy
+        let globalPullRequestMergeStrategy,
+        let globalMergedWorktreeAction
       ):
         var updatedSettings = settings
         updatedSettings.worktreeBaseDirectoryPath = SupacodePaths.normalizedWorktreeBaseDirectoryPath(
@@ -175,6 +183,7 @@ public struct RepositorySettingsFeature {
         state.globalCopyIgnoredOnWorktreeCreate = globalCopyIgnoredOnWorktreeCreate
         state.globalCopyUntrackedOnWorktreeCreate = globalCopyUntrackedOnWorktreeCreate
         state.globalPullRequestMergeStrategy = globalPullRequestMergeStrategy
+        state.globalMergedWorktreeAction = globalMergedWorktreeAction
         state.isBareRepository = isBareRepository
         guard updatedSettings != settings else { return .none }
         let rootURL = state.rootURL

@@ -81,7 +81,7 @@ struct SettingsFeatureTests {
       crashReportsEnabled: false,
       githubIntegrationEnabled: true,
       deleteBranchOnDeleteWorktree: true,
-      mergedWorktreeAction: nil,
+      mergedWorktreeAction: .ignore,
       promptForWorktreeCreation: false
     )
     @Shared(.settingsFile) var settingsFile
@@ -536,7 +536,8 @@ struct SettingsFeatureTests {
       ]
       $0.repositorySettings = RepositorySettingsFeature.State(
         rootURL: rootURL,
-        settings: .default
+        settings: .default,
+        globalMergedWorktreeAction: .archive
       )
     }
     await store.receive(\.delegate.settingsChanged)
@@ -633,6 +634,28 @@ struct SettingsFeatureTests {
     await store.receive(\.delegate.settingsChanged)
     #expect(store.state.repositorySettings?.globalPullRequestMergeStrategy == .squash)
     #expect(settingsFile.global.pullRequestMergeStrategy == .squash)
+  }
+
+  @Test(.dependencies) func changingGlobalMergedWorktreeActionUpdatesRepositorySettingsState() async {
+    let rootURL = URL(fileURLWithPath: "/tmp/repo")
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+    var state = SettingsFeature.State()
+    state.repositorySettings = RepositorySettingsFeature.State(
+      rootURL: rootURL,
+      settings: .default
+    )
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.binding(.set(\.mergedWorktreeAction, .archive))) {
+      $0.mergedWorktreeAction = .archive
+      $0.repositorySettings?.globalMergedWorktreeAction = .archive
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(store.state.repositorySettings?.globalMergedWorktreeAction == .archive)
+    #expect(settingsFile.global.mergedWorktreeAction == .archive)
   }
 
   // MARK: - Global scripts.

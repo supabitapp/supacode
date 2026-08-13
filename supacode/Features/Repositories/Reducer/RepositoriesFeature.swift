@@ -176,7 +176,8 @@ struct RepositoriesFeature {
     /// clobber each other's pending set.
     var activeRemovalBatches: [BatchID: ActiveRemovalBatch] = [:]
     var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
-    var mergedWorktreeAction: MergedWorktreeAction?
+    /// Global fallback applied when a repository has no `mergedWorktreeAction` override.
+    var mergedWorktreeAction: MergedWorktreeAction = .ignore
     var moveNotifiedWorktreeToTop = false
     /// Installed editors in menu order, mirrored down from `AppFeature` so the
     /// sidebar context menu never probes LaunchServices while building.
@@ -550,7 +551,7 @@ struct RepositoriesFeature {
     /// The resolution effect's result, merged into the map. The only writer of
     /// `openActionByRepositoryID`.
     case openActionsResolved([Repository.ID: OpenWorktreeAction])
-    case setMergedWorktreeAction(MergedWorktreeAction?)
+    case setMergedWorktreeAction(MergedWorktreeAction)
     case setAutoDeleteArchivedWorktreesAfterDays(AutoDeletePeriod?)
     case autoDeleteExpiredArchivedWorktrees
     case setMoveNotifiedWorktreeToTop(Bool)
@@ -2452,6 +2453,14 @@ struct RepositoriesFeature {
         guard let repository = state.repositories[id: repositoryID] else {
           return .none
         }
+        // Read fresh, not the cached `@Shared(.repositorySettings)` a live terminal pins stale:
+        // an out-of-band `supacode.json` edit must not drive an automated archive or delete
+        // under an old policy. Falls back to the global action.
+        let repositorySettings = RepositorySettingsKey(
+          rootURL: repository.rootURL,
+          host: repository.host
+        ).currentSettings()
+        let resolvedMergedAction = repositorySettings.mergedWorktreeAction ?? state.mergedWorktreeAction
         let branchSnapshot = state.inFlightPullRequestBranchSnapshotsByRepositoryID[repositoryID] ?? [:]
         var archiveWorktreeIDs: [Worktree.ID] = []
         var deleteWorktreeIDs: [Worktree.ID] = []
@@ -2476,7 +2485,7 @@ struct RepositoriesFeature {
           )
           let mergedLifecycle = state.sidebarItems[id: worktreeID]?.lifecycle ?? .idle
           // Don't let a stale merge on a reused branch name auto-close a freshly recreated worktree (#794).
-          if let mergedAction = state.mergedWorktreeAction,
+          if resolvedMergedAction != .ignore,
             !previousMerged,
             nextMerged,
             let mergedAt = pullRequest?.mergedAt,
@@ -2487,11 +2496,13 @@ struct RepositoriesFeature {
             mergedLifecycle != .deleting,
             mergedLifecycle != .deletingScript
           {
-            switch mergedAction {
+            switch resolvedMergedAction {
             case .archive:
               archiveWorktreeIDs.append(worktreeID)
             case .delete:
               deleteWorktreeIDs.append(worktreeID)
+            case .ignore:
+              break
             }
           }
         }

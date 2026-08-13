@@ -150,7 +150,7 @@ struct GithubSettingsView: View {
           EmptyView()
         }
       }
-      Section("Pull Requests") {
+      Section {
         Picker(selection: $store.pullRequestMergeStrategy) {
           ForEach(PullRequestMergeStrategy.allCases) { strategy in
             Text(strategy.title)
@@ -161,25 +161,17 @@ struct GithubSettingsView: View {
           Text("Default strategy when merging PRs from the command palette.")
         }
         Picker(selection: $store.mergedWorktreeAction) {
-          Text("Do nothing").tag(MergedWorktreeAction?.none)
           ForEach(MergedWorktreeAction.allCases) { action in
-            Text(action.title).tag(MergedWorktreeAction?.some(action))
+            Text(action.title).tag(action)
           }
         } label: {
           Text("When a pull request is merged")
-          let scopeNote =
-            " Only applies to worktrees created before the pull request was merged, and not to remote repositories."
-          switch store.mergedWorktreeAction {
-          case .archive:
-            Text("Archives the worktree when its pull request is merged.\(scopeNote)")
-          case .delete:
-            Text(
-              "Follows the \"Delete local branch with worktree\" option in Worktrees settings.\(scopeNote)"
-            )
-          case nil:
-            EmptyView()
-          }
+          Text("Archive or delete a worktree when its pull request is merged.")
         }
+      } header: {
+        Text("Pull Requests")
+      } footer: {
+        Text("Worktree merge actions only affect pre-existing local worktrees.")
       }
     }
     .formStyle(.grouped)

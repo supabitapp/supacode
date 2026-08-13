@@ -85,7 +85,7 @@ public struct RepositorySettingsView: View {
       } footer: {
         Text("e.g., `\(exampleWorktreePath)`")
       }
-      Section("Pull Requests") {
+      Section {
         Picker(selection: settings.pullRequestMergeStrategy) {
           Text("Global \(Text(store.globalPullRequestMergeStrategy.title).foregroundStyle(.secondary))")
             .tag(PullRequestMergeStrategy?.none)
@@ -97,6 +97,21 @@ public struct RepositorySettingsView: View {
           Text("Merge strategy")
           Text("Used when merging PRs from the command palette.")
         }
+        Picker(selection: settings.mergedWorktreeAction) {
+          Text("Global \(Text(store.globalMergedWorktreeAction.title).foregroundStyle(.secondary))")
+            .tag(MergedWorktreeAction?.none)
+          ForEach(MergedWorktreeAction.allCases) { action in
+            Text(action.title)
+              .tag(MergedWorktreeAction?.some(action))
+          }
+        } label: {
+          Text("When a pull request is merged")
+          Text("Archive or delete a worktree when its pull request is merged.")
+        }
+      } header: {
+        Text("Pull Requests")
+      } footer: {
+        Text("Worktree merge actions only affect pre-existing local worktrees.")
       }
       Section("Environment Variables") {
         ScriptEnvironmentRow(

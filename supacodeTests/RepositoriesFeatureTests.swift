@@ -5754,6 +5754,86 @@ struct RepositoriesFeatureTests {
     await store.receive(\.deleteSidebarItemConfirmed)
   }
 
+  @Test(.dependencies) func repositoryPullRequestsLoadedRepositoryOverrideWinsOverGlobal() async {
+    let repoRoot = "/tmp/override-repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+      createdAt: Date(timeIntervalSince1970: 900_000)
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.mergedWorktreeAction = .archive
+    state.reconcileSidebarForTesting()
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      var repoSettings = RepositorySettings.default
+      repoSettings.mergedWorktreeAction = .delete
+      $0.repositories[repository.rootURL.path(percentEncoded: false)] = repoSettings
+    }
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+    let mergedPullRequest = makePullRequest(
+      state: "MERGED",
+      headRefName: featureWorktree.name,
+      mergedAt: Date(timeIntervalSince1970: 950_000)
+    )
+
+    await store.send(
+      .repositoryPullRequestsLoaded(
+        repositoryID: repository.id,
+        pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
+      )
+    )
+    // Repository override `.delete` beats the global `.archive`.
+    await store.receive(\.deleteSidebarItemConfirmed)
+  }
+
+  @Test(.dependencies) func repositoryPullRequestsLoadedRepositoryIgnoreOverrideSuppressesGlobalAction() async {
+    let repoRoot = "/tmp/ignore-override-repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+      createdAt: Date(timeIntervalSince1970: 900_000)
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.mergedWorktreeAction = .archive
+    state.reconcileSidebarForTesting()
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      var repoSettings = RepositorySettings.default
+      repoSettings.mergedWorktreeAction = .ignore
+      $0.repositories[repository.rootURL.path(percentEncoded: false)] = repoSettings
+    }
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    let mergedPullRequest = makePullRequest(
+      state: "MERGED",
+      headRefName: featureWorktree.name,
+      mergedAt: Date(timeIntervalSince1970: 950_000)
+    )
+
+    await store.send(
+      .repositoryPullRequestsLoaded(
+        repositoryID: repository.id,
+        pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
+      )
+    )
+    // Repository override `.ignore` suppresses the global `.archive`.
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = mergedPullRequest
+    }
+    await store.finish()
+  }
+
   // #794: a stale merge on a reused branch name must not auto-close a freshly recreated worktree.
   @Test func repositoryPullRequestsLoadedSkipsAutoActionForStaleMerge() async {
     let repoRoot = "/tmp/repo"
@@ -5852,7 +5932,7 @@ struct RepositoriesFeatureTests {
     await store.finish()
   }
 
-  @Test func repositoryPullRequestsLoadedDoesNothingWhenMergedWorktreeActionNil() async {
+  @Test func repositoryPullRequestsLoadedDoesNothingWhenMergedWorktreeActionIgnore() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let featureWorktree = makeWorktree(
@@ -5862,7 +5942,7 @@ struct RepositoriesFeatureTests {
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var state = makeState(repositories: [repository])
-    state.mergedWorktreeAction = nil
+    state.mergedWorktreeAction = .ignore
     state.reconcileSidebarForTesting()
     let store = TestStore(initialState: state) {
       RepositoriesFeature()

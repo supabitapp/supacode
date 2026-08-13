@@ -327,7 +327,7 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.mergedWorktreeAction == .archive)
   }
 
-  @Test(.dependencies) func decodesLegacyAutoArchiveFalseAsMergedWorktreeActionNil() throws {
+  @Test(.dependencies) func decodesLegacyAutoArchiveFalseAsMergedWorktreeActionIgnore() throws {
     let legacy = LegacySettingsFileWithArchiveFlag(
       global: LegacyGlobalSettingsWithArchiveFlag(
         appearanceMode: .dark,
@@ -347,7 +347,7 @@ struct SettingsFilePersistenceTests {
       return settings
     }
 
-    #expect(settings.global.mergedWorktreeAction == nil)
+    #expect(settings.global.mergedWorktreeAction == .ignore)
   }
 
   @Test(.dependencies) func roundTripsMergedWorktreeActionDelete() throws {
@@ -404,7 +404,7 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.crashReportsEnabled == true)
     #expect(settings.global.githubIntegrationEnabled == true)
     #expect(settings.global.deleteBranchOnDeleteWorktree == true)
-    #expect(settings.global.mergedWorktreeAction == nil)
+    #expect(settings.global.mergedWorktreeAction == .ignore)
     #expect(settings.global.promptForWorktreeCreation == true)
     #expect(settings.global.defaultWorktreeBaseDirectoryPath == nil)
     #expect(settings.global.defaultEditorID == OpenWorktreeAction.automaticSettingsID)

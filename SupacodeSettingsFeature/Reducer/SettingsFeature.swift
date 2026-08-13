@@ -62,7 +62,7 @@ public struct SettingsFeature {
     public var crashReportsEnabled: Bool
     public var githubIntegrationEnabled: Bool
     public var deleteBranchOnDeleteWorktree: Bool
-    public var mergedWorktreeAction: MergedWorktreeAction?
+    public var mergedWorktreeAction: MergedWorktreeAction
     public var promptForWorktreeCreation: Bool
     public var fetchOriginBeforeWorktreeCreation: Bool
     public var copyIgnoredOnWorktreeCreate: Bool
@@ -953,6 +953,8 @@ extension SettingsFeature.State {
       settings.copyUntrackedOnWorktreeCreate
     repositorySettings?.globalPullRequestMergeStrategy =
       settings.pullRequestMergeStrategy
+    repositorySettings?.globalMergedWorktreeAction =
+      settings.mergedWorktreeAction
   }
 
 }

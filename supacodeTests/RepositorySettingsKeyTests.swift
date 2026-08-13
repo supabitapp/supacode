@@ -18,6 +18,16 @@ struct RepositorySettingsKeyTests {
     #expect(!json.contains("copyIgnoredOnWorktreeCreate"))
     #expect(!json.contains("copyUntrackedOnWorktreeCreate"))
     #expect(!json.contains("pullRequestMergeStrategy"))
+    #expect(!json.contains("mergedWorktreeAction"))
+  }
+
+  @Test func encodingIncludesExplicitMergedWorktreeAction() throws {
+    var settings = RepositorySettings.default
+    settings.mergedWorktreeAction = .delete
+    let data = try JSONEncoder().encode(settings)
+    let decoded = try JSONDecoder().decode(RepositorySettings.self, from: data)
+
+    #expect(decoded.mergedWorktreeAction == .delete)
   }
 
   @Test(.dependencies) func loadReturnsDefaultsWithoutPersistingThem() throws {
@@ -291,7 +301,8 @@ struct RepositorySettingsKeyTests {
         "openActionID": "automatic",
         "copyIgnoredOnWorktreeCreate": false,
         "copyUntrackedOnWorktreeCreate": true,
-        "pullRequestMergeStrategy": "squash"
+        "pullRequestMergeStrategy": "squash",
+        "mergedWorktreeAction": "delete"
       }
       """.utf8
     )
@@ -300,6 +311,7 @@ struct RepositorySettingsKeyTests {
     #expect(settings.copyIgnoredOnWorktreeCreate == false)
     #expect(settings.copyUntrackedOnWorktreeCreate == true)
     #expect(settings.pullRequestMergeStrategy == .squash)
+    #expect(settings.mergedWorktreeAction == .delete)
   }
 
   @Test func decodeMissingOptionalFieldsDefaultsToNil() throws {
@@ -317,6 +329,7 @@ struct RepositorySettingsKeyTests {
     #expect(settings.copyIgnoredOnWorktreeCreate == nil)
     #expect(settings.copyUntrackedOnWorktreeCreate == nil)
     #expect(settings.pullRequestMergeStrategy == nil)
+    #expect(settings.mergedWorktreeAction == nil)
   }
 
   @Test func decodeMissingDeleteScriptDefaultsToEmpty() throws {
