@@ -32,10 +32,6 @@ struct WorktreeDetailView: View {
     let selectedRow = repositories.selectedWorktreeSlice
     let selectedWorktree = repositories.worktree(for: repositories.selectedWorktreeID)
     let selectedWorktreeSummaries = selectedWorktreeSummaries(from: repositories)
-    let showsMultiSelectionSummary = shouldShowMultiSelectionSummary(
-      repositories: repositories,
-      selectedWorktreeSummaries: selectedWorktreeSummaries
-    )
     let loadingInfo = loadingInfo(
       for: selectedRow,
       selectedWorktreeID: repositories.selectedWorktreeID,
@@ -50,7 +46,8 @@ struct WorktreeDetailView: View {
     let hasActiveWorktree =
       selectedWorktree != nil
       && loadingInfo == nil
-      && !showsMultiSelectionSummary
+      && !shouldShowMultiSelectionSummary(
+        repositories: repositories, selectedWorktreeSummaries: selectedWorktreeSummaries)
       && selectedWorktree?.isMissing != true
     // `toolbarNotificationGroupsCache` is observed inside `ToolbarNotificationsButtonHost`
     // instead; reading it here would re-render the body on every notification.
@@ -124,7 +121,8 @@ struct WorktreeDetailView: View {
         onSelectNotification: selectToolbarNotification,
         onSelectSurface: selectToolbarSurface,
         onPullRequestAction: { sendPullRequestAction($0, worktree: selectedWorktree) },
-        onOpenFile: { store.send(.openFile($0, with: $1)) }
+        onOpenFile: { store.send(.openFile($0, with: $1)) },
+        onActivateFile: { store.send(.openFileFromExplorer($0)) }
       )
       .inspectorColumnWidth(min: 280, ideal: 320, max: 480)
       // Match the inspector's accent to the terminal background; the appearance

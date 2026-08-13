@@ -123,7 +123,7 @@ extension AppFeature.Action {
       .refreshInstalledOpenActions, .installedOpenActionsResolved,
       .refreshWorktreesRequested,
       .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
-      .openWorktree, .openWorktreeFailed, .openFile, .requestQuit,
+      .openWorktree, .openWorktreeFailed, .openFile, .openFileFromExplorer, .requestQuit,
       .requestTerminateAllTerminalSessions, .newTerminal, .renameSelectedTerminalTab,
       .selectTerminalTabAtIndex, .selectNextTerminalTab, .selectPreviousTerminalTab,
       .splitTerminal, .toggleWindowModeForFocusedPane, .toggleSplitZoom,

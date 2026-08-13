@@ -336,6 +336,29 @@ nonisolated struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
     visibleNode?.leaves() ?? []
   }
 
+  /// The top-right-corner leaf: rightmost column, topmost within it. Unlike `rightmostLeaf()`
+  /// (which follows `.right` to a vertical split's bottom), this reads spatial geometry.
+  /// Computed on `root`, so zoom is ignored; nil only when empty.
+  func topRightmostLeaf() -> Leaf? {
+    guard let root else { return nil }
+    var best: (leaf: Leaf, bounds: CGRect)?
+    for slot in root.spatial().slots {
+      guard case .leaf(let leaf) = slot.node else { continue }
+      guard let current = best else {
+        best = (leaf, slot.bounds)
+        continue
+      }
+      // Rightmost edge wins; a tie there breaks toward the top (smallest minY).
+      let isFartherRight = slot.bounds.maxX > current.bounds.maxX
+      let isHigherAtSameEdge =
+        slot.bounds.maxX == current.bounds.maxX && slot.bounds.minY < current.bounds.minY
+      if isFartherRight || isHigherAtSameEdge {
+        best = (leaf, slot.bounds)
+      }
+    }
+    return best?.leaf
+  }
+
   var structuralIdentity: StructuralIdentity {
     StructuralIdentity(self)
   }

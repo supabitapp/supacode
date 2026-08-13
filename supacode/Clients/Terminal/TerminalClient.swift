@@ -63,6 +63,9 @@ struct TerminalClient {
       focusing: Bool = true,
       anchor: UUID? = nil
     )
+    /// Runs the resolved open-file script for a File Explorer file. `input` is the ready shell
+    /// command; the manager picks placement (tab in the zoomed/top-right pane, or a split).
+    case openFileWithScript(Worktree, input: String)
     case ensureInitialTab(Worktree, runSetupScriptIfNew: Bool, focusing: Bool)
     case stopRunScript(Worktree, focusing: Bool = true)
     case stopScript(Worktree, definitionID: UUID, focusing: Bool = true)

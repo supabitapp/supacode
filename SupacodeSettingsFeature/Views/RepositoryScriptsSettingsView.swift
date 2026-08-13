@@ -46,6 +46,14 @@ public struct RepositoryScriptsSettingsView: View {
           iconColor: .red,
           footerExample: "docker compose down"
         )
+        LifecycleScriptSection(
+          text: $store.settings.openFileScript,
+          title: "Open File Script",
+          subtitle: "Opens a double-clicked file. Empty inherits the global script, then the system app.",
+          icon: "arrow.up.forward.app",
+          iconColor: .teal,
+          footerExample: "nvim \"$SUPACODE_FILE_PATH\""
+        )
 
         // User-defined scripts, each in its own section.
         ForEach($store.settings.scripts) { $script in
@@ -118,8 +126,8 @@ public struct RepositoryScriptsSettingsView: View {
   }
 }
 
-/// Reusable section for lifecycle scripts (setup, archive, delete).
-private struct LifecycleScriptSection: View {
+/// Reusable section for lifecycle / hook scripts (setup, archive, delete, open-file).
+struct LifecycleScriptSection: View {
   @Binding var text: String
   let title: String
   let subtitle: String

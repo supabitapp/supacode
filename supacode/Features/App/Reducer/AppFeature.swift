@@ -306,6 +306,8 @@ struct AppFeature {
     case openWorktree(OpenWorktreeAction)
     case openWorktreeFailed(OpenActionError)
     case openFile(URL, with: OpenWorktreeAction?)
+    /// A File Explorer file was double-clicked: run the open-file script, else the system app.
+    case openFileFromExplorer(URL)
     case requestQuit
     case requestTerminateAllTerminalSessions
     case newTerminal
@@ -884,6 +886,21 @@ struct AppFeature {
           guard let error = await workspaceClient.openFile(fileURL, action) else { return }
           send(.openWorktreeFailed(error))
         }
+
+      case .openFileFromExplorer(let fileURL):
+        // No script (or no/remote worktree): open with the system default app.
+        let openWithDefaultApp = Effect<Action>.run { @MainActor send in
+          guard let error = await workspaceClient.openFile(fileURL, nil) else { return }
+          send(.openWorktreeFailed(error))
+        }
+        // Explorer is local-only; the host guard keeps a script off a remote path defensively.
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          worktree.host == nil
+        else { return openWithDefaultApp }
+        let script = resolveOpenFileScript(in: worktree)
+        guard !script.isEmpty else { return openWithDefaultApp }
+        let input = Self.openFileCommandInput(script: script, fileURL: fileURL)
+        return .run { _ in await terminalClient.send(.openFileWithScript(worktree, input: input)) }
 
       case .openWorktreeFailed(let error):
         state.alert = AlertState {
@@ -3066,6 +3083,28 @@ struct AppFeature {
   /// Resolves a script by ID across the worktree's repo scripts and the user's globals.
   private func resolveScript(scriptID: UUID, in worktree: Worktree) -> ScriptDefinition? {
     mergedScripts(in: worktree).first(where: { $0.id == scriptID })
+  }
+
+  /// The repo open-file script, else the global one; repo wins. Reads the repo via
+  /// `currentSettings()` (fresh from disk) so a double-click uses today's script. A blank
+  /// value counts as unset; "" means "use the system default app".
+  private func resolveOpenFileScript(in worktree: Worktree) -> String {
+    let repositorySettings = RepositorySettingsKey(
+      rootURL: worktree.repositoryRootURL,
+      host: worktree.host
+    ).currentSettings()
+    if !repositorySettings.openFileScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return repositorySettings.openFileScript
+    }
+    @SharedReader(.settingsFile) var settingsFile
+    let global = settingsFile.global.openFileScript
+    return global.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : global
+  }
+
+  /// The script with the file's path exported as `SUPACODE_FILE_PATH`, quoted so it stays literal.
+  static func openFileCommandInput(script: String, fileURL: URL) -> String {
+    let quotedPath = BlockingScriptRunner.shellSingleQuoted(fileURL.path(percentEncoded: false))
+    return "export SUPACODE_FILE_PATH=\(quotedPath); \(script)"
   }
 
   private func scriptAlert(title: String, message: String) -> AlertState<Alert> {

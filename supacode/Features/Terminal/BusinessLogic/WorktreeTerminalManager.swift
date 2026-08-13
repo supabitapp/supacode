@@ -342,6 +342,8 @@ final class WorktreeTerminalManager {
       scheduleTabCreation(
         in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, input: input,
         tabID: id, customTitle: title, focusing: focusing, anchor: anchor)
+    case .openFileWithScript(let worktree, let input):
+      openFileWithScript(in: worktree, input: input)
     case .ensureInitialTab(let worktree, let runSetupScriptIfNew, let focusing):
       ensureInitialTab(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, focusing: focusing)
       // Arm terminal focus on the just-created host; it claims first responder
@@ -483,7 +485,7 @@ final class WorktreeTerminalManager {
       host(for: worktree).navigateSearchOnFocusedSurface(.previous)
     case .endSearch(let worktree):
       host(for: worktree).performBindingActionOnFocusedSurface("end_search")
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface, .splitSurface,
       .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .removeWorktreeLayout,
@@ -528,13 +530,12 @@ final class WorktreeTerminalManager {
       host(for: worktree).performBindingAction(action, onSurfaceID: surfaceID)
     case .setImagePasteAgents(let surfaceID, let agents):
       setImagePasteAgents(agents, onSurfaceID: surfaceID)
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex, .selectRelativeTab,
       .focusSurface, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .removeWorktreeLayout,
       .setNotificationsEnabled, .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
-      .setTerminalHibernationEnabled, .toggleWindowModeForFocusedPane,
-      .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits:
+      .setTerminalHibernationEnabled, .toggleWindowModeForFocusedPane:
       return false
     }
     return true
@@ -579,7 +580,7 @@ final class WorktreeTerminalManager {
       // event fires; refresh here or the window keeps the previous tint.
       refreshFocusedSurfaceBackground()
       terminalLogger.info("Selected worktree \(id?.rawValue ?? "nil")")
-    case .createTab, .createTabWithInput, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .endSearch, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface,
@@ -957,6 +958,80 @@ final class WorktreeTerminalManager {
     if tabID != nil {
       emit(.surfaceCreated(worktreeID: worktree.id, id: mintedID))
     }
+  }
+
+  // Below this pane width a horizontal split leaves each half too narrow, so open in a tab.
+  private static let minimumHorizontalSplitWidth: CGFloat = 600
+
+  /// Where an open-file request lands: a new tab in a pane, or a horizontal split of one.
+  enum OpenFilePlacement: Equatable {
+    case tab(paneToken: UUID)
+    case splitRight(paneToken: UUID)
+  }
+
+  /// Pure placement, split out to be testable without a live layout: zoomed pane -> tab in it;
+  /// multi-pane -> tab in the top-right; lone pane -> split if there's room, else tab. Nil = no pane.
+  static func openFilePlacement(
+    zoomedLeaf: PaneID?,
+    leafCount: Int,
+    topRightLeaf: PaneID?,
+    focusedPane: PaneID?,
+    hasRoomForSplit: Bool
+  ) -> OpenFilePlacement? {
+    if let zoomedLeaf {
+      return .tab(paneToken: zoomedLeaf.rawValue)
+    }
+    if leafCount > 1 {
+      guard let target = topRightLeaf ?? focusedPane else { return nil }
+      return .tab(paneToken: target.rawValue)
+    }
+    guard let only = topRightLeaf ?? focusedPane else { return nil }
+    return hasRoomForSplit ? .splitRight(paneToken: only.rawValue) : .tab(paneToken: only.rawValue)
+  }
+
+  /// Runs the open-file script in a terminal, placed per `openFilePlacement`.
+  private func openFileWithScript(in worktree: Worktree, input: String) {
+    Task {
+      guard let layout = layoutState(for: worktree.id)?.layout else {
+        terminalLogger.warning("openFileWithScript: no layout for worktree \(worktree.id); dropping open.")
+        return
+      }
+      let zoomedLeaf: PaneID?
+      if case .leaf(let leaf) = layout.tree.zoomed { zoomedLeaf = leaf } else { zoomedLeaf = nil }
+      let leafCount = layout.tree.leaves().count
+      let topRight = layout.tree.topRightmostLeaf()
+      let placement = Self.openFilePlacement(
+        zoomedLeaf: zoomedLeaf,
+        leafCount: leafCount,
+        topRightLeaf: topRight,
+        focusedPane: layout.focusedPaneID,
+        hasRoomForSplit: leafCount <= 1
+          && paneHasRoomForHorizontalSplit(topRight ?? layout.focusedPaneID, in: layout)
+      )
+      switch placement {
+      case .tab(let paneToken):
+        createTabAsync(in: worktree, runSetupScriptIfNew: false, initialInput: input, anchor: paneToken)
+      case .splitRight(let paneToken):
+        splitPane(
+          in: worktree, paneToken: paneToken, direction: .horizontal, input: input, id: UUID(),
+          focusing: true)
+      case nil:
+        // No existing pane (a tab-less layout is valid): bootstrap the first tab; createTabAsync mints one.
+        createTabAsync(in: worktree, runSetupScriptIfNew: false, initialInput: input, anchor: nil)
+      }
+    }
+  }
+
+  /// Whether the pane's live-renderer width leaves each half wide enough to edit in.
+  /// An unmeasurable or missing pane prefers a new tab.
+  private func paneHasRoomForHorizontalSplit(_ paneID: PaneID?, in layout: PaneLayout) -> Bool {
+    guard let paneID,
+      let pane = layout.panes[id: paneID],
+      let selectedTab = pane.selectedTabID,
+      let contentID = pane.tabs[id: selectedTab]?.content.id,
+      let renderer = ContentRuntime.liveValue.renderer(for: contentID)
+    else { return false }
+    return renderer.bounds.width >= Self.minimumHorizontalSplitWidth
   }
 
   private static func tabCount(in layout: PaneLayout?) -> Int {

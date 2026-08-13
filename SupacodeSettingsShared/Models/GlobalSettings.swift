@@ -114,6 +114,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
   /// Scripts shared across every repository. Always `.custom` kind.
   public var globalScripts: [ScriptDefinition]
+  /// Global fallback for opening a File Explorer file when the repo sets none, with its path in
+  /// `SUPACODE_FILE_PATH`. Empty uses the system default app. A hook, never in the script menu.
+  public var openFileScript: String
   public var richAgentNotificationsEnabled: Bool
   public var agentPresenceBadgesEnabled: Bool
   public var confirmQuitMode: ConfirmQuitMode
@@ -172,6 +175,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     autoDeleteArchivedWorktreesAfterDays: nil,
     shortcutOverrides: [:],
     globalScripts: [],
+    openFileScript: "",
     richAgentNotificationsEnabled: true,
     agentPresenceBadgesEnabled: true,
     confirmQuitMode: .auto,
@@ -212,6 +216,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod? = nil,
     shortcutOverrides: [AppShortcutID: AppShortcutOverride] = [:],
     globalScripts: [ScriptDefinition] = [],
+    openFileScript: String = "",
     richAgentNotificationsEnabled: Bool = true,
     agentPresenceBadgesEnabled: Bool = true,
     confirmQuitMode: ConfirmQuitMode = .auto,
@@ -252,6 +257,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.autoDeleteArchivedWorktreesAfterDays = autoDeleteArchivedWorktreesAfterDays
     self.shortcutOverrides = shortcutOverrides
     self.globalScripts = globalScripts
+    self.openFileScript = openFileScript
     self.richAgentNotificationsEnabled = richAgentNotificationsEnabled
     self.agentPresenceBadgesEnabled = agentPresenceBadgesEnabled
     self.confirmQuitMode = confirmQuitMode
@@ -402,6 +408,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
       if script.name.isEmpty { script.name = ScriptKind.custom.defaultName }
       return script
     }
+    openFileScript =
+      try container.decodeIfPresent(String.self, forKey: .openFileScript)
+      ?? Self.default.openFileScript
     richAgentNotificationsEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .richAgentNotificationsEnabled)
       ?? Self.default.richAgentNotificationsEnabled

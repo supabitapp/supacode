@@ -7,6 +7,9 @@ import UniformTypeIdentifiers
 struct FileExplorerOutlineActions {
   var toggleDirectory: (String) -> Void
   var select: (String?) -> Void
+  /// Primary open (double-click): runs the open-file script, else the system app. Distinct
+  /// from `openFile`, which targets a chosen editor.
+  var activateFile: (URL) -> Void
   var openFile: (URL, OpenWorktreeAction?) -> Void
   var showMore: (String) -> Void
   var quickLook: (URL) -> Void
@@ -451,14 +454,14 @@ struct FileExplorerOutlineView: NSViewRepresentable {
 
     // MARK: Activation.
 
-    /// Double-click: directories toggle, files open in the system's default app
-    /// (Finder behavior). Configured editors live in the menu; Return renames.
+    /// Double-click: directories toggle, files run the open-file script (or the system app).
+    /// The context menu keeps the system-app and editor entries; Return renames.
     func activate(item: OutlineItem) {
       guard let entry = item.entry else { return }
       if entry.isDirectory {
         actions?.toggleDirectory(item.path)
       } else if let url = url(for: item.path) {
-        openInDefaultApp(url)
+        actions?.activateFile(url)
       }
     }
 

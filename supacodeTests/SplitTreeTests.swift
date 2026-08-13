@@ -198,6 +198,44 @@ struct SplitTreeTests {
     #expect(json == expected)
   }
 
+  @Test func topRightmostLeafOfSingleLeafIsThatLeaf() {
+    let tree = SplitTree(view: IDLeaf(id: 1))
+    #expect(tree.topRightmostLeaf() == IDLeaf(id: 1))
+  }
+
+  @Test func topRightmostLeafOfHorizontalSplitIsTheRightLeaf() throws {
+    let tree = try SplitTree(view: IDLeaf(id: 1))
+      .inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .right)
+    #expect(tree.topRightmostLeaf() == IDLeaf(id: 2))
+  }
+
+  @Test func topRightmostLeafOfVerticalSplitIsTheTopLeaf() throws {
+    // A stacked split shares the right edge, so the top pane wins the tie-break.
+    let tree = try SplitTree(view: IDLeaf(id: 1))
+      .inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .down)
+    #expect(tree.topRightmostLeaf() == IDLeaf(id: 1))
+  }
+
+  @Test func topRightmostLeafPrefersRightColumnThenTop() throws {
+    // Left column id1; the right column is id2 (top) over id3 (bottom).
+    let tree = try SplitTree(view: IDLeaf(id: 1))
+      .inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .right)
+      .inserting(view: IDLeaf(id: 3), at: IDLeaf(id: 2), direction: .down)
+    #expect(tree.topRightmostLeaf() == IDLeaf(id: 2))
+  }
+
+  @Test func topRightmostLeafIgnoresZoom() throws {
+    // Placement reads spatial geometry from the root; zoom never redirects it.
+    let tree = try SplitTree(view: IDLeaf(id: 1))
+      .inserting(view: IDLeaf(id: 2), at: IDLeaf(id: 1), direction: .right)
+    let zoomed = tree.settingZoomed(try #require(tree.find(id: 1)))
+    #expect(zoomed.topRightmostLeaf() == IDLeaf(id: 2))
+  }
+
+  @Test func topRightmostLeafOfEmptyTreeIsNil() {
+    #expect(SplitTree<IDLeaf>().topRightmostLeaf() == nil)
+  }
+
 }
 
 private final class SplitTreeTestView: NSView, Identifiable {

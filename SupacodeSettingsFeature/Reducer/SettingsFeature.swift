@@ -75,6 +75,7 @@ public struct SettingsFeature {
     public var autoDeleteArchivedWorktreesAfterDays: AutoDeletePeriod?
     public var shortcutOverrides: [AppShortcutID: AppShortcutOverride]
     public var globalScripts: [ScriptDefinition]
+    public var openFileScript: String
     public var richAgentNotificationsEnabled: Bool
     public var agentPresenceBadgesEnabled: Bool
     public var confirmQuitMode: ConfirmQuitMode
@@ -159,6 +160,7 @@ public struct SettingsFeature {
       autoDeleteArchivedWorktreesAfterDays = settings.autoDeleteArchivedWorktreesAfterDays
       shortcutOverrides = settings.shortcutOverrides
       globalScripts = settings.globalScripts
+      openFileScript = settings.openFileScript
       richAgentNotificationsEnabled = settings.richAgentNotificationsEnabled
       agentPresenceBadgesEnabled = settings.agentPresenceBadgesEnabled
       confirmQuitMode = settings.confirmQuitMode
@@ -206,6 +208,7 @@ public struct SettingsFeature {
         autoDeleteArchivedWorktreesAfterDays: autoDeleteArchivedWorktreesAfterDays,
         shortcutOverrides: shortcutOverrides,
         globalScripts: globalScripts,
+        openFileScript: openFileScript,
         richAgentNotificationsEnabled: richAgentNotificationsEnabled,
         agentPresenceBadgesEnabled: agentPresenceBadgesEnabled,
         confirmQuitMode: confirmQuitMode,
@@ -363,6 +366,7 @@ public struct SettingsFeature {
         state.autoDeleteArchivedWorktreesAfterDays = normalizedSettings.autoDeleteArchivedWorktreesAfterDays
         state.shortcutOverrides = normalizedSettings.shortcutOverrides
         state.globalScripts = normalizedSettings.globalScripts
+        state.openFileScript = normalizedSettings.openFileScript
         state.richAgentNotificationsEnabled = normalizedSettings.richAgentNotificationsEnabled
         state.agentPresenceBadgesEnabled = normalizedSettings.agentPresenceBadgesEnabled
         state.confirmQuitMode = normalizedSettings.confirmQuitMode

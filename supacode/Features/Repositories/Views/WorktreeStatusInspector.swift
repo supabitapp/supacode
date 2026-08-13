@@ -17,6 +17,7 @@ struct WorktreeStatusInspectorContainer: View {
   let onSelectSurface: (Worktree.ID, UUID) -> Void
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
   let onOpenFile: (URL, OpenWorktreeAction?) -> Void
+  let onActivateFile: (URL) -> Void
 
   @Shared(.settingsFile) private var settingsFile
 
@@ -35,7 +36,8 @@ struct WorktreeStatusInspectorContainer: View {
           store: repositoriesStore.scope(state: \.fileExplorer, action: \.fileExplorer),
           fileOpenActions: fileOpenActions,
           resolvedOpenAction: resolvedOpenAction,
-          onOpenFile: onOpenFile
+          onOpenFile: onOpenFile,
+          onActivateFile: onActivateFile
         )
       case .notifications:
         WorktreeNotificationsInspectorView(
