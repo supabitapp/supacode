@@ -167,11 +167,15 @@ struct GithubSettingsView: View {
           }
         } label: {
           Text("When a pull request is merged")
+          let scopeNote =
+            " Only applies to worktrees created before the pull request was merged, and not to remote repositories."
           switch store.mergedWorktreeAction {
           case .archive:
-            Text("Archives the worktree when its pull request is merged.")
+            Text("Archives the worktree when its pull request is merged.\(scopeNote)")
           case .delete:
-            Text("Follows the \"Delete local branch with worktree\" option in Worktrees settings.")
+            Text(
+              "Follows the \"Delete local branch with worktree\" option in Worktrees settings.\(scopeNote)"
+            )
           case nil:
             EmptyView()
           }

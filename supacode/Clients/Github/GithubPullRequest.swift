@@ -11,6 +11,7 @@ nonisolated struct GithubPullRequest: Decodable, Equatable, Hashable {
   let mergeable: String?
   let mergeStateStatus: String?
   let updatedAt: Date?
+  let mergedAt: Date?
   let url: String
   let headRefName: String?
   let baseRefName: String?

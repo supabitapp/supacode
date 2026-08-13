@@ -354,6 +354,7 @@ struct ToolbarNotificationGroupingTests {
       mergeable: nil,
       mergeStateStatus: nil,
       updatedAt: nil,
+      mergedAt: nil,
       url: "https://example.com/pull/1",
       headRefName: headRefName,
       baseRefName: "main",

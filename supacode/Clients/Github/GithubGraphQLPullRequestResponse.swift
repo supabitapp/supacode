@@ -113,6 +113,7 @@ nonisolated struct GithubGraphQLPullRequestResponse: Decodable {
     let mergeable: String?
     let mergeStateStatus: String?
     let updatedAt: Date?
+    let mergedAt: Date?
     let url: String
     let headRefName: String?
     let baseRefName: String?
@@ -134,6 +135,7 @@ nonisolated struct GithubGraphQLPullRequestResponse: Decodable {
         mergeable: mergeable,
         mergeStateStatus: mergeStateStatus,
         updatedAt: updatedAt,
+        mergedAt: mergedAt,
         url: url,
         headRefName: headRefName,
         baseRefName: baseRefName,

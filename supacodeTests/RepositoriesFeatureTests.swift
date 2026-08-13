@@ -5657,7 +5657,8 @@ struct RepositoriesFeatureTests {
     let featureWorktree = makeWorktree(
       id: "\(repoRoot)/feature",
       name: "feature",
-      repoRoot: repoRoot
+      repoRoot: repoRoot,
+      createdAt: Date(timeIntervalSince1970: 900_000)
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var state = makeState(repositories: [repository])
@@ -5672,7 +5673,11 @@ struct RepositoriesFeatureTests {
     // noisy to assert line-by-line. Relax exhaustivity and pin
     // the meaningful end state via `#expect`.
     store.exhaustivity = .off
-    let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: featureWorktree.name)
+    let mergedPullRequest = makePullRequest(
+      state: "MERGED",
+      headRefName: featureWorktree.name,
+      mergedAt: Date(timeIntervalSince1970: 950_000)
+    )
 
     await store.send(
       .repositoryPullRequestsLoaded(
@@ -5721,7 +5726,8 @@ struct RepositoriesFeatureTests {
     let featureWorktree = makeWorktree(
       id: "\(repoRoot)/feature",
       name: "feature",
-      repoRoot: repoRoot
+      repoRoot: repoRoot,
+      createdAt: Date(timeIntervalSince1970: 900_000)
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
     var state = makeState(repositories: [repository])
@@ -5733,7 +5739,11 @@ struct RepositoriesFeatureTests {
     // Exhaustivity is off because `deleteSidebarItemConfirmed` triggers
     // async git operations that require extensive dependency mocking.
     store.exhaustivity = .off
-    let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: featureWorktree.name)
+    let mergedPullRequest = makePullRequest(
+      state: "MERGED",
+      headRefName: featureWorktree.name,
+      mergedAt: Date(timeIntervalSince1970: 950_000)
+    )
 
     await store.send(
       .repositoryPullRequestsLoaded(
@@ -5742,6 +5752,104 @@ struct RepositoriesFeatureTests {
       )
     )
     await store.receive(\.deleteSidebarItemConfirmed)
+  }
+
+  // #794: a stale merge on a reused branch name must not auto-close a freshly recreated worktree.
+  @Test func repositoryPullRequestsLoadedSkipsAutoActionForStaleMerge() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+      createdAt: Date(timeIntervalSince1970: 1_000_000)
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.mergedWorktreeAction = .archive
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    let mergedPullRequest = makePullRequest(
+      state: "MERGED",
+      headRefName: featureWorktree.name,
+      mergedAt: Date(timeIntervalSince1970: 900_000)
+    )
+
+    await store.send(
+      .repositoryPullRequestsLoaded(
+        repositoryID: repository.id,
+        pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
+      )
+    )
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = mergedPullRequest
+    }
+    await store.finish()
+  }
+
+  @Test func repositoryPullRequestsLoadedSkipsAutoActionWhenMergedAtMissing() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot,
+      createdAt: Date(timeIntervalSince1970: 900_000)
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.mergedWorktreeAction = .archive
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: featureWorktree.name)
+
+    await store.send(
+      .repositoryPullRequestsLoaded(
+        repositoryID: repository.id,
+        pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
+      )
+    )
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = mergedPullRequest
+    }
+    await store.finish()
+  }
+
+  @Test func repositoryPullRequestsLoadedSkipsAutoActionWhenCreatedAtMissing() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.mergedWorktreeAction = .archive
+    state.reconcileSidebarForTesting()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    let mergedPullRequest = makePullRequest(
+      state: "MERGED",
+      headRefName: featureWorktree.name,
+      mergedAt: Date(timeIntervalSince1970: 950_000)
+    )
+
+    await store.send(
+      .repositoryPullRequestsLoaded(
+        repositoryID: repository.id,
+        pullRequestsByWorktreeID: [featureWorktree.id: mergedPullRequest]
+      )
+    )
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = mergedPullRequest
+    }
+    await store.finish()
   }
 
   @Test func repositoryPullRequestsLoadedDoesNothingWhenMergedWorktreeActionNil() async {
@@ -5902,6 +6010,7 @@ struct RepositoriesFeatureTests {
       mergeable: nil,
       mergeStateStatus: nil,
       updatedAt: Date(),
+      mergedAt: nil,
       url: mergedPullRequest.url,
       headRefName: featureWorktree.name,
       baseRefName: "main",
@@ -8105,7 +8214,8 @@ struct RepositoriesFeatureTests {
   private func makePullRequest(
     state: String,
     headRefName: String? = nil,
-    number: Int = 1
+    number: Int = 1,
+    mergedAt: Date? = nil
   ) -> GithubPullRequest {
     GithubPullRequest(
       number: number,
@@ -8118,6 +8228,7 @@ struct RepositoriesFeatureTests {
       mergeable: nil,
       mergeStateStatus: nil,
       updatedAt: nil,
+      mergedAt: mergedAt,
       url: "https://example.com/pull/\(number)",
       headRefName: headRefName,
       baseRefName: "main",

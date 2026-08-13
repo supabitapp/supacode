@@ -3449,6 +3449,7 @@ struct AppFeatureDeeplinkTests {
       mergeable: nil,
       mergeStateStatus: nil,
       updatedAt: nil,
+      mergedAt: nil,
       url: "https://example.com/pull/1",
       headRefName: nil,
       baseRefName: "main",

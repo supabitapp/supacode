@@ -2475,9 +2475,13 @@ struct RepositoriesFeature {
             )
           )
           let mergedLifecycle = state.sidebarItems[id: worktreeID]?.lifecycle ?? .idle
+          // Don't let a stale merge on a reused branch name auto-close a freshly recreated worktree (#794).
           if let mergedAction = state.mergedWorktreeAction,
             !previousMerged,
             nextMerged,
+            let mergedAt = pullRequest?.mergedAt,
+            let createdAt = worktree.createdAt,
+            mergedAt > createdAt,
             !state.isMainWorktree(worktree),
             !state.isWorktreeArchived(worktreeID),
             mergedLifecycle != .deleting,

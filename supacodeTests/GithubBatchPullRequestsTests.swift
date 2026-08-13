@@ -66,6 +66,71 @@ struct GithubBatchPullRequestsTests {
     #expect(prs["feature-b"] == nil)
   }
 
+  @Test func decodesMergedAtTimestamp() throws {
+    let json = """
+      {
+        "data": {
+          "repository": {
+            "branch0": {
+              "nodes": [
+                {
+                  "number": 7,
+                  "title": "Merged PR",
+                  "state": "MERGED",
+                  "additions": 3,
+                  "deletions": 1,
+                  "isDraft": false,
+                  "reviewDecision": null,
+                  "updatedAt": "2025-01-02T00:00:00Z",
+                  "mergedAt": "2025-01-02T03:04:05Z",
+                  "url": "https://github.com/octo/repo/pull/7",
+                  "headRefName": "feature-a",
+                  "headRepository": {
+                    "name": "repo",
+                    "owner": { "login": "octo" }
+                  }
+                }
+              ]
+            },
+            "branch1": {
+              "nodes": [
+                {
+                  "number": 8,
+                  "title": "Open PR",
+                  "state": "OPEN",
+                  "additions": 0,
+                  "deletions": 0,
+                  "isDraft": false,
+                  "reviewDecision": null,
+                  "updatedAt": "2025-01-02T00:00:00Z",
+                  "url": "https://github.com/octo/repo/pull/8",
+                  "headRefName": "feature-b",
+                  "headRepository": {
+                    "name": "repo",
+                    "owner": { "login": "octo" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+      """
+    let data = Data(json.utf8)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let response = try decoder.decode(GithubGraphQLPullRequestResponse.self, from: data)
+    let prs = response.pullRequestsByBranch(
+      aliasMap: ["branch0": "feature-a", "branch1": "feature-b"],
+      owner: "octo",
+      repo: "repo"
+    )
+    let expected = try #require(ISO8601DateFormatter().date(from: "2025-01-02T03:04:05Z"))
+    #expect(prs["feature-a"]?.mergedAt == expected)
+    // An absent mergedAt key (open PRs) decodes to nil.
+    #expect(prs["feature-b"]?.mergedAt == nil)
+  }
+
   @Test func ignoresForkPRWhenBaseRefMatchesBranch() throws {
     // Fork PR "fork:main → main" should be filtered out for local
     // "main" because the local branch is the PR's target, not its source.
