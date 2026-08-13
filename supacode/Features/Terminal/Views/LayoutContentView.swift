@@ -313,7 +313,20 @@ struct PaneStripView: View {
   /// Shared tab-drag source; nil in a pane window, where there are no drop zones.
   var dragModel: PaneTabDragModel?
 
+  @Shared(.settingsFile) private var settingsFile
+
   private var isFocused: Bool { store.layout.focusedPaneID == pane.id }
+
+  /// Whether this pane should focus when the pointer moves over it. Read as a
+  /// leaf (never threaded through the tree) so a settings change invalidates
+  /// only pane strips, never the whole tree.
+  private var followsHoverFocus: Bool {
+    guard context == .embedded else { return false }
+    switch settingsFile.global.hoverFocusMode {
+    case .never: return false
+    case .terminals: return pane.selectedTab?.content.kind == .terminal
+    }
+  }
   private var isZoomed: Bool {
     guard case .leaf(let leaf) = store.layout.tree.zoomed else { return false }
     return leaf == pane.id
@@ -369,7 +382,88 @@ struct PaneStripView: View {
           PaneSplitDropZones(pane: pane, store: store, dragModel: dragModel)
         }
       }
+      // Focus-follows-mouse. Click-through sensor over the content region only,
+      // so hovering the tab strip never focuses.
+      .overlay {
+        if followsHoverFocus {
+          PaneHoverFocusSensor {
+            guard store.layout.focusedPaneID != pane.id,
+              !windowedPaneIDs.contains(pane.id)
+            else { return }
+            store.send(.focusPane(.pane(pane.id)))
+          }
+        }
+      }
     }
+  }
+}
+
+/// A first responder that follows the pointer under focus-follows-mouse. Gating
+/// on a conforming responder lets the layout name no content kind and keeps hover
+/// from stealing the keyboard from the sidebar or file explorer.
+protocol HoverFocusEligibleResponder: AnyObject {}
+
+/// Content-agnostic focus-follows-mouse sensor: a click-through overlay
+/// (`hitTest` returns nil) that follows the pointer inside the pane, at the
+/// layout level rather than the Ghostty mouse path.
+private struct PaneHoverFocusSensor: NSViewRepresentable {
+  /// Invoked while the pointer is inside, gated to the key window, no held mouse
+  /// button, and an eligible responder holding focus.
+  let onHoverFocus: () -> Void
+
+  func makeNSView(context: Context) -> HoverFocusSensorView {
+    HoverFocusSensorView(onHoverFocus: onHoverFocus)
+  }
+
+  func updateNSView(_ nsView: HoverFocusSensorView, context: Context) {
+    nsView.onHoverFocus = onHoverFocus
+  }
+}
+
+private final class HoverFocusSensorView: NSView {
+  var onHoverFocus: () -> Void
+  private var hoverTracking: NSTrackingArea?
+
+  init(onHoverFocus: @escaping () -> Void) {
+    self.onHoverFocus = onHoverFocus
+    super.init(frame: .zero)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  // Never claim the pointer: clicks, drags, and selection reach the surface
+  // beneath. The tracking area still delivers hover events.
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let hoverTracking { removeTrackingArea(hoverTracking) }
+    // `.inVisibleRect` self-sizes the area, so the rect is ignored.
+    let tracking = NSTrackingArea(
+      rect: .zero,
+      options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+      owner: self
+    )
+    addTrackingArea(tracking)
+    hoverTracking = tracking
+  }
+
+  override func mouseEntered(with event: NSEvent) { followFocusIfEligible() }
+  // Follow on plain movement too, not just boundary crossing: a focus change
+  // elsewhere (keyboard nav, a drag that ended here) leaves the pointer inside
+  // with no fresh enter event.
+  override func mouseMoved(with event: NSEvent) { followFocusIfEligible() }
+
+  private func followFocusIfEligible() {
+    // Live window/button/responder reads mirror the surface's own FFM guards:
+    // skip background windows, skip mid-drag retargeting, and require a conforming
+    // responder so hover never steals focus from the sidebar or file explorer.
+    guard let window, window.isKeyWindow,
+      NSEvent.pressedMouseButtons == 0,
+      window.firstResponder is any HoverFocusEligibleResponder
+    else { return }
+    onHoverFocus()
   }
 }
 

@@ -8,6 +8,9 @@ import UniformTypeIdentifiers
 
 private let surfaceLogger = SupaLogger("Surface")
 
+// Terminal content follows the pointer under layout-level focus-follows-mouse.
+extension GhosttySurfaceView: HoverFocusEligibleResponder {}
+
 final class GhosttySurfaceView: NSView, Identifiable {
   private struct ScrollbarState {
     let total: UInt64
