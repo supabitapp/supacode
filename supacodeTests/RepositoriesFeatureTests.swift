@@ -1757,6 +1757,413 @@ struct RepositoriesFeatureTests {
     #expect(store.state.alert == nil)
   }
 
+  @Test(.dependencies) func createWorktreeWithSupaignoreFiltersCopyAndSkipsWtCopy() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      $0.global.promptForWorktreeCreation = false
+      $0.global.copyIgnoredOnWorktreeCreate = true
+      $0.global.copyUntrackedOnWorktreeCreate = true
+    }
+    let plan = WorktreeCopyPlan.survivors(
+      ignoredCandidates: ["a.o"], untrackedCandidates: [".env", "config"], excluded: [])
+    let wtFlags = LockIsolated<(ignored: Bool, untracked: Bool)?>(nil)
+    let copiedPlan = LockIsolated<WorktreeCopyPlan?>(nil)
+    let rawCountCalled = LockIsolated(false)
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      // When supaignore is active the counts must come from the plan, never the
+      // raw ignored/untracked probes.
+      $0.gitClient.ignoredFileCount = { _ in
+        rawCountCalled.setValue(true)
+        return 99
+      }
+      $0.gitClient.untrackedFileCount = { _ in
+        rawCountCalled.setValue(true)
+        return 99
+      }
+      $0.gitClient.resolveSupaignore = { _, _, _, _ in .resolved(EffectiveSupaignorePatterns("node_modules/\n")!) }
+      $0.gitClient.worktreeCopyPlan = { _, _, _, _ in plan }
+      $0.gitClient.copyWorktreeArtifacts = { copiedPlanValue, _, _ in
+        copiedPlan.withValue { $0 = copiedPlanValue }
+        return WorktreeArtifactCopier.Outcome(copied: 1, failed: 0, firstErrorDescription: nil)
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, copyIgnored, copyUntracked, _, _ in
+        wtFlags.withValue { $0 = (copyIgnored, copyUntracked) }
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.createRandomWorktreeInRepository(repository.id))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.finish()
+
+    // `wt` copies nothing; Supacode copies the exact survivor plan itself.
+    #expect(wtFlags.value?.ignored == false)
+    #expect(wtFlags.value?.untracked == false)
+    #expect(copiedPlan.value == plan)
+    #expect(rawCountCalled.value == false)
+    #expect(store.state.alert == nil)
+  }
+
+  @Test(.dependencies) func createWorktreeWithoutSupaignoreDelegatesCopyToWt() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      $0.global.promptForWorktreeCreation = false
+      $0.global.copyUntrackedOnWorktreeCreate = true
+    }
+    let wtFlags = LockIsolated<(ignored: Bool, untracked: Bool)?>(nil)
+    let copyCalled = LockIsolated(false)
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.ignoredFileCount = { _ in 0 }
+      $0.gitClient.untrackedFileCount = { _ in 1 }
+      // `resolveSupaignore` defaults to nil (no filter), so the copy delegates
+      // to `wt` exactly as before.
+      $0.gitClient.copyWorktreeArtifacts = { _, _, _ in
+        copyCalled.withValue { $0 = true }
+        return WorktreeArtifactCopier.Outcome(copied: 0, failed: 0, firstErrorDescription: nil)
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, copyIgnored, copyUntracked, _, _ in
+        wtFlags.withValue { $0 = (copyIgnored, copyUntracked) }
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.createRandomWorktreeInRepository(repository.id))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.finish()
+
+    #expect(wtFlags.value?.ignored == false)
+    #expect(wtFlags.value?.untracked == true)
+    #expect(copyCalled.value == false)
+  }
+
+  @Test(.dependencies) func supaignoreCopyFailureSurfacesNonFatalAdvisory() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      $0.global.promptForWorktreeCreation = false
+      $0.global.copyUntrackedOnWorktreeCreate = true
+    }
+    let plan = WorktreeCopyPlan.survivors(
+      ignoredCandidates: [], untrackedCandidates: [".env", "config"], excluded: [])
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.resolveSupaignore = { _, _, _, _ in .resolved(EffectiveSupaignorePatterns("node_modules/\n")!) }
+      $0.gitClient.worktreeCopyPlan = { _, _, _, _ in plan }
+      $0.gitClient.copyWorktreeArtifacts = { _, _, _ in
+        WorktreeArtifactCopier.Outcome(copied: 0, failed: 2, firstErrorDescription: "boom")
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.createRandomWorktreeInRepository(repository.id))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.receive(\.presentAlert)
+    await store.finish()
+
+    // The worktree still lands; the copy failure is only an advisory.
+    #expect(store.state.repositories[id: repository.id]?.worktrees[id: createdWorktree.id] != nil)
+    #expect(store.state.alert?.title == TextState("Worktree created, some files not copied"))
+  }
+
+  @Test(.dependencies) func supaignorePlanFailureCopiesNothingAndAdvises() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      $0.global.promptForWorktreeCreation = false
+      $0.global.copyUntrackedOnWorktreeCreate = true
+    }
+    let wtFlags = LockIsolated<(ignored: Bool, untracked: Bool)?>(nil)
+    let copyCalled = LockIsolated(false)
+    struct PlanError: LocalizedError { var errorDescription: String? { "planboom" } }
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.resolveSupaignore = { _, _, _, _ in .resolved(EffectiveSupaignorePatterns("node_modules/\n")!) }
+      $0.gitClient.worktreeCopyPlan = { _, _, _, _ in throw PlanError() }
+      $0.gitClient.copyWorktreeArtifacts = { _, _, _ in
+        copyCalled.withValue { $0 = true }
+        return WorktreeArtifactCopier.Outcome(copied: 0, failed: 0, firstErrorDescription: nil)
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, copyIgnored, copyUntracked, _, _ in
+        wtFlags.withValue { $0 = (copyIgnored, copyUntracked) }
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.createRandomWorktreeInRepository(repository.id))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.receive(\.presentAlert)
+    await store.finish()
+
+    // Never fall back to wt's unfiltered copy, and never run the copier.
+    #expect(wtFlags.value?.ignored == false)
+    #expect(wtFlags.value?.untracked == false)
+    #expect(copyCalled.value == false)
+    #expect(store.state.repositories[id: repository.id]?.worktrees[id: createdWorktree.id] != nil)
+    #expect(store.state.alert?.title == TextState("Worktree created, some files not copied"))
+    #expect(store.state.alert?.message == TextState("The filtered file copy was skipped: planboom"))
+  }
+
+  @Test(.dependencies) func supaignoreResolutionFailureFailsSafe() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      $0.global.promptForWorktreeCreation = false
+      $0.global.copyUntrackedOnWorktreeCreate = true
+    }
+    let wtFlags = LockIsolated<(ignored: Bool, untracked: Bool)?>(nil)
+    let planCalled = LockIsolated(false)
+    let copyCalled = LockIsolated(false)
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      // A read failure must NOT fall back to wt's unfiltered copy.
+      $0.gitClient.resolveSupaignore = { _, _, _, _ in .failed(reason: "permission denied") }
+      $0.gitClient.worktreeCopyPlan = { _, _, _, _ in
+        planCalled.withValue { $0 = true }
+        return .survivors(ignoredCandidates: [], untrackedCandidates: [], excluded: [])
+      }
+      $0.gitClient.copyWorktreeArtifacts = { _, _, _ in
+        copyCalled.withValue { $0 = true }
+        return WorktreeArtifactCopier.Outcome(copied: 0, failed: 0, firstErrorDescription: nil)
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, copyIgnored, copyUntracked, _, _ in
+        wtFlags.withValue { $0 = (copyIgnored, copyUntracked) }
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.createRandomWorktreeInRepository(repository.id))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.receive(\.presentAlert)
+    await store.finish()
+
+    #expect(wtFlags.value?.ignored == false)
+    #expect(wtFlags.value?.untracked == false)
+    #expect(planCalled.value == false)
+    #expect(copyCalled.value == false)
+    #expect(store.state.repositories[id: repository.id]?.worktrees[id: createdWorktree.id] != nil)
+    #expect(store.state.alert?.title == TextState("Worktree created, some files not copied"))
+    #expect(
+      store.state.alert?.message
+        == TextState("The filtered file copy was skipped: permission denied"))
+  }
+
+  @Test(.dependencies) func supaignoreResolvedButEmptyPlanCopiesNothingWithoutWarning() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      $0.global.promptForWorktreeCreation = false
+      $0.global.copyUntrackedOnWorktreeCreate = true
+    }
+    let wtFlags = LockIsolated<(ignored: Bool, untracked: Bool)?>(nil)
+    let copyCalled = LockIsolated(false)
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.resolveSupaignore = { _, _, _, _ in .resolved(EffectiveSupaignorePatterns("*\n")!) }
+      // Everything filtered out: a valid resolution with an empty survivor set.
+      $0.gitClient.worktreeCopyPlan = { _, _, _, _ in
+        .survivors(ignoredCandidates: [], untrackedCandidates: [], excluded: [])
+      }
+      $0.gitClient.copyWorktreeArtifacts = { _, _, _ in
+        copyCalled.withValue { $0 = true }
+        return WorktreeArtifactCopier.Outcome(copied: 0, failed: 0, firstErrorDescription: nil)
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, copyIgnored, copyUntracked, _, _ in
+        wtFlags.withValue { $0 = (copyIgnored, copyUntracked) }
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.createRandomWorktreeInRepository(repository.id))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.finish()
+
+    #expect(wtFlags.value?.ignored == false)
+    #expect(wtFlags.value?.untracked == false)
+    #expect(copyCalled.value == false)
+    #expect(store.state.alert == nil)
+  }
+
+  @Test(.dependencies) func supaignoreCopyAndUpstreamFailuresCoalesceIntoOneAlert() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      $0.global.promptForWorktreeCreation = false
+      $0.global.copyUntrackedOnWorktreeCreate = true
+    }
+    struct UpstreamError: LocalizedError { var errorDescription: String? { "upstreamboom" } }
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.upstreamBranchExists = { _, _ in true }
+      $0.gitClient.setUpstreamBranch = { _, _, _ in throw UpstreamError() }
+      $0.gitClient.resolveSupaignore = { _, _, _, _ in .resolved(EffectiveSupaignorePatterns("node_modules/\n")!) }
+      $0.gitClient.worktreeCopyPlan = { _, _, _, _ in
+        .survivors(ignoredCandidates: [], untrackedCandidates: [".env"], excluded: [])
+      }
+      $0.gitClient.copyWorktreeArtifacts = { _, _, _ in
+        WorktreeArtifactCopier.Outcome(copied: 0, failed: 1, firstErrorDescription: "copyboom")
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .createRandomWorktreeInRepository(repository.id, upstream: .branch("origin/feature-x")))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.receive(\.presentAlert)
+    await store.finish()
+
+    // The "with warnings" title is only produced when BOTH messages are present,
+    // so this proves the copy + upstream advisories coalesced into one alert
+    // rather than clobbering each other.
+    #expect(store.state.alert?.title == TextState("Worktree created with warnings"))
+    #expect(
+      store.state.alert?.message
+        == TextState("1 file(s) could not be copied. copyboom\n\nupstreamboom"))
+  }
+
+  @Test(.dependencies) func upstreamFailureWithoutSupaignoreAdvises() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.promptForWorktreeCreation = false }
+    struct UpstreamError: LocalizedError { var errorDescription: String? { "upstreamboom" } }
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.upstreamBranchExists = { _, _ in true }
+      $0.gitClient.setUpstreamBranch = { _, _, _ in throw UpstreamError() }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .createRandomWorktreeInRepository(repository.id, upstream: .branch("origin/feature-x")))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.receive(\.presentAlert)
+    await store.finish()
+
+    #expect(store.state.alert?.title == TextState("Worktree created, upstream not updated"))
+    #expect(store.state.alert?.message == TextState("upstreamboom"))
+  }
+
   @Test(.dependencies) func createWorktreeFetchesRemoteWhenEnabled() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)

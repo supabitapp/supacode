@@ -2217,21 +2217,75 @@ struct RepositoriesFeature {
                 return
               }
             }
+            // Resolve the layered `supaignore` filter. On effective patterns,
+            // Supacode copies the surviving ignored / untracked files itself
+            // (after `wt` creates the worktree); on a read failure it copies
+            // nothing rather than let `wt` copy everything unfiltered.
+            let supaignoreResolution =
+              (copyIgnored || copyUntracked)
+              ? await gitClient.resolveSupaignore(
+                repository.rootURL,
+                resolvedBaseRef,
+                SupacodePaths.configBaseDirectory
+                  .appending(path: SupaignoreMerge.fileName, directoryHint: .notDirectory),
+                worktreeBaseDirectory
+                  .appending(path: SupaignoreMerge.fileName, directoryHint: .notDirectory)
+              )
+              : .absent
+            let supaignoreActive = supaignoreResolution.governsCopy
+            var supaignoreCopyPlan: WorktreeCopyPlan?
+            var supaignorePlanFailure: String?
+            switch supaignoreResolution {
+            case .absent:
+              break
+            case .failed(let reason):
+              supaignorePlanFailure = "The filtered file copy was skipped: \(reason)"
+            case .resolved(let patterns):
+              do {
+                supaignoreCopyPlan = try await gitClient.worktreeCopyPlan(
+                  repository.rootURL, copyIgnored, copyUntracked, patterns.value)
+              } catch {
+                // Copy nothing rather than fall back to wt's unfiltered copy so
+                // the excluded files never leak, but surface it rather than
+                // silently reporting zero files.
+                repositoriesLogger.error(
+                  "supaignore copy plan failed for "
+                    + "\(repository.rootURL.path(percentEncoded: false)): \(error.localizedDescription)"
+                )
+                supaignorePlanFailure =
+                  "The filtered file copy was skipped: \(error.localizedDescription)"
+              }
+            }
+            // When supaignore drives the copy, `wt` must not copy anything.
+            let wtCopyIgnored = copyIgnored && !supaignoreActive
+            let wtCopyUntracked = copyUntracked && !supaignoreActive
             progress.copyIgnored = copyIgnored
             progress.copyUntracked = copyUntracked
-            progress.ignoredFilesToCopyCount =
-              copyIgnored ? ((try? await gitClient.ignoredFileCount(repository.rootURL)) ?? 0) : 0
-            progress.untrackedFilesToCopyCount =
-              copyUntracked ? ((try? await gitClient.untrackedFileCount(repository.rootURL)) ?? 0) : 0
+            if supaignoreActive {
+              // Counts reflect only the files that survive filtering.
+              progress.ignoredFilesToCopyCount = supaignoreCopyPlan?.ignored.count ?? 0
+              progress.untrackedFilesToCopyCount = supaignoreCopyPlan?.untracked.count ?? 0
+            } else {
+              progress.ignoredFilesToCopyCount =
+                copyIgnored ? ((try? await gitClient.ignoredFileCount(repository.rootURL)) ?? 0) : 0
+              progress.untrackedFilesToCopyCount =
+                copyUntracked ? ((try? await gitClient.untrackedFileCount(repository.rootURL)) ?? 0) : 0
+            }
             progress.stage = .creatingWorktree
-            progress.commandText = worktreeCreateCommand(
+            var commandText = worktreeCreateCommand(
               baseDirectoryURL: worktreeBaseDirectory,
               name: name,
-              copyFiles: (ignored: copyIgnored, untracked: copyUntracked),
+              copyFiles: (ignored: wtCopyIgnored, untracked: wtCopyUntracked),
               baseRef: resolvedBaseRef,
               upstream: upstream,
               directoryOverride: worktreeDirectoryURL
             )
+            // Only claim a copy when one will actually happen (a resolved plan,
+            // not a resolution failure).
+            if supaignoreActive, supaignorePlanFailure == nil {
+              commandText += "\n# supaignore filter active: Supacode copies the surviving files"
+            }
+            progress.commandText = commandText
             await send(
               .pendingWorktreeProgressUpdated(
                 id: pendingID,
@@ -2242,8 +2296,8 @@ struct RepositoriesFeature {
               name,
               repository.rootURL,
               worktreeBaseDirectory,
-              copyIgnored,
-              copyUntracked,
+              wtCopyIgnored,
+              wtCopyUntracked,
               resolvedBaseRef,
               worktreeDirectoryURL
             )
@@ -2264,6 +2318,25 @@ struct RepositoriesFeature {
                   )
                 }
               case .finished(let newWorktree):
+                // Perform the supaignore-filtered copy now that `wt` created the
+                // worktree. A copy (or earlier plan) failure is non-fatal (the
+                // worktree exists), so it surfaces as an alert, never a failed
+                // creation.
+                var copyFailureMessage: String? = supaignorePlanFailure
+                if supaignoreActive, let plan = supaignoreCopyPlan, !plan.isEmpty {
+                  progress.appendOutputLine(
+                    "Copying \(plan.ignored.count + plan.untracked.count) filtered files",
+                    maxLines: worktreeCreationProgressLineLimit
+                  )
+                  await send(.pendingWorktreeProgressUpdated(id: pendingID, progress: progress))
+                  let outcome = await gitClient.copyWorktreeArtifacts(
+                    plan, repository.rootURL, newWorktree.workingDirectory)
+                  if outcome.failed > 0 {
+                    copyFailureMessage =
+                      "\(outcome.failed) file(s) could not be copied. \(outcome.firstErrorDescription ?? "")"
+                      .trimmingCharacters(in: .whitespaces)
+                  }
+                }
                 // The worktree exists either way; a failed tracking update
                 // surfaces as an alert instead of failing the creation.
                 var upstreamFailureMessage: String?
@@ -2294,13 +2367,24 @@ struct RepositoriesFeature {
                     pendingID: pendingID
                   )
                 )
-                if let upstreamFailureMessage {
+                // Coalesce copy + upstream advisories into one alert; a second
+                // `presentAlert` would clobber the first (last-write-wins).
+                switch (copyFailureMessage, upstreamFailureMessage) {
+                case (nil, nil):
+                  break
+                case (let copyMessage?, nil):
                   await send(
                     .presentAlert(
-                      title: "Worktree created, upstream not updated",
-                      message: upstreamFailureMessage
-                    )
-                  )
+                      title: "Worktree created, some files not copied", message: copyMessage))
+                case (nil, let upstreamMessage?):
+                  await send(
+                    .presentAlert(
+                      title: "Worktree created, upstream not updated", message: upstreamMessage))
+                case (let copyMessage?, let upstreamMessage?):
+                  await send(
+                    .presentAlert(
+                      title: "Worktree created with warnings",
+                      message: "\(copyMessage)\n\n\(upstreamMessage)"))
                 }
                 return
               }
