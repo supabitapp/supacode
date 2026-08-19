@@ -298,7 +298,7 @@ public nonisolated enum OpenWorktreeAction: CaseIterable, Identifiable, Hashable
       [
         .process(
           .appRelativePath("Contents/MacOS/cli"),
-          args: [.targetPath]
+          args: [.literal("--existing"), .targetPath]
         ),
         .default,
       ]

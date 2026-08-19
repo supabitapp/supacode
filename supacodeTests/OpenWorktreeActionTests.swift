@@ -171,7 +171,7 @@ struct OpenWorktreeActionTests {
       behaviors.first
         == .process(
           .appRelativePath("Contents/MacOS/cli"),
-          args: [.targetPath]
+          args: [.literal("--existing"), .targetPath]
         )
     )
     #expect(behaviors.last == .default)
