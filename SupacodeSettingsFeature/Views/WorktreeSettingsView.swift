@@ -45,6 +45,8 @@ public struct WorktreeSettingsView: View {
           Text("Copy untracked files to new worktrees")
           Text("Copies untracked files from the main worktree.")
         }
+      } footer: {
+        Text("Applies to local repositories only. Remote worktrees are created without copied files.")
       }
       Section {
         Toggle(isOn: $store.automaticRepositoryRefreshEnabled) {
