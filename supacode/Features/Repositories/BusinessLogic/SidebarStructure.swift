@@ -525,6 +525,10 @@ extension RepositoriesFeature.Action {
     case .repositoryPullRequestsLoaded:
       return [.sidebarStructure, .selectedWorktreeSlice]
 
+    // Caches the re-fetched PR into the row; the open / failed arms mutate no row.
+    case .pullRequestOpenFetchLoaded:
+      return [.sidebarStructure, .selectedWorktreeSlice]
+
     // Selection changes refresh both selection-derived caches.
     case .selectionChanged, .selectWorktree, .selectArchivedWorktrees,
       .selectNextWorktree, .selectPreviousWorktree, .selectWorktreeAtHotkeySlot,
@@ -602,6 +606,7 @@ extension RepositoriesFeature.Action {
       .setMergedWorktreeAction,
       .setAutoDeleteArchivedWorktreesAfterDays,
       .pullRequestAction,
+      .openSelectedWorktreePullRequest, .pullRequestOpenFetchFailed,
       .showToast, .dismissToast,
       .toggleInspectorPane, .setInspectorPresented,
       .fileExplorer,

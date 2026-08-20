@@ -83,6 +83,8 @@ struct WorktreeDetailView: View {
       selectedSlice: selectedRow,
       selectedWorktreeSummaries: selectedWorktreeSummaries
     )
+    // Applied before `.inspector` so the toast stays within the content, not over the inspector.
+    .statusToastOverlay(store: repositoriesStore)
     .toolbar(removing: .title)
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     .toolbar {
@@ -1463,4 +1465,73 @@ private struct WorktreeToolbarPreview: View {
 
 #Preview("Worktree Toolbar") {
   WorktreeToolbarPreview()
+}
+
+extension View {
+  fileprivate func statusToastOverlay(store: StoreOf<RepositoriesFeature>) -> some View {
+    overlay(alignment: .bottomTrailing) {
+      StatusToastOverlay(store: store)
+    }
+  }
+}
+
+/// Observes only `statusToast`, so toast changes don't invalidate the detail body.
+private struct StatusToastOverlay: View {
+  let store: StoreOf<RepositoriesFeature>
+
+  var body: some View {
+    StatusToastView(toast: store.statusToast)
+      .padding()
+  }
+}
+
+struct StatusToastView: View {
+  let toast: RepositoriesFeature.StatusToast?
+
+  var body: some View {
+    Group {
+      if let toast {
+        HStack(spacing: 6) {
+          StatusToastIcon(toast: toast)
+          Text(toast.message)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .glassEffect(.regular, in: .capsule)
+        .transition(.opacity)
+      }
+    }
+    .animation(.easeInOut(duration: 0.2), value: toast)
+  }
+}
+
+private struct StatusToastIcon: View {
+  let toast: RepositoriesFeature.StatusToast
+
+  var body: some View {
+    switch toast {
+    case .inProgress:
+      ProgressView()
+        .controlSize(.small)
+    case .success:
+      Image(systemName: "checkmark.circle.fill")
+        .foregroundStyle(.green)
+        .accessibilityHidden(true)
+    case .info:
+      Image(systemName: "info.circle.fill")
+        .foregroundStyle(.secondary)
+        .accessibilityHidden(true)
+    }
+  }
+}
+
+extension RepositoriesFeature.StatusToast {
+  var message: String {
+    switch self {
+    case .inProgress(let message), .success(let message), .info(let message):
+      message
+    }
+  }
 }

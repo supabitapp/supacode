@@ -23,6 +23,9 @@ private enum CancelID {
   static func worktreeLineChanges(_ worktreeID: Worktree.ID) -> String {
     "repositories.worktreeLineChanges.\(worktreeID)"
   }
+  static func pullRequestOpenFetch(_ worktreeID: Worktree.ID) -> String {
+    "repositories.pullRequestOpenFetch.\(worktreeID)"
+  }
 }
 
 nonisolated let repositoriesLogger = SupaLogger("Repositories")
@@ -44,6 +47,23 @@ private func resolveRemoteInfo(
     return info
   }
   return await gitClient.remoteInfo(repositoryRootURL)
+}
+
+/// Injected so the open paths stay testable without launching a real browser.
+struct URLOpenerClient: Sendable {
+  var open: @Sendable (URL) -> Void
+}
+
+extension URLOpenerClient: DependencyKey {
+  static let liveValue = URLOpenerClient { NSWorkspace.shared.open($0) }
+  static let testValue = URLOpenerClient { _ in }
+}
+
+extension DependencyValues {
+  var urlOpener: URLOpenerClient {
+    get { self[URLOpenerClient.self] }
+    set { self[URLOpenerClient.self] = newValue }
+  }
 }
 
 private nonisolated let worktreeCreationProgressLineLimit = 200
@@ -206,6 +226,8 @@ struct RepositoriesFeature {
     /// so `pullRequestChanged.branchAtQueryTime` matches the branch the watermark armed.
     var inFlightPullRequestBranchSnapshotsByRepositoryID: [Repository.ID: [Worktree.ID: String]] = [:]
     var queuedPullRequestRefreshByRepositoryID: [Repository.ID: PendingPullRequestRefresh] = [:]
+    /// Worktrees with an in-flight open-fetch; dedups repeated presses to one query.
+    var inFlightPullRequestOpenFetchWorktreeIDs: Set<Worktree.ID> = []
     var sidebarSelectedWorktreeIDs: Set<Worktree.ID> = []
     var nextPendingSidebarRevealID = 0
     var pendingSidebarReveal: PendingSidebarReveal?
@@ -556,6 +578,14 @@ struct RepositoriesFeature {
     case autoDeleteExpiredArchivedWorktrees
     case setMoveNotifiedWorktreeToTop(Bool)
     case pullRequestAction(Worktree.ID, PullRequestAction)
+    /// Open the selected worktree's PR, re-fetching first when none is known.
+    case openSelectedWorktreePullRequest
+    case pullRequestOpenFetchLoaded(
+      worktreeID: Worktree.ID,
+      branch: String,
+      pullRequest: GithubPullRequest?
+    )
+    case pullRequestOpenFetchFailed(worktreeID: Worktree.ID, hasRemote: Bool)
     case showToast(StatusToast)
     case dismissToast
     case toggleInspectorPane(WorktreeInspectorPane)
@@ -600,6 +630,7 @@ struct RepositoriesFeature {
   enum StatusToast: Equatable {
     case inProgress(String)
     case success(String)
+    case info(String)
   }
 
   enum Alert: Hashable {
@@ -645,6 +676,7 @@ struct RepositoriesFeature {
   @Dependency(\.continuousClock) private var clock
   @Dependency(\.date.now) private var now
   @Dependency(\.uuid) private var uuid
+  @Dependency(URLOpenerClient.self) private var urlOpener
 
   /// Host-aware git client: the SSH flavor for a remote worktree (so branch /
   /// diff lookups run on the host), the injected local client otherwise.
@@ -2457,14 +2489,19 @@ struct RepositoriesFeature {
           state.queuedPullRequestRefreshByRepositoryID.removeAll()
           state.inFlightPullRequestRefreshRepositoryIDs.removeAll()
           state.inFlightPullRequestBranchSnapshotsByRepositoryID.removeAll()
+          let openFetchCancels = Self.cancelPullRequestOpenFetches(&state)
           let clock = clock
-          return .run { send in
-            while !Task.isCancelled {
-              try await clock.sleep(for: githubIntegrationRecoveryInterval)
-              await send(.refreshGithubIntegrationAvailability)
-            }
-          }
-          .cancellable(id: CancelID.githubIntegrationRecovery, cancelInFlight: true)
+          return .merge(
+            openFetchCancels + [
+              .run { send in
+                while !Task.isCancelled {
+                  try await clock.sleep(for: githubIntegrationRecoveryInterval)
+                  await send(.refreshGithubIntegrationAvailability)
+                }
+              }
+              .cancellable(id: CancelID.githubIntegrationRecovery, cancelInFlight: true)
+            ]
+          )
         }
         let pendingRefreshes = state.pendingPullRequestRefreshByRepositoryID.values.sorted {
           $0.repositoryRootURL.path(percentEncoded: false)
@@ -2598,6 +2635,105 @@ struct RepositoriesFeature {
           return .none
         }
         return .merge(effects)
+
+      case .openSelectedWorktreePullRequest:
+        // A folder isn't a git repository, so it has no branch or pull request to look up.
+        guard let worktreeID = state.selectedWorktreeID,
+          state.sidebarItems[id: worktreeID]?.isFolder != true,
+          let worktree = state.worktree(for: worktreeID),
+          let repositoryID = state.repositoryID(containing: worktreeID),
+          let repository = state.repositories[id: repositoryID]
+        else {
+          return .none
+        }
+        if let pullRequest = state.sidebarItems[id: worktreeID]?.pullRequest,
+          let url = URL(string: pullRequest.url)
+        {
+          return openURLEffect(url)
+        }
+        // A remote repo has no local checkout for `gh` to query (gh-over-ssh is out of scope).
+        guard repository.host == nil else {
+          return .send(.showToast(.info("Pull requests aren't available for remote repositories.")))
+        }
+        // Gate on availability, not the settings toggle, so a fetch can't hang on an unusable integration.
+        guard state.githubIntegrationAvailability == .available else {
+          return .send(.showToast(.info("GitHub integration is unavailable.")))
+        }
+        guard state.inFlightPullRequestOpenFetchWorktreeIDs.insert(worktreeID).inserted else {
+          return .none
+        }
+        let repositoryRootURL = repository.rootURL
+        let branch = worktree.name
+        let githubCLI = githubCLI
+        let gitClient = gitClient
+        return .merge(
+          .send(.showToast(.inProgress("Checking for pull request…"))),
+          .run { send in
+            guard
+              let remoteInfo = await resolveRemoteInfo(
+                repositoryRootURL: repositoryRootURL,
+                githubCLI: githubCLI,
+                gitClient: gitClient
+              )
+            else {
+              repositoriesLogger.error(
+                "Open-PR fetch: no GitHub remote for \(repositoryRootURL.path(percentEncoded: false))."
+              )
+              await send(.pullRequestOpenFetchFailed(worktreeID: worktreeID, hasRemote: false))
+              return
+            }
+            do {
+              let prsByBranch = try await githubCLI.batchPullRequests(
+                remoteInfo.host,
+                remoteInfo.owner,
+                remoteInfo.repo,
+                [branch]
+              )
+              await send(
+                .pullRequestOpenFetchLoaded(
+                  worktreeID: worktreeID,
+                  branch: branch,
+                  pullRequest: prsByBranch[branch]
+                )
+              )
+            } catch {
+              repositoriesLogger.error(
+                "Open-PR fetch failed for branch \(branch): \(error.localizedDescription)."
+              )
+              await send(.pullRequestOpenFetchFailed(worktreeID: worktreeID, hasRemote: true))
+            }
+          }
+          .cancellable(id: CancelID.pullRequestOpenFetch(worktreeID), cancelInFlight: false)
+        )
+
+      case .pullRequestOpenFetchLoaded(let worktreeID, let branch, let pullRequest):
+        state.inFlightPullRequestOpenFetchWorktreeIDs.remove(worktreeID)
+        // Discard a result that outlived its request (integration torn down, or the worktree renamed/removed).
+        guard state.githubIntegrationAvailability == .available,
+          state.worktree(for: worktreeID)?.name == branch
+        else {
+          return .send(.dismissToast)
+        }
+        guard let pullRequest, let url = URL(string: pullRequest.url) else {
+          return .send(.showToast(.info("No pull request found for this worktree.")))
+        }
+        return .merge(
+          state.updateWorktreePullRequestEffect(
+            worktreeID: worktreeID,
+            pullRequest: pullRequest,
+            branchAtQueryTime: branch
+          ),
+          .send(.dismissToast),
+          openURLEffect(url)
+        )
+
+      case .pullRequestOpenFetchFailed(let worktreeID, let hasRemote):
+        state.inFlightPullRequestOpenFetchWorktreeIDs.remove(worktreeID)
+        let message =
+          hasRemote
+          ? "Couldn't check for pull requests."
+          : "No GitHub remote found for this repository."
+        return .send(.showToast(.info(message)))
 
       case .pullRequestAction(let worktreeID, let action):
         guard let worktree = state.worktree(for: worktreeID),
@@ -2934,6 +3070,7 @@ struct RepositoriesFeature {
         state.queuedPullRequestRefreshByRepositoryID.removeAll()
         state.inFlightPullRequestRefreshRepositoryIDs.removeAll()
         state.inFlightPullRequestBranchSnapshotsByRepositoryID.removeAll()
+        let openFetchCancels = Self.cancelPullRequestOpenFetches(&state)
         let worktreeIDs = state.sidebarItems.compactMap { $0.pullRequest != nil ? $0.id : nil }
         var clearEffects: [Effect<Action>] = []
         for worktreeID in worktreeIDs {
@@ -2945,7 +3082,7 @@ struct RepositoriesFeature {
           )
         }
         return .merge(
-          clearEffects + [
+          clearEffects + openFetchCancels + [
             .cancel(id: CancelID.githubIntegrationAvailability),
             .cancel(id: CancelID.githubIntegrationRecovery),
           ]
@@ -3171,7 +3308,7 @@ struct RepositoriesFeature {
         switch toast {
         case .inProgress:
           return .cancel(id: CancelID.toastAutoDismiss)
-        case .success:
+        case .success, .info:
           let clock = clock
           return .run { send in
             try await clock.sleep(for: toastAutoDismissDelay)
@@ -4382,6 +4519,7 @@ struct RepositoriesFeature {
       case .refreshGithubIntegrationAvailability, .githubIntegrationAvailabilityUpdated,
         .repositoryPullRequestRefreshCompleted, .worktreeBranchNameLoaded, .worktreeLineChangesLoaded,
         .repositoryPullRequestsLoaded, .pullRequestAction, .setGithubIntegrationEnabled, .setMergedWorktreeAction,
+        .openSelectedWorktreePullRequest, .pullRequestOpenFetchLoaded, .pullRequestOpenFetchFailed,
         .setAutoDeleteArchivedWorktreesAfterDays, .autoDeleteExpiredArchivedWorktrees, .setMoveNotifiedWorktreeToTop,
         .setInstalledOpenActions, .openActionSettingsChanged, .resolveOpenActions, .openActionsResolved:
         // Real handling lives in `githubIntegrationReducer` (combined below) to keep `body`
@@ -4602,6 +4740,20 @@ struct RepositoriesFeature {
       }
       return .send(.fileExplorer(.contextChanged(context, isVisible: isVisible)))
     }
+  }
+
+  /// Cancels in-flight open-fetches so a late result can't re-cache or open after teardown.
+  private static func cancelPullRequestOpenFetches(_ state: inout State) -> [Effect<Action>] {
+    let cancels = state.inFlightPullRequestOpenFetchWorktreeIDs.map {
+      Effect<Action>.cancel(id: CancelID.pullRequestOpenFetch($0))
+    }
+    state.inFlightPullRequestOpenFetchWorktreeIDs.removeAll()
+    return cancels
+  }
+
+  private func openURLEffect(_ url: URL) -> Effect<Action> {
+    let urlOpener = urlOpener
+    return .run { _ in urlOpener.open(url) }
   }
 
   private func refreshRepositoryPullRequests(
