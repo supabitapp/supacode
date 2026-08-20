@@ -3888,7 +3888,9 @@ struct AppFeature {
       case .shortcuts: .shortcuts
       case .scripts: .scripts
       case .updates: .updates
-      case .github: .github
+      // `github` stays a permanent parsing alias for the Git Forges pane.
+      case .github: .forges
+      case .forges: .forges
       }
     return .send(.settings(.setSelection(settingsSection)))
   }

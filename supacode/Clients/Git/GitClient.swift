@@ -1236,6 +1236,45 @@ struct GitClient {
     return FileManager.default.fileExists(atPath: lockURL.path(percentEncoded: false))
   }
 
+  /// First parseable remote (origin preferred), forge-blind.
+  nonisolated func remote(for repositoryRoot: URL) async -> GitRemote? {
+    let path = repositoryRoot.path(percentEncoded: false)
+    guard
+      let remotesOutput = try? await runGit(
+        operation: .remoteInfo,
+        arguments: ["-C", path, "remote"]
+      )
+    else {
+      return nil
+    }
+    let remotes =
+      remotesOutput
+      .split(whereSeparator: \.isNewline)
+      .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    let orderedRemotes: [String]
+    if remotes.contains("origin") {
+      orderedRemotes = ["origin"] + remotes.filter { $0 != "origin" }
+    } else {
+      orderedRemotes = remotes
+    }
+    for remote in orderedRemotes {
+      guard
+        // `ls-remote --get-url` applies url.<base>.insteadOf rewrites; `remote get-url` does not.
+        let remoteURL = try? await runGit(
+          operation: .remoteInfo,
+          arguments: ["-C", path, "ls-remote", "--get-url", remote]
+        )
+      else {
+        continue
+      }
+      if let parsed = GitRemote.parse(remoteURL) {
+        return parsed
+      }
+    }
+    return nil
+  }
+
   nonisolated func remoteInfo(for repositoryRoot: URL) async -> GithubRemoteInfo? {
     let path = repositoryRoot.path(percentEncoded: false)
     guard

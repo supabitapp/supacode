@@ -61,6 +61,7 @@ public struct SettingsFeature {
     public var analyticsEnabled: Bool
     public var crashReportsEnabled: Bool
     public var githubIntegrationEnabled: Bool
+    public var gitlabIntegrationEnabled: Bool
     public var deleteBranchOnDeleteWorktree: Bool
     public var mergedWorktreeAction: MergedWorktreeAction
     public var promptForWorktreeCreation: Bool
@@ -148,6 +149,7 @@ public struct SettingsFeature {
       analyticsEnabled = settings.analyticsEnabled
       crashReportsEnabled = settings.crashReportsEnabled
       githubIntegrationEnabled = settings.githubIntegrationEnabled
+      gitlabIntegrationEnabled = settings.forgeIntegrationEnabled(forID: "gitlab")
       deleteBranchOnDeleteWorktree = settings.deleteBranchOnDeleteWorktree
       mergedWorktreeAction = settings.mergedWorktreeAction
       promptForWorktreeCreation = settings.promptForWorktreeCreation
@@ -194,6 +196,7 @@ public struct SettingsFeature {
         analyticsEnabled: analyticsEnabled,
         crashReportsEnabled: crashReportsEnabled,
         githubIntegrationEnabled: githubIntegrationEnabled,
+        forgeEnabledByID: gitlabIntegrationEnabled ? [:] : ["gitlab": false],
         deleteBranchOnDeleteWorktree: deleteBranchOnDeleteWorktree,
         mergedWorktreeAction: mergedWorktreeAction,
         promptForWorktreeCreation: promptForWorktreeCreation,
@@ -356,6 +359,7 @@ public struct SettingsFeature {
         state.analyticsEnabled = normalizedSettings.analyticsEnabled
         state.crashReportsEnabled = normalizedSettings.crashReportsEnabled
         state.githubIntegrationEnabled = normalizedSettings.githubIntegrationEnabled
+        state.gitlabIntegrationEnabled = normalizedSettings.forgeIntegrationEnabled(forID: "gitlab")
         state.deleteBranchOnDeleteWorktree = normalizedSettings.deleteBranchOnDeleteWorktree
         state.mergedWorktreeAction = normalizedSettings.mergedWorktreeAction
         state.promptForWorktreeCreation = normalizedSettings.promptForWorktreeCreation

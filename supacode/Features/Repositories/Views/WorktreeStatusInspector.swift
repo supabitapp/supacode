@@ -193,10 +193,12 @@ private struct GitInspectorContent: View {
       Section {
         LabeledContent("Author", value: pullRequest.authorLogin ?? "Someone")
         LabeledContent("Commits", value: (pullRequest.commitsCount ?? 0).formatted())
-        LabeledContent("Changes") {
-          HStack(spacing: 6) {
-            Text("+\(pullRequest.additions.formatted())").foregroundStyle(.green)
-            Text("-\(pullRequest.deletions.formatted())").foregroundStyle(.red)
+        if let additions = pullRequest.additions, let deletions = pullRequest.deletions {
+          LabeledContent("Changes") {
+            HStack(spacing: 6) {
+              Text("+\(additions.formatted())").foregroundStyle(.green)
+              Text("-\(deletions.formatted())").foregroundStyle(.red)
+            }
           }
         }
         if readiness.isConflicting {

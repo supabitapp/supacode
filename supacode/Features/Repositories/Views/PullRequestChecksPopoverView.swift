@@ -50,8 +50,8 @@ struct PullRequestChecksPopoverView: View {
     let summaryLine = Text(
       "\(authorLogin) wants to merge \(commitsCount, format: .number) \(commitsLabel) into \(baseRef) from \(headRef)"
     ).foregroundStyle(.secondary)
-    let additionsText = Text("+\(pullRequest.additions, format: .number)")
-    let deletionsText = Text("-\(pullRequest.deletions, format: .number)")
+    let additionsText = pullRequest.additions.map { Text("+\($0, format: .number)") }
+    let deletionsText = pullRequest.deletions.map { Text("-\($0, format: .number)") }
     let hasConflicts = PullRequestMergeReadiness(pullRequest: pullRequest).isConflicting
     ScrollView {
       VStack(alignment: .leading) {
@@ -77,10 +77,14 @@ struct PullRequestChecksPopoverView: View {
           .appFont(.subheadline)
           .lineLimit(1)
         HStack {
-          additionsText
-            .foregroundStyle(.green)
-          deletionsText
-            .foregroundStyle(.red)
+          if let additionsText {
+            additionsText
+              .foregroundStyle(.green)
+          }
+          if let deletionsText {
+            deletionsText
+              .foregroundStyle(.red)
+          }
           if hasConflicts {
             Text("•")
               .foregroundStyle(.secondary)

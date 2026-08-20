@@ -79,5 +79,6 @@ enum Deeplink: Equatable, Sendable {
     case scripts
     case updates
     case github
+    case forges
   }
 }

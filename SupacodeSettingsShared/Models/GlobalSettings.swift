@@ -114,6 +114,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var analyticsEnabled: Bool
   public var crashReportsEnabled: Bool
   public var githubIntegrationEnabled: Bool
+  /// Per-forge integration enablement keyed by forge id. GitHub stays on the
+  /// legacy flag above so downgraded builds keep their setting.
+  public var forgeEnabledByID: [String: Bool]
   public var deleteBranchOnDeleteWorktree: Bool
   public var mergedWorktreeAction: MergedWorktreeAction
   public var promptForWorktreeCreation: Bool
@@ -180,6 +183,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     analyticsEnabled: true,
     crashReportsEnabled: true,
     githubIntegrationEnabled: true,
+    forgeEnabledByID: [:],
     deleteBranchOnDeleteWorktree: true,
     mergedWorktreeAction: .ignore,
     promptForWorktreeCreation: true,
@@ -221,6 +225,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     analyticsEnabled: Bool,
     crashReportsEnabled: Bool,
     githubIntegrationEnabled: Bool,
+    forgeEnabledByID: [String: Bool] = [:],
     deleteBranchOnDeleteWorktree: Bool,
     mergedWorktreeAction: MergedWorktreeAction = .ignore,
     promptForWorktreeCreation: Bool,
@@ -263,6 +268,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.analyticsEnabled = analyticsEnabled
     self.crashReportsEnabled = crashReportsEnabled
     self.githubIntegrationEnabled = githubIntegrationEnabled
+    self.forgeEnabledByID = forgeEnabledByID
     self.deleteBranchOnDeleteWorktree = deleteBranchOnDeleteWorktree
     self.mergedWorktreeAction = mergedWorktreeAction
     self.promptForWorktreeCreation = promptForWorktreeCreation
@@ -352,6 +358,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     githubIntegrationEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .githubIntegrationEnabled)
       ?? Self.default.githubIntegrationEnabled
+    forgeEnabledByID =
+      (try? container.decodeIfPresent([String: Bool].self, forKey: .forgeEnabledByID))
+      .flatMap { $0 } ?? Self.default.forgeEnabledByID
     deleteBranchOnDeleteWorktree =
       try container.decodeIfPresent(Bool.self, forKey: .deleteBranchOnDeleteWorktree)
       ?? Self.default.deleteBranchOnDeleteWorktree
@@ -494,5 +503,22 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
       ((try? container.decodeIfPresent(String.self, forKey: .hoverFocusMode)) ?? nil)
       .flatMap(HoverFocusMode.init(rawValue:))
       ?? Self.default.hoverFocusMode
+  }
+}
+
+extension GlobalSettings {
+  /// Effective enablement for one forge integration. GitHub reads the legacy
+  /// stored flag so downgraded builds keep their setting.
+  public func forgeIntegrationEnabled(forID id: String) -> Bool {
+    guard id != "github" else { return githubIntegrationEnabled }
+    return forgeEnabledByID[id] ?? true
+  }
+
+  public mutating func setForgeIntegrationEnabled(_ enabled: Bool, forID id: String) {
+    guard id != "github" else {
+      githubIntegrationEnabled = enabled
+      return
+    }
+    forgeEnabledByID[id] = enabled
   }
 }

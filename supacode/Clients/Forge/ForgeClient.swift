@@ -75,7 +75,7 @@ struct ForgeClient: Sendable {
 extension ForgeClient {
   /// GitHub adapter: dispatches to the gh-backed client resolved at call time,
   /// so dependency overrides in tests keep applying.
-  static var github: ForgeClient {
+  nonisolated static var github: ForgeClient {
     ForgeClient(
       resolveProject: { repositoryRootURL in
         @Dependency(GithubCLIClient.self) var githubCLI

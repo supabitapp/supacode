@@ -89,6 +89,17 @@ public struct RepositorySettingsView: View {
       } footer: {
         Text("e.g., `\(exampleWorktreePath)`")
       }
+      Section("Git Forge") {
+        Picker(selection: settings.forgeID) {
+          Text("Automatic").tag(String?.none)
+          Text("GitHub").tag(String?.some("github"))
+          Text("GitLab").tag(String?.some("gitlab"))
+          Text("None").tag(String?.some("none"))
+        } label: {
+          Text("Forge")
+          Text("Forge used for pull request data and actions.")
+        }
+      }
       Section {
         Picker(selection: settings.pullRequestMergeStrategy) {
           Text("Global \(Text(store.globalPullRequestMergeStrategy.title).foregroundStyle(.secondary))")

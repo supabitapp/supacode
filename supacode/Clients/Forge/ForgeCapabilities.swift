@@ -22,6 +22,14 @@ nonisolated struct ForgeVocabulary: Equatable, Hashable, Sendable {
     ciNoun: "Checks",
     destinationName: "GitHub"
   )
+
+  static let gitlab = ForgeVocabulary(
+    noun: "Merge Request",
+    abbreviation: "MR",
+    numberSigil: "!",
+    ciNoun: "Pipelines",
+    destinationName: "GitLab"
+  )
 }
 
 /// What one forge connection can do, resolved per repository and carried as
@@ -40,5 +48,15 @@ nonisolated struct ForgeCapabilities: Equatable, Hashable, Sendable {
     canRerunChecks: true,
     canCopyCIFailureLogs: true,
     vocabulary: .github
+  )
+
+  // GitLab's merge method is a project setting; only squash is a per-merge
+  // choice. CI affordances need the detail tier's pipeline data.
+  static let gitlab = ForgeCapabilities(
+    mergeStrategies: [.merge, .squash],
+    canMarkReady: true,
+    canRerunChecks: false,
+    canCopyCIFailureLogs: false,
+    vocabulary: .gitlab
   )
 }

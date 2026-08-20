@@ -203,9 +203,12 @@ extension GithubCLIClient: DependencyKey {
 
   static func live(
     shell: ShellClient = .liveValue,
-    fallbackExecutableURLs: [URL] = GithubCLIExecutableResolver.defaultFallbackExecutableURLs()
+    fallbackExecutableURLs: [URL] = ForgeCLIExecutableResolver.defaultFallbackExecutableURLs(executableName: "gh")
   ) -> GithubCLIClient {
-    let resolver = GithubCLIExecutableResolver(fallbackExecutableURLs: fallbackExecutableURLs)
+    let resolver = ForgeCLIExecutableResolver(
+      executableName: "gh",
+      fallbackExecutableURLs: fallbackExecutableURLs
+    )
     return GithubCLIClient(
       latestRun: latestRunFetcher(shell: shell, resolver: resolver),
       resolveRemoteInfo: resolveRemoteInfoFetcher(shell: shell, resolver: resolver),
@@ -251,111 +254,9 @@ private struct GithubPullRequestsRequest: Sendable {
   let repo: String
 }
 
-actor GithubCLIExecutableResolver {
-  nonisolated private static let logger = SupaLogger("GithubCLI")
-
-  private let fallbackExecutableURLs: [URL]
-  private var cachedExecutableURL: URL?
-  private var inFlightResolution: Task<URL, Error>?
-
-  init(fallbackExecutableURLs: [URL]) {
-    self.fallbackExecutableURLs = fallbackExecutableURLs
-  }
-
-  func executableURL(shell: ShellClient) async throws -> URL {
-    if let cachedExecutableURL {
-      return cachedExecutableURL
-    }
-    if let inFlightResolution {
-      return try await inFlightResolution.value
-    }
-    let resolutionTask = Task {
-      try await resolveExecutableURL(shell: shell)
-    }
-    inFlightResolution = resolutionTask
-    do {
-      let executableURL = try await resolutionTask.value
-      cachedExecutableURL = executableURL
-      inFlightResolution = nil
-      return executableURL
-    } catch {
-      inFlightResolution = nil
-      throw error
-    }
-  }
-
-  func invalidate() {
-    cachedExecutableURL = nil
-    inFlightResolution?.cancel()
-    inFlightResolution = nil
-  }
-
-  private func resolveExecutableURL(shell: ShellClient) async throws -> URL {
-    if let executableURL = await locateExecutableURL(
-      shell: shell,
-      useLoginShell: false
-    ) {
-      return executableURL
-    }
-    if let executableURL = await locateExecutableURL(
-      shell: shell,
-      useLoginShell: true
-    ) {
-      return executableURL
-    }
-    if let executableURL = fallbackExecutableURLs.first(where: {
-      FileManager.default.isExecutableFile(atPath: $0.path)
-    }) {
-      // Shell PATH missed gh; note the fixed-path fallback so a mismatch with the user's terminal is traceable.
-      Self.logger.info("Resolved gh via fallback path \(executableURL.path); shell PATH resolution failed.")
-      return executableURL
-    }
-    throw GithubCLIError.unavailable
-  }
-
-  nonisolated static func defaultFallbackExecutableURLs(
-    environment: [String: String] = ProcessInfo.processInfo.environment
-  ) -> [URL] {
-    [
-      "/opt/homebrew/bin/gh",
-      "/usr/local/bin/gh",
-      environment["HOME"].map { "\($0)/.local/bin/gh" },
-    ]
-    .compactMap { $0 }
-    .map { URL(fileURLWithPath: $0) }
-  }
-
-  private func locateExecutableURL(
-    shell: ShellClient,
-    useLoginShell: Bool
-  ) async -> URL? {
-    let whichURL = URL(fileURLWithPath: "/usr/bin/which")
-    do {
-      let output: String
-      if useLoginShell {
-        output = try await shell.runLogin(
-          whichURL,
-          ["gh"],
-          nil,
-          log: false
-        ).stdout
-      } else {
-        output = try await shell.run(whichURL, ["gh"], nil).stdout
-      }
-      let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !trimmed.isEmpty else {
-        return nil
-      }
-      return URL(fileURLWithPath: trimmed)
-    } catch {
-      return nil
-    }
-  }
-}
-
 nonisolated private func latestRunFetcher(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver
+  resolver: ForgeCLIExecutableResolver
 ) -> @Sendable (URL, String) async throws -> ForgeWorkflowRun? {
   { repoRoot, branch in
     let output = try await runGh(
@@ -393,7 +294,7 @@ nonisolated private struct GithubRepoViewRemoteInfoResponse: Decodable, Sendable
 
 nonisolated private func resolveRemoteInfoFetcher(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver
+  resolver: ForgeCLIExecutableResolver
 ) -> @Sendable (URL) async -> GithubRemoteInfo? {
   { repoRoot in
     let output: String
@@ -446,7 +347,7 @@ nonisolated private func repoSlug(for remote: GithubRemoteInfo) -> String {
 
 nonisolated private func batchPullRequestsFetcher(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver
+  resolver: ForgeCLIExecutableResolver
 ) -> @Sendable (String, String, String, [String]) async throws -> [String: ForgePullRequest] {
   { host, owner, repo, branches in
     let dedupedBranches = deduplicatedBranches(branches)
@@ -473,7 +374,7 @@ nonisolated private func batchPullRequestsFetcher(
 
 nonisolated private func mergePullRequestFetcher(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver
+  resolver: ForgeCLIExecutableResolver
 ) -> @Sendable (URL, GithubRemoteInfo?, Int, PullRequestMergeStrategy) async throws -> Void {
   { repoRoot, remote, pullRequestNumber, strategy in
     var arguments: [String] = ["pr", "merge", "\(pullRequestNumber)", "--\(strategy.ghArgument)"]
@@ -491,7 +392,7 @@ nonisolated private func mergePullRequestFetcher(
 
 nonisolated private func closePullRequestFetcher(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver
+  resolver: ForgeCLIExecutableResolver
 ) -> @Sendable (URL, GithubRemoteInfo?, Int) async throws -> Void {
   { repoRoot, remote, pullRequestNumber in
     var arguments: [String] = ["pr", "close", "\(pullRequestNumber)"]
@@ -509,7 +410,7 @@ nonisolated private func closePullRequestFetcher(
 
 nonisolated private func markPullRequestReadyFetcher(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver
+  resolver: ForgeCLIExecutableResolver
 ) -> @Sendable (URL, GithubRemoteInfo?, Int) async throws -> Void {
   { repoRoot, remote, pullRequestNumber in
     var arguments: [String] = ["pr", "ready", "\(pullRequestNumber)"]
@@ -527,7 +428,7 @@ nonisolated private func markPullRequestReadyFetcher(
 
 nonisolated private func rerunFailedJobsFetcher(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver
+  resolver: ForgeCLIExecutableResolver
 ) -> @Sendable (URL, Int) async throws -> Void {
   { repoRoot, runID in
     _ = try await runGh(
@@ -546,7 +447,7 @@ nonisolated private func rerunFailedJobsFetcher(
 
 nonisolated private func failedRunLogsFetcher(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver
+  resolver: ForgeCLIExecutableResolver
 ) -> @Sendable (URL, Int) async throws -> String {
   { repoRoot, runID in
     try await runGh(
@@ -565,7 +466,7 @@ nonisolated private func failedRunLogsFetcher(
 
 nonisolated private func runLogsFetcher(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver
+  resolver: ForgeCLIExecutableResolver
 ) -> @Sendable (URL, Int) async throws -> String {
   { repoRoot, runID in
     try await runGh(
@@ -584,7 +485,7 @@ nonisolated private func runLogsFetcher(
 
 nonisolated private func isAvailableFetcher(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver
+  resolver: ForgeCLIExecutableResolver
 ) -> @Sendable () async -> Bool {
   {
     do {
@@ -603,7 +504,7 @@ nonisolated private func isAvailableFetcher(
 
 nonisolated private func authStatusFetcher(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver
+  resolver: ForgeCLIExecutableResolver
 ) -> @Sendable () async throws -> GithubAuthStatus? {
   {
     let output = try await runGh(
@@ -622,7 +523,7 @@ nonisolated private func authStatusFetcher(
 
 nonisolated private func authenticatedHostsFetcher(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver
+  resolver: ForgeCLIExecutableResolver
 ) -> @Sendable () async throws -> Set<String> {
   {
     let output = try await runGh(
@@ -676,7 +577,7 @@ nonisolated private func makeBranchChunks(
 
 nonisolated private func loadPullRequestChunks(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver,
+  resolver: ForgeCLIExecutableResolver,
   request: GithubPullRequestsRequest,
   chunks: [[String]]
 ) async throws -> [Int: [String: ForgePullRequest]] {
@@ -739,7 +640,7 @@ nonisolated private func mergePullRequestChunkResults(
 
 nonisolated private func fetchPullRequestsChunk(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver,
+  resolver: ForgeCLIExecutableResolver,
   request: GithubPullRequestsRequest,
   chunk: [String],
   chunkIndex: Int
@@ -912,7 +813,7 @@ nonisolated private func isOutdatedGitHubCLI(_ error: ShellClientError) -> Bool 
 
 nonisolated private func runGh(
   shell: ShellClient,
-  resolver: GithubCLIExecutableResolver,
+  resolver: ForgeCLIExecutableResolver,
   arguments: [String],
   repoRoot: URL?
 ) async throws -> String {
@@ -922,13 +823,15 @@ nonisolated private func runGh(
     do {
       return try await shell.runLogin(executableURL, arguments, repoRoot, log: false).stdout
     } catch {
-      guard shouldRetryGhExecution(after: error) else {
+      guard ForgeCLIExecutableResolver.shouldRetryExecution(after: error) else {
         throw error
       }
       await resolver.invalidate()
       let executableURL = try await resolver.executableURL(shell: shell)
       return try await shell.runLogin(executableURL, arguments, repoRoot, log: false).stdout
     }
+  } catch is ForgeCLIResolutionError {
+    throw GithubCLIError.unavailable
   } catch let error as GithubCLIError {
     throw error
   } catch {
@@ -946,22 +849,4 @@ nonisolated private func runGh(
   }
 }
 
-nonisolated private func shouldRetryGhExecution(after error: Error) -> Bool {
-  if let shellError = error as? ShellClientError {
-    let combined = "\(shellError.stdout)\n\(shellError.stderr)".lowercased()
-    if combined.contains("no such file or directory") || combined.contains("command not found") {
-      return true
-    }
-    if shellError.exitCode == 127 {
-      return true
-    }
-  }
-  let nsError = error as NSError
-  if nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileNoSuchFileError {
-    return true
-  }
-  if nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(ENOENT) {
-    return true
-  }
-  return false
-}
+

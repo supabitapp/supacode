@@ -4,8 +4,8 @@ nonisolated struct ForgePullRequest: Decodable, Equatable, Hashable {
   let number: Int
   let title: String
   let state: PullRequestState
-  let additions: Int
-  let deletions: Int
+  let additions: Int?
+  let deletions: Int?
   let isDraft: Bool
   let reviewDecision: String?
   let mergeable: String?

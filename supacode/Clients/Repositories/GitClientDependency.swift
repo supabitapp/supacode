@@ -96,6 +96,8 @@ struct GitClientDependency: Sendable {
   var remoteNames: @Sendable (_ repoRoot: URL) async throws -> [String]
   var fetchRemote: @Sendable (_ remote: String, _ repoRoot: URL) async throws -> Void
   var remoteInfo: @Sendable (_ repositoryRoot: URL) async -> GithubRemoteInfo?
+  /// Forge-blind first remote (origin preferred): host, port, namespace path.
+  var gitRemote: @Sendable (_ repositoryRoot: URL) async -> GitRemote?
   var setUpstreamBranch: @Sendable (_ branch: String, _ upstream: String, _ repoRoot: URL) async throws -> Void
   var unsetUpstreamBranch: @Sendable (_ branch: String, _ repoRoot: URL) async throws -> Void
   var upstreamBranchExists: @Sendable (_ ref: String, _ repoRoot: URL) async throws -> Bool
@@ -287,6 +289,9 @@ extension GitClientDependency: DependencyKey {
       fetchRemote: { remote, repoRoot in try await GitClient(shell: shell).fetchRemote(remote, for: repoRoot) },
       remoteInfo: { repositoryRoot in
         await GitClient(shell: shell).remoteInfo(for: repositoryRoot)
+      },
+      gitRemote: { repositoryRoot in
+        await GitClient(shell: shell).remote(for: repositoryRoot)
       },
       setUpstreamBranch: { branch, upstream, repoRoot in
         try await GitClient(shell: shell).setUpstreamBranch(branch, to: upstream, for: repoRoot)

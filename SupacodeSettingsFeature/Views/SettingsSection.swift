@@ -8,7 +8,7 @@ public enum SettingsSection: Hashable {
   case developer
   case shortcuts
   case updates
-  case github
+  case forges
   case scripts
   case repository(String)
   case repositoryScripts(String)

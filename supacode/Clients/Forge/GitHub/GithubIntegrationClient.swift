@@ -69,15 +69,26 @@ extension DependencyValues {
   }
 }
 
+// Availability now gates the shared refresh machinery for every forge, so it
+// reports true when any enabled forge's CLI is present.
 @MainActor
 private func githubIntegrationIsAvailable() async -> Bool {
   @Shared(.settingsFile) var settingsFile
   @Dependency(GithubCLIClient.self) var githubCLI
-  guard settingsFile.global.githubIntegrationEnabled else {
+  @Dependency(GitLabCLIClient.self) var gitlabCLI
+  let githubEnabled = settingsFile.global.forgeIntegrationEnabled(forID: ForgeID.github.rawValue)
+  let gitlabEnabled = settingsFile.global.forgeIntegrationEnabled(forID: ForgeID.gitlab.rawValue)
+  guard githubEnabled || gitlabEnabled else {
     await githubIntegrationAvailabilityCache.clear()
     return false
   }
   return await githubIntegrationAvailabilityCache.value {
-    await githubCLI.isAvailable()
+    if githubEnabled, await githubCLI.isAvailable() {
+      return true
+    }
+    if gitlabEnabled, await gitlabCLI.isAvailable() {
+      return true
+    }
+    return false
   }
 }

@@ -7144,6 +7144,59 @@ struct RepositoriesFeatureTests {
     await store.finish()
   }
 
+  @Test func worktreeInfoEventRepositoryPullRequestRefreshClearsRowsWhenForgeOverrideIsNone() async {
+    let repoRoot = "/tmp/forge-none-repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.githubIntegrationAvailability = .available
+    initialState.reconcileSidebarForTesting()
+    let lingeringPullRequest = makePullRequest(state: .open, headRefName: featureWorktree.name)
+    initialState.sidebarItems[id: featureWorktree.id]?.pullRequest = lingeringPullRequest
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      var settings = RepositorySettings.default
+      settings.forgeID = "none"
+      $0.repositories[repoRoot] = settings
+    }
+    defer {
+      $settingsFile.withLock { $0.repositories[repoRoot] = nil }
+    }
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in
+        Issue.record("batchPullRequests must not run for a forge-disabled repository")
+        return [:]
+      }
+      $0.githubCLI.resolveRemoteInfo = { _ in
+        Issue.record("resolveRemoteInfo must not run for a forge-disabled repository")
+        return nil
+      }
+    }
+
+    await store.send(
+      .worktreeInfoEvent(
+        .repositoryPullRequestRefresh(
+          repositoryRootURL: URL(fileURLWithPath: repoRoot),
+          worktreeIDs: [mainWorktree.id, featureWorktree.id],
+          trigger: .automatic
+        )
+      )
+    )
+    await store.receive(\.repositoryPullRequestsLoaded)
+    await store.receive(\.sidebarItems)
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = nil
+    }
+    await store.finish()
+  }
+
   @Test func worktreeInfoEventRepositoryPullRequestRefreshQueuesWhileAvailabilityUnknown() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)

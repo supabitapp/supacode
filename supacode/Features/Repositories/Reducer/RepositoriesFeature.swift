@@ -658,7 +658,7 @@ struct RepositoriesFeature {
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
   @Dependency(GitClientDependency.self) private var gitClient
-  @Dependency(ForgeClient.self) private var forge
+  @Dependency(ForgeRegistry.self) private var forgeRegistry
   @Dependency(GithubIntegrationClient.self) private var githubIntegration
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
   @Dependency(ShellClient.self) private var shellClient
@@ -2784,18 +2784,17 @@ struct RepositoriesFeature {
           }
 
         case .markReadyForReview:
-          let forge = forge
-          let githubIntegration = githubIntegration
+          let forgeRegistry = forgeRegistry
           return .run { send in
-            guard await githubIntegration.isAvailable() else {
-              await send(
-                .presentAlert(
-                  title: "GitHub integration unavailable",
-                  message: "Enable GitHub integration to mark a pull request as ready."
-                )
+            guard
+              let (forge, _) = await ForgeDispatch.resolve(
+                registry: forgeRegistry,
+                repoRoot: repoRoot,
+                repoHost: repoHost,
+                send: send,
+                unavailableAction: "mark a pull request as ready"
               )
-              return
-            }
+            else { return }
             let project = await forge.resolveProject(repoRoot)
             await send(.showToast(.inProgress("Marking PR ready…")))
             do {
@@ -2814,18 +2813,17 @@ struct RepositoriesFeature {
           }
 
         case .merge:
-          let forge = forge
-          let githubIntegration = githubIntegration
+          let forgeRegistry = forgeRegistry
           return .run { send in
-            guard await githubIntegration.isAvailable() else {
-              await send(
-                .presentAlert(
-                  title: "GitHub integration unavailable",
-                  message: "Enable GitHub integration to merge a pull request."
-                )
+            guard
+              let (forge, _) = await ForgeDispatch.resolve(
+                registry: forgeRegistry,
+                repoRoot: repoRoot,
+                repoHost: repoHost,
+                send: send,
+                unavailableAction: "merge a pull request"
               )
-              return
-            }
+            else { return }
             @Shared(.repositorySettings(repoRoot, host: repoHost)) var repositorySettings
             @Shared(.settingsFile) var settingsFile
             let strategy =
@@ -2849,18 +2847,17 @@ struct RepositoriesFeature {
           }
 
         case .close:
-          let forge = forge
-          let githubIntegration = githubIntegration
+          let forgeRegistry = forgeRegistry
           return .run { send in
-            guard await githubIntegration.isAvailable() else {
-              await send(
-                .presentAlert(
-                  title: "GitHub integration unavailable",
-                  message: "Enable GitHub integration to close a pull request."
-                )
+            guard
+              let (forge, _) = await ForgeDispatch.resolve(
+                registry: forgeRegistry,
+                repoRoot: repoRoot,
+                repoHost: repoHost,
+                send: send,
+                unavailableAction: "close a pull request"
               )
-              return
-            }
+            else { return }
             let project = await forge.resolveProject(repoRoot)
             await send(.showToast(.inProgress("Closing pull request…")))
             do {
@@ -2880,18 +2877,17 @@ struct RepositoriesFeature {
           }
 
         case .copyCiFailureLogs:
-          let forge = forge
-          let githubIntegration = githubIntegration
+          let forgeRegistry = forgeRegistry
           return .run { send in
-            guard await githubIntegration.isAvailable() else {
-              await send(
-                .presentAlert(
-                  title: "GitHub integration unavailable",
-                  message: "Enable GitHub integration to copy CI failure logs."
-                )
+            guard
+              let (forge, _) = await ForgeDispatch.resolve(
+                registry: forgeRegistry,
+                repoRoot: repoRoot,
+                repoHost: repoHost,
+                send: send,
+                unavailableAction: "copy CI failure logs"
               )
-              return
-            }
+            else { return }
             guard !branchName.isEmpty else {
               await send(
                 .presentAlert(
@@ -2957,18 +2953,17 @@ struct RepositoriesFeature {
           }
 
         case .rerunFailedJobs:
-          let forge = forge
-          let githubIntegration = githubIntegration
+          let forgeRegistry = forgeRegistry
           return .run { send in
-            guard await githubIntegration.isAvailable() else {
-              await send(
-                .presentAlert(
-                  title: "GitHub integration unavailable",
-                  message: "Enable GitHub integration to re-run failed jobs."
-                )
+            guard
+              let (forge, _) = await ForgeDispatch.resolve(
+                registry: forgeRegistry,
+                repoRoot: repoRoot,
+                repoHost: repoHost,
+                send: send,
+                unavailableAction: "re-run failed jobs"
               )
-              return
-            }
+            else { return }
             guard !branchName.isEmpty else {
               await send(
                 .presentAlert(
@@ -3383,6 +3378,24 @@ struct RepositoriesFeature {
           guard !branches.isEmpty else {
             return .none
           }
+          // A per-repo forge override of "none" disables forge integration for
+          // this repository; clear any lingering rows instead of refreshing.
+          let repositoryForgeSettings = RepositorySettingsKey(
+            rootURL: repositoryRootURL,
+            host: state.repositories[id: repositoryID]?.host
+          ).currentSettings()
+          if repositoryForgeSettings.forgeID == ForgeResolver.noneSettingsID {
+            var clearedPullRequests: [Worktree.ID: ForgePullRequest?] = [:]
+            for worktree in worktrees {
+              clearedPullRequests[worktree.id] = ForgePullRequest?.none
+            }
+            return .send(
+              .repositoryPullRequestsLoaded(
+                repositoryID: repositoryID,
+                pullRequestsByWorktreeID: clearedPullRequests
+              )
+            )
+          }
           switch state.githubIntegrationAvailability {
           case .available:
             if state.inFlightPullRequestRefreshRepositoryIDs.contains(repositoryID) {
@@ -3417,6 +3430,7 @@ struct RepositoriesFeature {
               refreshRepositoryPullRequests(
                 repositoryID: repositoryID,
                 repositoryRootURL: repositoryRootURL,
+                repositoryHost: state.repositories[id: repositoryID]?.host,
                 worktrees: worktrees,
                 branches: branches
               )
@@ -4729,12 +4743,16 @@ struct RepositoriesFeature {
   private func refreshRepositoryPullRequests(
     repositoryID: Repository.ID,
     repositoryRootURL: URL,
+    repositoryHost: RemoteHost?,
     worktrees: [Worktree],
     branches: [String]
   ) -> Effect<Action> {
-    let forge = forge
+    let forgeRegistry = forgeRegistry
     return .run { send in
-      guard let project = await forge.resolveProject(repositoryRootURL)
+      guard
+        let forgeID = await forgeRegistry.resolveForgeID(repositoryRootURL, repositoryHost),
+        let forge = forgeRegistry.client(forgeID),
+        let project = await forge.resolveProject(repositoryRootURL)
       else {
         await send(.repositoryPullRequestRefreshCompleted(repositoryID))
         return

@@ -173,7 +173,7 @@ struct DeeplinkReferenceView: View {
     .init(
       url: "supacode://settings/<section>",
       description: "Open a specific section.",
-      params: "general|accessibility|notifications|worktrees|developer|shortcuts|scripts|updates|github"
+      params: "general|accessibility|notifications|worktrees|developer|shortcuts|scripts|updates|forges|github"
     ),
     .init(url: "supacode://settings/repo/<repo_id>", description: "Open repository settings."),
     .init(

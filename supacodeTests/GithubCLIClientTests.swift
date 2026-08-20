@@ -671,7 +671,8 @@ struct GithubCLIClientTests {
   }
 
   @Test func defaultFallbackExecutableURLsOrdersPathsAndDropsHomeWhenAbsent() {
-    let withHome = GithubCLIExecutableResolver.defaultFallbackExecutableURLs(
+    let withHome = ForgeCLIExecutableResolver.defaultFallbackExecutableURLs(
+      executableName: "gh",
       environment: ["HOME": "/Users/tester"]
     )
     #expect(
@@ -682,7 +683,10 @@ struct GithubCLIClientTests {
       ]
     )
 
-    let withoutHome = GithubCLIExecutableResolver.defaultFallbackExecutableURLs(environment: [:])
+    let withoutHome = ForgeCLIExecutableResolver.defaultFallbackExecutableURLs(
+      executableName: "gh",
+      environment: [:]
+    )
     #expect(
       withoutHome.map(\.path) == [
         "/opt/homebrew/bin/gh",
