@@ -539,7 +539,8 @@ extension RepositoriesFeature.Action {
       return []
 
     // Palette items rebuild on demand; no row-derived cache reads the forge.
-    case .repositoryForgeResolved:
+    // Teardown clears rows via per-row dispatches that declare their own.
+    case .repositoryForgeResolved, .forgeIntegrationDisabled:
       return []
 
     // Selection changes refresh both selection-derived caches.

@@ -3,6 +3,8 @@ import SupacodeSettingsShared
 
 struct GithubIntegrationClient: Sendable {
   var isAvailable: @MainActor @Sendable () async -> Bool
+  /// Drops the cached probe so an enablement change re-checks immediately.
+  var invalidate: @Sendable () async -> Void
 }
 
 private actor GithubIntegrationAvailabilityCache {
@@ -55,10 +57,14 @@ extension GithubIntegrationClient: DependencyKey {
   static let liveValue = GithubIntegrationClient(
     isAvailable: {
       await githubIntegrationIsAvailable()
+    },
+    invalidate: {
+      await githubIntegrationAvailabilityCache.clear()
     }
   )
   static let testValue = GithubIntegrationClient(
-    isAvailable: { true }
+    isAvailable: { true },
+    invalidate: {}
   )
 }
 
@@ -69,24 +75,23 @@ extension DependencyValues {
   }
 }
 
-// Availability now gates the shared refresh machinery for every forge, so it
-// reports true when any enabled forge's CLI is present.
+// Gates the shared refresh machinery for every forge: true when any enabled
+// forge's CLI is present.
 @MainActor
 private func githubIntegrationIsAvailable() async -> Bool {
   @Shared(.settingsFile) var settingsFile
   @Dependency(GithubCLIClient.self) var githubCLI
   @Dependency(GitLabCLIClient.self) var gitlabCLI
-  let githubEnabled = settingsFile.global.forgeIntegrationEnabled(forID: ForgeID.github.rawValue)
-  let gitlabEnabled = settingsFile.global.forgeIntegrationEnabled(forID: ForgeID.gitlab.rawValue)
-  guard githubEnabled || gitlabEnabled else {
+  let enabled = Set(ForgeRegistry.enabledForgeIDs(in: settingsFile.global))
+  guard !enabled.isEmpty else {
     await githubIntegrationAvailabilityCache.clear()
     return false
   }
   return await githubIntegrationAvailabilityCache.value {
-    if githubEnabled, await githubCLI.isAvailable() {
+    if enabled.contains(.github), await githubCLI.isAvailable() {
       return true
     }
-    if gitlabEnabled, await gitlabCLI.isAvailable() {
+    if enabled.contains(.gitlab), await gitlabCLI.isAvailable() {
       return true
     }
     return false

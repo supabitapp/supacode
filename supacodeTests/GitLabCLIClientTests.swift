@@ -153,6 +153,101 @@ struct GitLabCLIClientTests {
     #expect(GitLabConfigHosts.parse(configYAML: configYAML) == ["gitlab.com", "git.acme.com"])
   }
 
+  @Test func configHostsParseFourSpaceIndentedEntries() {
+    let configYAML = """
+      git_protocol: ssh
+      hosts:
+          gitlab.com:
+              token: abc
+          git.acme.com:
+              token: def
+      """
+    #expect(GitLabConfigHosts.parse(configYAML: configYAML) == ["gitlab.com", "git.acme.com"])
+  }
+
+  @Test func mergeRequestsFromForksAreNeverMatched() throws {
+    let json = """
+      [
+        {
+          "iid": 30,
+          "title": "Fork MR",
+          "state": "opened",
+          "web_url": "https://gitlab.com/group/proj/-/merge_requests/30",
+          "source_branch": "main",
+          "target_branch": "main",
+          "updated_at": "2026-08-02T10:00:00.000Z",
+          "project_id": 1,
+          "source_project_id": 99
+        },
+        {
+          "iid": 29,
+          "title": "Own MR",
+          "state": "opened",
+          "web_url": "https://gitlab.com/group/proj/-/merge_requests/29",
+          "source_branch": "main",
+          "target_branch": "develop",
+          "updated_at": "2026-08-01T10:00:00.000Z",
+          "project_id": 1,
+          "source_project_id": 1
+        }
+      ]
+      """
+    let decoder = GitLabAPI.makeDecoder()
+    let mergeRequests = try decoder.decode([GitLabMergeRequest].self, from: Data(json.utf8))
+    let results = GitLabMergeRequest.pullRequestsByBranch(mergeRequests, branches: ["main"])
+    #expect(results["main"]?.number == 29)
+  }
+
+  @Test func fullPageFallbackSurvivesAFailedBranchLookup() async throws {
+    // 100 MRs on other branches force the per-branch fallback; the lookup for
+    // "doomed" fails while "orphan" succeeds, and the sweep must keep both the
+    // page and the successful lookup.
+    let pageEntries = (1...100).map { index in
+      """
+      {"iid": \(index), "title": "MR \(index)", "state": "opened",
+       "web_url": "https://gitlab.com/g/p/-/merge_requests/\(index)",
+       "source_branch": "other-\(index)", "target_branch": "main",
+       "updated_at": "2026-08-01T10:00:00.000Z"}
+      """
+    }
+    let pageJSON = "[" + pageEntries.joined(separator: ",") + "]"
+    let orphanJSON = """
+      [{"iid": 500, "title": "Orphan", "state": "merged",
+        "web_url": "https://gitlab.com/g/p/-/merge_requests/500",
+        "source_branch": "orphan", "target_branch": "main",
+        "updated_at": "2026-07-01T10:00:00.000Z", "merged_at": "2026-07-02T10:00:00.000Z"}]
+      """
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          return ShellOutput(stdout: "/usr/local/bin/glab", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, arguments, _, _ in
+        guard executableURL.lastPathComponent == "glab" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
+        let endpoint = arguments.last ?? ""
+        if endpoint.contains("source_branch=doomed") {
+          throw ShellClientError(command: "glab api", stdout: "", stderr: "boom", exitCode: 1)
+        }
+        if endpoint.contains("source_branch=orphan") {
+          return ShellOutput(stdout: orphanJSON, stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: pageJSON, stderr: "", exitCode: 0)
+      }
+    )
+    let client = GitLabCLIClient.live(shell: shell)
+
+    let results = try await client.fetchMergeRequests("gitlab.com", "g/p", ["orphan", "doomed", "other-3"])
+
+    #expect(results["orphan"]?.number == 500)
+    #expect(results["orphan"]?.state == .merged)
+    #expect(results["doomed"] == nil)
+    #expect(results["other-3"]?.number == 3)
+  }
+
   @Test func configHostsIgnoreNestedKeysAndMissingSection() {
     #expect(GitLabConfigHosts.parse(configYAML: "git_protocol: ssh\n") == [])
     let nested = """

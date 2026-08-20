@@ -69,7 +69,12 @@ extension ForgePullRequest: CustomDumpRepresentable {
       number: number,
       state: state,
       isDraft: isDraft,
-      reviewDecision: reviewDecision
+      reviewDecision: reviewDecision,
+      mergeable: mergeable,
+      mergeStateStatus: mergeStateStatus,
+      statusCheckRollup: statusCheckRollup,
+      forgeBlockedReason: forgeBlockedReason,
+      updatedAt: updatedAt
     )
   }
 }

@@ -7,7 +7,7 @@ struct GithubRemoteInfo: Equatable, Sendable {
 }
 
 extension GithubRemoteInfo {
-  /// GitHub identities are exactly owner/repo on a GitHub-looking host.
+  /// Takes the leading owner/repo segments on a GitHub-looking host.
   nonisolated init?(gitRemote: GitRemote) {
     guard gitRemote.host.contains("github"),
       gitRemote.pathComponents.count >= 2,

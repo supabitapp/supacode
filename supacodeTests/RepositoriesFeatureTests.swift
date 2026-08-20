@@ -7035,9 +7035,7 @@ struct RepositoriesFeatureTests {
       $0.inFlightPullRequestRefreshRepositoryIDs = [repository.id]
       $0.inFlightPullRequestBranchSnapshotsByRepositoryID[repository.id] = [:]
     }
-    await store.receive(\.repositoryForgeResolved) {
-      $0.resolvedForgeByRepositoryID[repository.id] = .github
-    }
+    await store.receive(\.repositoryForgeResolved)
     await store.receive(\.repositoryPullRequestRefreshCompleted) {
       $0.inFlightPullRequestRefreshRepositoryIDs = []
       $0.inFlightPullRequestBranchSnapshotsByRepositoryID = [:]
@@ -7147,6 +7145,213 @@ struct RepositoriesFeatureTests {
     await store.finish()
   }
 
+  @Test func repositoryPullRequestsLoadedFetchesDetailForSelectedOpenWorktree() async {
+    let repoRoot = "/tmp/detail-repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    initialState.selection = .worktree(featureWorktree.id)
+    var stub = ForgeClient.gitlab
+    stub.resolveProject = { _ in
+      ForgeProjectRef(forgeID: .gitlab, host: "gitlab.com", pathSegments: ["group", "proj"])
+    }
+    stub.fetchDetail = { _, number in
+      #expect(number == 12)
+      return ForgePullRequestDetail(
+        mergeable: "MERGEABLE",
+        mergeStateStatus: nil,
+        reviewDecision: nil,
+        statusCheckRollup: nil,
+        forgeBlockedReason: nil
+      )
+    }
+    let gitlabStub = stub
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.sidebarStructureAutoRecompute = false
+      $0[ForgeRegistry.self] = ForgeRegistry(
+        resolveForgeID: { _, _ in .gitlab },
+        client: { _ in gitlabStub },
+        capabilities: { _ in .gitlab }
+      )
+    }
+    let summary = makePullRequest(state: .open, headRefName: featureWorktree.name, number: 12)
+
+    await store.send(
+      .repositoryPullRequestsLoaded(
+        repositoryID: repository.id,
+        pullRequestsByWorktreeID: [featureWorktree.id: summary]
+      )
+    )
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = summary
+    }
+    await store.receive(\.worktreePullRequestDetailLoaded)
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = summary.applying(
+        ForgePullRequestDetail(
+          mergeable: "MERGEABLE",
+          mergeStateStatus: nil,
+          reviewDecision: nil,
+          statusCheckRollup: nil,
+          forgeBlockedReason: nil
+        )
+      )
+    }
+    await store.finish()
+  }
+
+  @Test func repositoryPullRequestsLoadedSkipsDetailWithoutDetailTier() async {
+    let repoRoot = "/tmp/no-detail-repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    initialState.selection = .worktree(featureWorktree.id)
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.sidebarStructureAutoRecompute = false
+      // GitHub capabilities: summaries are already rich, no detail fetch.
+      $0[ForgeRegistry.self] = ForgeRegistry(
+        resolveForgeID: { _, _ in .github },
+        client: { _ in
+          var stub = ForgeClient.github
+          stub.resolveProject = { _ in
+            Issue.record("resolveProject must not run without a detail tier")
+            return nil
+          }
+          return stub
+        },
+        capabilities: { _ in .github }
+      )
+    }
+    let summary = makePullRequest(state: .open, headRefName: featureWorktree.name, number: 12)
+
+    await store.send(
+      .repositoryPullRequestsLoaded(
+        repositoryID: repository.id,
+        pullRequestsByWorktreeID: [featureWorktree.id: summary]
+      )
+    )
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: featureWorktree.id]?.pullRequest = summary
+    }
+    await store.finish()
+  }
+
+  @Test func forgeIntegrationDisabledClearsOnlyThatForgesRepositories() async {
+    let githubRoot = "/tmp/gh-teardown-repo"
+    let gitlabRoot = "/tmp/gl-teardown-repo"
+    let githubWorktree = makeWorktree(id: githubRoot, name: "main", repoRoot: githubRoot)
+    let gitlabWorktree = makeWorktree(id: gitlabRoot, name: "main", repoRoot: gitlabRoot)
+    let githubRepository = makeRepository(id: githubRoot, worktrees: [githubWorktree])
+    let gitlabRepository = makeRepository(id: gitlabRoot, worktrees: [gitlabWorktree])
+    var initialState = makeState(repositories: [githubRepository, gitlabRepository])
+    initialState.reconcileSidebarForTesting()
+    initialState.resolvedForgeByRepositoryID = [
+      githubRepository.id: .github,
+      gitlabRepository.id: .gitlab,
+    ]
+    let githubPullRequest = makePullRequest(state: .open, headRefName: githubWorktree.name, number: 1)
+    let gitlabPullRequest = makePullRequest(state: .open, headRefName: gitlabWorktree.name, number: 2)
+    initialState.sidebarItems[id: githubWorktree.id]?.pullRequest = githubPullRequest
+    initialState.sidebarItems[id: gitlabWorktree.id]?.pullRequest = gitlabPullRequest
+    initialState.inFlightPullRequestRefreshRepositoryIDs = [githubRepository.id]
+    initialState.inFlightPullRequestBranchSnapshotsByRepositoryID = [githubRepository.id: [:]]
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.forgeIntegrationDisabled(.github)) {
+      $0.resolvedForgeByRepositoryID = [gitlabRepository.id: .gitlab]
+      $0.inFlightPullRequestRefreshRepositoryIDs = []
+      $0.inFlightPullRequestBranchSnapshotsByRepositoryID = [:]
+    }
+    await store.receive(\.sidebarItems) {
+      $0.sidebarItems[id: githubWorktree.id]?.pullRequest = nil
+    }
+    await store.finish()
+    #expect(store.state.sidebarItems[id: gitlabWorktree.id]?.pullRequest == gitlabPullRequest)
+  }
+
+  @Test func staleSweepPayloadAfterTeardownIsRejected() async {
+    let repoRoot = "/tmp/stale-sweep-repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    // Teardown already pruned the recorded forge; the archive policy is armed
+    // so a leak through the gate would be a destructive action.
+    initialState.resolvedForgeByRepositoryID = [:]
+    initialState.mergedWorktreeAction = .archive
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    }
+    let staleMerged = makePullRequest(
+      state: .merged,
+      headRefName: featureWorktree.name,
+      mergedAt: Date(timeIntervalSince1970: 2_000_000)
+    )
+
+    await store.send(
+      .repositoryPullRequestsLoaded(
+        repositoryID: repository.id,
+        pullRequestsByWorktreeID: [featureWorktree.id: staleMerged]
+      )
+    )
+    await store.finish()
+    #expect(store.state.sidebarItems[id: featureWorktree.id]?.pullRequest == nil)
+  }
+
+  @Test func pullRequestMergeAlertsWhenNoForgeResolves() async {
+    let repoRoot = "/tmp/unresolved-repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    initialState.sidebarItems[id: featureWorktree.id]?.pullRequest = makePullRequest(
+      state: .open, headRefName: featureWorktree.name, number: 7
+    )
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0[ForgeRegistry.self] = ForgeRegistry(
+        resolveForgeID: { _, _ in nil },
+        client: { _ in nil },
+        capabilities: { _ in nil }
+      )
+    }
+
+    store.exhaustivity = .off
+    await store.send(.pullRequestAction(featureWorktree.id, .merge))
+    await store.receive(\.presentAlert)
+    await store.finish()
+    #expect(store.state.alert?.title == TextState("No git forge configured"))
+  }
+
   @Test func worktreeInfoEventRepositoryPullRequestRefreshClearsRowsWhenForgeOverrideIsNone() async {
     let repoRoot = "/tmp/forge-none-repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
@@ -7191,7 +7396,9 @@ struct RepositoriesFeatureTests {
           trigger: .automatic
         )
       )
-    )
+    ) {
+      $0.resolvedForgeByRepositoryID = [:]
+    }
     await store.receive(\.repositoryPullRequestsLoaded)
     await store.receive(\.sidebarItems)
     await store.receive(\.sidebarItems) {
@@ -7385,9 +7592,7 @@ struct RepositoriesFeatureTests {
       $0.inFlightPullRequestRefreshRepositoryIDs = [repository.id]
       $0.inFlightPullRequestBranchSnapshotsByRepositoryID[repository.id] = [:]
     }
-    await store.receive(\.repositoryForgeResolved) {
-      $0.resolvedForgeByRepositoryID[repository.id] = .github
-    }
+    await store.receive(\.repositoryForgeResolved)
     await store.receive(\.repositoryPullRequestRefreshCompleted) {
       $0.inFlightPullRequestRefreshRepositoryIDs = []
       $0.inFlightPullRequestBranchSnapshotsByRepositoryID = [:]
@@ -7506,9 +7711,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.pullRequestBranchAtQueryTime = featureWorktree.name
     }
-    await store.receive(\.repositoryForgeResolved) {
-      $0.resolvedForgeByRepositoryID[repository.id] = .github
-    }
+    await store.receive(\.repositoryForgeResolved)
     await store.receive(\.repositoryPullRequestRefreshCompleted) {
       $0.inFlightPullRequestRefreshRepositoryIDs = []
       $0.inFlightPullRequestBranchSnapshotsByRepositoryID = [:]
@@ -7621,9 +7824,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.pullRequestBranchAtQueryTime = featureWorktree.name
     }
-    await store.receive(\.repositoryForgeResolved) {
-      $0.resolvedForgeByRepositoryID[repository.id] = .github
-    }
+    await store.receive(\.repositoryForgeResolved)
     await store.receive(\.repositoryPullRequestsLoaded)
     // Main carries `pullRequest == nil` and the completion result is `nil`; the row reducer
     // skips the PR-value mutation but still clears the watermark armed above.
@@ -9279,6 +9480,11 @@ struct RepositoriesFeatureTests {
     var state = RepositoriesFeature.State()
     state.repositories = IdentifiedArray(uniqueElements: repositories)
     state.repositoryRoots = repositories.map(\.rootURL)
+    // Production records the forge before any summaries land; mirror that so
+    // direct repositoryPullRequestsLoaded fixtures pass the stale-sweep gate.
+    for repository in repositories {
+      state.resolvedForgeByRepositoryID[repository.id] = .github
+    }
     // Production seeds every cache on the roster load; without this the state
     // under test starts stale (an empty open-action map, a placeholder structure)
     // for a non-empty roster.

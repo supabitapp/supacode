@@ -177,6 +177,9 @@ struct RepositoriesFeatureSidebarTests {
     state.sidebarItems[id: worktreeID]?.pullRequest = pullRequest
     state.sidebarItems[id: worktreeID]?.pullRequestBranchAtQueryTime = "feature"
     state.inFlightPullRequestBranchSnapshotsByRepositoryID[repoID] = [worktreeID: "feature"]
+    // Production records the forge before summaries land; without it the
+    // stale-sweep gate rejects the payload.
+    state.resolvedForgeByRepositoryID[repoID] = .github
 
     let store = TestStore(initialState: state) {
       RepositoriesFeature()

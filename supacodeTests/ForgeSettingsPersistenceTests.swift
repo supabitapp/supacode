@@ -44,6 +44,21 @@ struct ForgeSettingsPersistenceTests {
     #expect(decoded.forgeIntegrationEnabled(forID: "gitlab") == true)
   }
 
+  @Test func legacyIntegrationOptOutCarriesToNewForges() throws {
+    // A pre-forge file with the legacy toggle off must not resurrect polling
+    // through a newly introduced forge.
+    var settings = GlobalSettings.default
+    settings.githubIntegrationEnabled = false
+    let data = try JSONEncoder().encode(settings)
+    var object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    object.removeValue(forKey: "forgeEnabledByID")
+    let preFeatureData = try JSONSerialization.data(withJSONObject: object)
+
+    let decoded = try JSONDecoder().decode(GlobalSettings.self, from: preFeatureData)
+    #expect(decoded.forgeIntegrationEnabled(forID: "github") == false)
+    #expect(decoded.forgeIntegrationEnabled(forID: "gitlab") == false)
+  }
+
   @Test func repositoryForgeIDRoundTripsAndInheritsWhenAbsent() throws {
     var settings = RepositorySettings.default
     settings.forgeID = "none"

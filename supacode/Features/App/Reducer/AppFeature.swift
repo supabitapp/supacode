@@ -160,6 +160,9 @@ struct AppFeature {
     var lastKnownSystemNotificationsEnabled: Bool
     var lastKnownAgentPresenceBadgesEnabled: Bool
     var lastKnownAppVisibility: AppVisibility
+    /// Enabled forge ids at the last settings pass, so a forge flipping off
+    /// can tear down its rows. Nil until the first settings change lands.
+    var lastKnownEnabledForgeIDs: Set<ForgeID>?
     var lastKnownTerminalHibernationEnabled: Bool
     var pendingDeeplinks: [Deeplink] = []
     var isDeeplinkReferenceRequested = false
@@ -759,8 +762,22 @@ struct AppFeature {
         // Compare IDs as a set: name/command edits and pure reorders should not re-prune recency.
         let globalScriptIDsChanged = Set(state.globalScripts.map(\.id)) != Set(settings.globalScripts.map(\.id))
         state.globalScripts = settings.globalScripts
+        // The shared availability machine and the watcher gate every forge's
+        // refreshes, so they follow the union of enabled forges; a forge that
+        // flips off gets its rows torn down individually.
+        let enabledForgeIDs = Set(ForgeRegistry.enabledForgeIDs(in: settings))
+        let anyForgeIntegrationEnabled = !enabledForgeIDs.isEmpty
+        let disabledForgeIDs = state.lastKnownEnabledForgeIDs?.subtracting(enabledForgeIDs) ?? []
+        state.lastKnownEnabledForgeIDs = enabledForgeIDs
+        // Registry order keeps multi-forge teardown dispatch deterministic.
+        var forgeTeardownEffects: [Effect<Action>] = []
+        for forgeID in ForgeRegistry.registeredForgeIDs {
+          guard disabledForgeIDs.contains(forgeID) else { continue }
+          forgeTeardownEffects.append(.send(.repositories(.forgeIntegrationDisabled(forgeID))))
+        }
         var effects: [Effect<Action>] = [
-          .send(.repositories(.setGithubIntegrationEnabled(settings.githubIntegrationEnabled))),
+          .send(.repositories(.setGithubIntegrationEnabled(anyForgeIntegrationEnabled))),
+          .merge(forgeTeardownEffects),
           .send(.repositories(.setMergedWorktreeAction(settings.mergedWorktreeAction))),
           .send(.repositories(.setMoveNotifiedWorktreeToTop(settings.moveNotifiedWorktreeToTop))),
           // The global default editor feeds every repo's resolved open action, and the
@@ -799,7 +816,7 @@ struct AppFeature {
         effects += [
           .run { _ in
             await worktreeInfoWatcher.send(
-              .setPullRequestTrackingEnabled(settings.githubIntegrationEnabled)
+              .setPullRequestTrackingEnabled(anyForgeIntegrationEnabled)
             )
           },
           .run { _ in

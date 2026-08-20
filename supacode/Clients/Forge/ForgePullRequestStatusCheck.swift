@@ -56,8 +56,6 @@ nonisolated struct ForgePullRequestStatusCheck: Decodable, Equatable, Hashable {
         return .failure
       case "EXPECTED":
         return .expected
-      case "PENDING":
-        return .inProgress
       default:
         return .inProgress
       }

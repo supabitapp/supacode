@@ -9,6 +9,11 @@ nonisolated struct GitRemote: Equatable, Sendable {
   let pathComponents: [String]
   let rawURL: String
 
+  /// Full namespace path, matching `ForgeProjectRef.path`.
+  var path: String {
+    pathComponents.joined(separator: "/")
+  }
+
   static func parse(_ remoteURL: String) -> GitRemote? {
     let trimmed = remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }

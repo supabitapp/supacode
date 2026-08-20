@@ -32,9 +32,34 @@ nonisolated struct ForgePullRequestDetail: Equatable, Sendable {
   let statusCheckRollup: ForgePullRequestStatusCheckRollup?
   /// Forge-reported merge block outside the shared vocabulary, verbatim.
   let forgeBlockedReason: String?
+
+  init(
+    mergeable: String? = nil,
+    mergeStateStatus: String? = nil,
+    reviewDecision: String? = nil,
+    statusCheckRollup: ForgePullRequestStatusCheckRollup? = nil,
+    forgeBlockedReason: String? = nil
+  ) {
+    self.mergeable = mergeable
+    self.mergeStateStatus = mergeStateStatus
+    self.reviewDecision = reviewDecision
+    self.statusCheckRollup = statusCheckRollup
+    self.forgeBlockedReason = forgeBlockedReason
+  }
 }
 
 extension ForgePullRequest {
+  /// The detail-tier fields, exactly the set `applying(_:)` replaces.
+  nonisolated var detail: ForgePullRequestDetail {
+    ForgePullRequestDetail(
+      mergeable: mergeable,
+      mergeStateStatus: mergeStateStatus,
+      reviewDecision: reviewDecision,
+      statusCheckRollup: statusCheckRollup,
+      forgeBlockedReason: forgeBlockedReason
+    )
+  }
+
   /// Detail-tier enrichment: replaces only the detail fields. `state`,
   /// `mergedAt`, and identity always come from the summary tier.
   nonisolated func applying(_ detail: ForgePullRequestDetail) -> ForgePullRequest {
@@ -79,7 +104,7 @@ nonisolated enum ForgeClientError: LocalizedError, Equatable {
 struct ForgeClient: Sendable {
   var resolveProject: @MainActor @Sendable (URL) async -> ForgeProjectRef?
   /// Summary tier: one call plan per refresh for all queried branches. Must
-  /// report merged and closed proposals, never silently drop them, so the
+  /// report merged proposals, never silently drop them, so the
   /// merged-worktree transition can fire.
   var fetchSummaries: @MainActor @Sendable (ForgeProjectRef, [String]) async throws -> [String: ForgePullRequest]
   /// Detail tier: enrich the selected worktree's proposal. Adapters whose
@@ -93,9 +118,6 @@ struct ForgeClient: Sendable {
   var failedRunLogs: @MainActor @Sendable (URL, Int) async throws -> String
   var runLogs: @MainActor @Sendable (URL, Int) async throws -> String
   var isAvailable: @MainActor @Sendable () async -> Bool
-  /// Hosts this forge's CLI is authenticated against, read from the CLI's own
-  /// configuration. Drives forge resolution for enterprise domains.
-  var authenticatedHosts: @MainActor @Sendable () async -> Set<String>
 }
 
 extension ForgeClient {
@@ -160,11 +182,6 @@ extension ForgeClient {
       isAvailable: {
         @Dependency(GithubCLIClient.self) var githubCLI
         return await githubCLI.isAvailable()
-      },
-      authenticatedHosts: {
-        @Dependency(GithubCLIClient.self) var githubCLI
-        guard let hosts = try? await githubCLI.authenticatedHosts() else { return [] }
-        return hosts
       }
     )
   }

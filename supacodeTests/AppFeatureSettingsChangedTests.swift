@@ -13,13 +13,17 @@ struct AppFeatureSettingsChangedTests {
   @Test(.dependencies) func settingsChangedPropagatesRepositorySettings() async {
     var settings = GlobalSettings.default
     settings.githubIntegrationEnabled = false
+    // The availability gate follows the union of enabled forges.
+    settings.setForgeIntegrationEnabled(false, forID: "gitlab")
     settings.mergedWorktreeAction = .archive
     settings.moveNotifiedWorktreeToTop = true
     let store = TestStore(initialState: AppFeature.State()) {
       AppFeature()
     }
 
-    await store.send(.settings(.delegate(.settingsChanged(settings))))
+    await store.send(.settings(.delegate(.settingsChanged(settings)))) {
+      $0.lastKnownEnabledForgeIDs = []
+    }
     await store.receive(\.repositories.setGithubIntegrationEnabled) {
       $0.repositories.githubIntegrationAvailability = .disabled
     }

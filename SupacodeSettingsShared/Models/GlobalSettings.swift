@@ -358,9 +358,18 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     githubIntegrationEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .githubIntegrationEnabled)
       ?? Self.default.githubIntegrationEnabled
-    forgeEnabledByID =
+    let decodedForgeEnabledByID =
       (try? container.decodeIfPresent([String: Bool].self, forKey: .forgeEnabledByID))
-      .flatMap { $0 } ?? Self.default.forgeEnabledByID
+      .flatMap { $0 }
+    if let decodedForgeEnabledByID {
+      forgeEnabledByID = decodedForgeEnabledByID
+    } else if !githubIntegrationEnabled {
+      // A pre-forge file with the legacy integration off opted out of forge
+      // polling entirely; new forges must not resurrect it on upgrade.
+      forgeEnabledByID = ["gitlab": false]
+    } else {
+      forgeEnabledByID = Self.default.forgeEnabledByID
+    }
     deleteBranchOnDeleteWorktree =
       try container.decodeIfPresent(Bool.self, forKey: .deleteBranchOnDeleteWorktree)
       ?? Self.default.deleteBranchOnDeleteWorktree

@@ -14,7 +14,9 @@ struct PullRequestStateTests {
   }
 
   @Test func unrecognizedStateFallsBackToUnknown() {
-    #expect(PullRequestState(rawValue: "locked") == .unknown("locked"))
+    #expect(PullRequestState(rawValue: "locked") == .unknown("LOCKED"))
+    // Casing-blind equality so responses differing only in casing are no-ops.
+    #expect(PullRequestState(rawValue: "locked") == PullRequestState(rawValue: "Locked"))
     #expect(PullRequestState(rawValue: "locked").displayLabel == "LOCKED")
   }
 

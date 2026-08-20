@@ -147,14 +147,7 @@ nonisolated struct GithubGraphQLPullRequestResponse: Decodable {
     }
 
     var stateRank: Int {
-      switch state {
-      case .open:
-        return 2
-      case .merged:
-        return 1
-      case .closed, .unknown:
-        return 0
-      }
+      state.matchRank
     }
 
     func matches(owner: String, repo: String) -> Bool {

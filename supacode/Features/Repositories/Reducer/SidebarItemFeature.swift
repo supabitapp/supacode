@@ -96,7 +96,8 @@ struct SidebarItemFeature {
     var removedLines: Int?
     var pullRequest: ForgePullRequest?
     /// Branch name at PR-query start; on result land, mismatched results are dropped.
-    /// Invariant: non-nil iff a PR query is in flight; cleared by reconcile on branch rename.
+    /// Cleared by the next row dispatch or reconcile; may linger after a refresh
+    /// that failed before dispatching rows.
     var pullRequestBranchAtQueryTime: String?
 
     var runningScripts: IdentifiedArrayOf<RunningScript> = []
@@ -172,13 +173,14 @@ struct SidebarItemFeature {
       case .pullRequestChanged(let pullRequest, let branchAtQueryTime):
         // Drop late results for a branch the row no longer represents.
         guard branchAtQueryTime == state.branchName else { return .none }
-        guard state.pullRequest != pullRequest else {
+        let incoming = Self.preservingEnrichment(of: pullRequest, over: state.pullRequest)
+        guard state.pullRequest != incoming else {
           if state.pullRequestBranchAtQueryTime != nil {
             state.pullRequestBranchAtQueryTime = nil
           }
           return .none
         }
-        state.pullRequest = pullRequest
+        state.pullRequest = incoming
         state.pullRequestBranchAtQueryTime = nil
         return .none
 
@@ -446,5 +448,27 @@ struct SidebarSelectionSlice: Equatable, Sendable {
   func contextRows(rightClicked row: SidebarContextRow) -> [SidebarContextRow] {
     guard rows.count > 1, rows.contains(where: { $0.id == row.id }) else { return [row] }
     return rows
+  }
+}
+
+extension SidebarItemFeature {
+  /// A thin summary for the same, provably unchanged proposal (GitLab sweeps
+  /// carry no detail fields) must not wipe the enrichment between detail
+  /// fetches. Any server-side movement (state flip, newer updatedAt) drops
+  /// the enrichment instead, since only the selected worktree re-fetches.
+  nonisolated static func preservingEnrichment(
+    of summary: ForgePullRequest?,
+    over existing: ForgePullRequest?
+  ) -> ForgePullRequest? {
+    guard let existing, let summary,
+      existing.number == summary.number,
+      existing.state == summary.state,
+      summary.state == .open,
+      existing.updatedAt == summary.updatedAt,
+      summary.detail == ForgePullRequestDetail()
+    else {
+      return summary
+    }
+    return summary.applying(existing.detail)
   }
 }

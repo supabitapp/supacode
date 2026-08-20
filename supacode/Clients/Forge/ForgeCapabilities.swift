@@ -14,13 +14,16 @@ nonisolated struct ForgeVocabulary: Equatable, Hashable, Sendable {
   /// Destination shown by open-in-browser affordances: "GitHub", "GitLab",
   /// or the bare host for self-managed instances.
   let destinationName: String
+  /// The CLI binary backing the forge ("gh", "glab"), for install guidance.
+  let cliName: String
 
   static let github = ForgeVocabulary(
     noun: "Pull Request",
     abbreviation: "PR",
     numberSigil: "#",
     ciNoun: "Checks",
-    destinationName: "GitHub"
+    destinationName: "GitHub",
+    cliName: "gh"
   )
 
   static let gitlab = ForgeVocabulary(
@@ -28,7 +31,8 @@ nonisolated struct ForgeVocabulary: Equatable, Hashable, Sendable {
     abbreviation: "MR",
     numberSigil: "!",
     ciNoun: "Pipelines",
-    destinationName: "GitLab"
+    destinationName: "GitLab",
+    cliName: "glab"
   )
 }
 
@@ -67,10 +71,11 @@ nonisolated struct ForgeCapabilities: Equatable, Hashable, Sendable {
 }
 
 extension ForgeCapabilities {
-  static func forID(_ forgeID: ForgeID) -> ForgeCapabilities {
+  nonisolated static func forID(_ forgeID: ForgeID) -> ForgeCapabilities? {
     switch forgeID {
+    case .github: .github
     case .gitlab: .gitlab
-    default: .github
+    default: nil
     }
   }
 }

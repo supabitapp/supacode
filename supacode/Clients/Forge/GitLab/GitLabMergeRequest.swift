@@ -13,6 +13,8 @@ nonisolated struct GitLabMergeRequest: Decodable, Equatable {
   let updatedAt: Date?
   let mergedAt: Date?
   let author: Author?
+  let projectID: Int?
+  let sourceProjectID: Int?
 
   nonisolated struct Author: Decodable, Equatable {
     let username: String
@@ -29,6 +31,8 @@ nonisolated struct GitLabMergeRequest: Decodable, Equatable {
     case updatedAt = "updated_at"
     case mergedAt = "merged_at"
     case author
+    case projectID = "project_id"
+    case sourceProjectID = "source_project_id"
   }
 
   var pullRequest: ForgePullRequest {
@@ -65,7 +69,20 @@ extension GitLabMergeRequest {
   ) -> [String: ForgePullRequest] {
     var results: [String: ForgePullRequest] = [:]
     for branch in branches {
-      let candidates = mergeRequests.filter { $0.sourceBranch == branch }
+      // A fork MR targeting this project can share a branch name (commonly
+      // main). Same-project proposals win; fork-sourced ones remain a
+      // fallback so the push-to-personal-fork workflow still matches.
+      var sameProjectCandidates: [GitLabMergeRequest] = []
+      var forkCandidates: [GitLabMergeRequest] = []
+      for mergeRequest in mergeRequests {
+        guard mergeRequest.sourceBranch == branch else { continue }
+        if mergeRequest.matchesQueriedProject {
+          sameProjectCandidates.append(mergeRequest)
+        } else {
+          forkCandidates.append(mergeRequest)
+        }
+      }
+      let candidates = sameProjectCandidates.isEmpty ? forkCandidates : sameProjectCandidates
       guard
         let best = candidates.max(by: { left, right in
           if left.stateRank != right.stateRank {
@@ -84,12 +101,13 @@ extension GitLabMergeRequest {
     return results
   }
 
+  nonisolated private var matchesQueriedProject: Bool {
+    guard let projectID, let sourceProjectID else { return true }
+    return projectID == sourceProjectID
+  }
+
   nonisolated private var stateRank: Int {
-    switch state {
-    case .open: 2
-    case .merged: 1
-    case .closed, .unknown: 0
-    }
+    state.matchRank
   }
 }
 
@@ -99,6 +117,9 @@ nonisolated enum GitLabConfigHosts {
   static func parse(configYAML: String) -> Set<String> {
     var hosts = Set<String>()
     var inHostsSection = false
+    // glab's YAML writer has used both 2- and 4-space indents; the first
+    // entry after `hosts:` fixes the host level, deeper lines are sub-keys.
+    var hostIndentWidth: Int?
     for rawLine in configYAML.split(separator: "\n", omittingEmptySubsequences: false) {
       let line = String(rawLine)
       if line.hasPrefix("hosts:") {
@@ -110,13 +131,15 @@ nonisolated enum GitLabConfigHosts {
       if !line.hasPrefix(" "), !line.trimmingCharacters(in: .whitespaces).isEmpty {
         break
       }
-      // Host entries sit one indent level deep, as `  gitlab.com:`.
       let trimmed = line.trimmingCharacters(in: .whitespaces)
       guard trimmed.hasSuffix(":"), !trimmed.hasPrefix("#") else { continue }
       let indentWidth = line.prefix(while: { $0 == " " }).count
-      guard indentWidth == 2 || indentWidth == 4 else { continue }
+      if hostIndentWidth == nil {
+        hostIndentWidth = indentWidth
+      }
+      guard indentWidth == hostIndentWidth else { continue }
       let host = String(trimmed.dropLast())
-      if indentWidth == 2, !host.isEmpty {
+      if !host.isEmpty {
         hosts.insert(host.lowercased())
       }
     }
@@ -129,13 +152,16 @@ nonisolated enum GitLabConfigHosts {
     if let configDirectory = environment["GLAB_CONFIG_DIR"], !configDirectory.isEmpty {
       return URL(fileURLWithPath: configDirectory).appending(path: "config.yml")
     }
+    if let xdgConfigHome = environment["XDG_CONFIG_HOME"], !xdgConfigHome.isEmpty {
+      return URL(fileURLWithPath: xdgConfigHome).appending(path: "glab-cli/config.yml")
+    }
     guard let home = environment["HOME"], !home.isEmpty else { return nil }
     return URL(fileURLWithPath: home).appending(path: ".config/glab-cli/config.yml")
   }
 }
 
-/// Single merge request served by `glab mr view -F json`; only the detail-tier
-/// fields the app consumes.
+/// Single merge request from the REST `projects/:id/merge_requests/:iid`
+/// endpoint; only the detail-tier fields the app consumes.
 nonisolated struct GitLabMergeRequestDetail: Decodable, Equatable {
   let iid: Int
   let detailedMergeStatus: String?

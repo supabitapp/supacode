@@ -2,34 +2,106 @@ import ComposableArchitecture
 import Foundation
 import SupacodeSettingsShared
 
-/// The registered forges and per-repository resolution. The only place that
-/// knows which forge implementations exist.
+/// Registered forges and per-repository resolution: override, exact known
+/// hosts, authenticated-host membership, substrings; never a default.
 struct ForgeRegistry: Sendable {
-  /// Resolve the forge serving one repository: per-repo override, then a
-  /// known-host fast path, then membership in a CLI's authenticated-host set.
   var resolveForgeID: @MainActor @Sendable (URL, RemoteHost?) async -> ForgeID?
   var client: @Sendable (ForgeID) -> ForgeClient?
   var capabilities: @Sendable (ForgeID) -> ForgeCapabilities?
 }
 
-/// Short-lived cache for CLI authenticated-host reads, so per-repo resolution
-/// on the refresh cadence doesn't spawn an auth-status process per repository.
-private actor ForgeAuthenticatedHostsCache {
-  private var cachedHosts: [ForgeID: (hosts: Set<String>, fetchedAt: ContinuousClock.Instant)] = [:]
+/// Short-lived caches so bursts of per-repo resolution (selection refreshes,
+/// user actions, the sweep itself) don't spawn an auth-status or git process
+/// per call.
+private actor ForgeResolutionCache {
+  private var hostsByForge: [ForgeID: (hosts: Set<String>, fetchedAt: ContinuousClock.Instant)] = [:]
+  private var remoteHostsByRepo: [URL: (host: String?, fetchedAt: ContinuousClock.Instant)] = [:]
   private let ttl: Duration = .seconds(30)
+  // Nil can mean either "no remote" or a transient git failure; keep it long
+  // enough to spare the sweep, short enough that a fixed remote is picked up.
+  private let negativeTTL: Duration = .seconds(5)
   private let clock = ContinuousClock()
 
-  func hosts(for forgeID: ForgeID, fetch: @Sendable () async -> Set<String>) async -> Set<String> {
-    if let cached = cachedHosts[forgeID], cached.fetchedAt.duration(to: clock.now) < ttl {
+  func authenticatedHosts(
+    for forgeID: ForgeID,
+    fetch: @Sendable () async throws -> Set<String>
+  ) async -> Set<String> {
+    if let cached = hostsByForge[forgeID], cached.fetchedAt.duration(to: clock.now) < ttl {
       return cached.hosts
     }
-    let hosts = await fetch()
-    cachedHosts[forgeID] = (hosts, clock.now)
-    return hosts
+    do {
+      let hosts = try await fetch()
+      hostsByForge[forgeID] = (hosts, clock.now)
+      return hosts
+    } catch {
+      // A transient failure must not pin an empty host set for a full TTL.
+      SupaLogger("ForgeRegistry").warning("Authenticated-hosts read failed for \(forgeID.rawValue): \(error)")
+      return hostsByForge[forgeID]?.hosts ?? []
+    }
+  }
+
+  func remoteHost(
+    for rootURL: URL,
+    fetch: @Sendable () async -> String?
+  ) async -> String? {
+    if let cached = remoteHostsByRepo[rootURL] {
+      let age = cached.fetchedAt.duration(to: clock.now)
+      if age < (cached.host == nil ? negativeTTL : ttl) {
+        return cached.host
+      }
+    }
+    var host = await fetch()
+    if host?.isEmpty == true {
+      host = nil
+    }
+    remoteHostsByRepo[rootURL] = (host, clock.now)
+    return host
   }
 }
 
-private let forgeAuthenticatedHostsCache = ForgeAuthenticatedHostsCache()
+private let forgeResolutionCache = ForgeResolutionCache()
+
+extension ForgeRegistry {
+  /// Every registered forge, in a stable dispatch order.
+  nonisolated static let registeredForgeIDs: [ForgeID] = [.github, .gitlab]
+
+  /// Enabled forges in registry order, the one filter every gate shares.
+  nonisolated static func enabledForgeIDs(in settings: GlobalSettings) -> [ForgeID] {
+    var enabled: [ForgeID] = []
+    for forgeID in registeredForgeIDs {
+      guard settings.forgeIntegrationEnabled(forID: forgeID.rawValue) else { continue }
+      enabled.append(forgeID)
+    }
+    return enabled
+  }
+
+  nonisolated static func registeredClient(for forgeID: ForgeID) -> ForgeClient? {
+    switch forgeID {
+    case .github: .github
+    case .gitlab: .gitlab
+    default: nil
+    }
+  }
+
+  nonisolated static func knownHostSubstrings(for forgeID: ForgeID) -> [String] {
+    switch forgeID {
+    case .github: ["github"]
+    case .gitlab: ["gitlab"]
+    default: []
+    }
+  }
+
+  nonisolated static func candidate(
+    for forgeID: ForgeID,
+    authenticatedHosts: Set<String>
+  ) -> ForgeResolver.Candidate {
+    ForgeResolver.Candidate(
+      id: forgeID,
+      authenticatedHosts: authenticatedHosts,
+      knownHostSubstrings: knownHostSubstrings(for: forgeID)
+    )
+  }
+}
 
 extension ForgeRegistry: DependencyKey {
   static let liveValue = ForgeRegistry(
@@ -37,90 +109,64 @@ extension ForgeRegistry: DependencyKey {
       await ForgeRegistry.resolveLive(rootURL: rootURL, host: host)
     },
     client: { forgeID in
-      switch forgeID {
-      case .github: .github
-      case .gitlab: .gitlab
-      default: nil
-      }
+      ForgeRegistry.registeredClient(for: forgeID)
     },
     capabilities: { forgeID in
-      switch forgeID {
-      case .github: .github
-      case .gitlab: .gitlab
-      default: nil
-      }
+      ForgeCapabilities.forID(forgeID)
     }
   )
 
   static let testValue = ForgeRegistry(
     resolveForgeID: { _, _ in .github },
     client: { forgeID in
-      switch forgeID {
-      case .github: .github
-      case .gitlab: .gitlab
-      default: nil
-      }
+      ForgeRegistry.registeredClient(for: forgeID)
     },
     capabilities: { forgeID in
-      switch forgeID {
-      case .github: .github
-      case .gitlab: .gitlab
-      default: nil
-      }
+      ForgeCapabilities.forID(forgeID)
     }
   )
 
   @MainActor
   private static func resolveLive(rootURL: URL, host: RemoteHost?) async -> ForgeID? {
-    @Dependency(GitClientDependency.self) var gitClient
-    @Dependency(GithubCLIClient.self) var githubCLI
-    @Dependency(GitLabCLIClient.self) var gitlabCLI
     @Shared(.settingsFile) var settingsFile
 
+    let enabledForgeIDs = enabledForgeIDs(in: settingsFile.global)
+    // An explicit override needs no remote read.
     let override = RepositorySettingsKey(rootURL: rootURL, host: host).currentSettings().forgeID
-    let enabledForgeIDs = [ForgeID.github, .gitlab].filter {
-      settingsFile.global.forgeIntegrationEnabled(forID: $0.rawValue)
-    }
-    let knownHostSubstrings: [ForgeID: [String]] = [
-      .github: ["github"],
-      .gitlab: ["gitlab"],
-    ]
-    let remoteHost = await gitClient.gitRemote(rootURL)?.host
-
-    // Fast path: overrides and obvious hosts resolve without touching any
-    // CLI's auth configuration.
-    let quickCandidates = enabledForgeIDs.map {
-      ForgeResolver.Candidate(
-        id: $0,
-        authenticatedHosts: [],
-        knownHostSubstrings: knownHostSubstrings[$0] ?? []
+    if let override, !override.isEmpty {
+      return ForgeResolver.resolve(
+        host: nil,
+        override: override,
+        candidates: enabledForgeIDs.map { candidate(for: $0, authenticatedHosts: []) }
       )
     }
-    if override != nil || quickCandidates.contains(where: { candidate in
-      guard let remoteHost else { return false }
-      return candidate.knownHostSubstrings.contains(where: remoteHost.lowercased().contains)
-    }) {
-      return ForgeResolver.resolve(host: remoteHost, override: override, candidates: quickCandidates)
+
+    @Dependency(GitClientDependency.self) var gitClient
+    let remoteHost = await forgeResolutionCache.remoteHost(for: rootURL) {
+      await gitClient.gitRemote(rootURL)?.host
+    }
+    guard let remoteHost = remoteHost?.lowercased(), !remoteHost.isEmpty else { return nil }
+
+    // Exact well-known hosts resolve without touching any CLI's auth
+    // configuration; ambiguous hosts take the full ladder below.
+    let exactKnownHosts: [String: ForgeID] = ["github.com": .github, "gitlab.com": .gitlab]
+    if let known = exactKnownHosts[remoteHost], enabledForgeIDs.contains(known) {
+      return known
     }
 
-    // Enterprise domains: membership in a CLI's own authenticated-host set.
+    @Dependency(GithubCLIClient.self) var githubCLI
+    @Dependency(GitLabCLIClient.self) var gitlabCLI
     var candidates: [ForgeResolver.Candidate] = []
     for forgeID in enabledForgeIDs {
-      let hosts = await forgeAuthenticatedHostsCache.hosts(for: forgeID) {
+      let hosts = await forgeResolutionCache.authenticatedHosts(for: forgeID) {
         switch forgeID {
-        case .github: (try? await githubCLI.authenticatedHosts()) ?? []
+        case .github: try await githubCLI.authenticatedHosts()
         case .gitlab: await gitlabCLI.authenticatedHosts()
         default: []
         }
       }
-      candidates.append(
-        ForgeResolver.Candidate(
-          id: forgeID,
-          authenticatedHosts: hosts,
-          knownHostSubstrings: knownHostSubstrings[forgeID] ?? []
-        )
-      )
+      candidates.append(candidate(for: forgeID, authenticatedHosts: hosts))
     }
-    return ForgeResolver.resolve(host: remoteHost, override: override, candidates: candidates)
+    return ForgeResolver.resolve(host: remoteHost, override: nil, candidates: candidates)
   }
 }

@@ -11,7 +11,18 @@ nonisolated enum PullRequestState: Equatable, Hashable {
     case "OPEN", "OPENED": self = .open
     case "MERGED": self = .merged
     case "CLOSED": self = .closed
-    default: self = .unknown(rawValue)
+    // Uppercased so equality is casing-blind, matching the folded cases.
+    default: self = .unknown(rawValue.uppercased())
+    }
+  }
+
+  /// Branch-to-proposal tie-break rank shared by every adapter: an open
+  /// proposal beats a merged one beats the rest.
+  var matchRank: Int {
+    switch self {
+    case .open: 2
+    case .merged: 1
+    case .closed, .unknown: 0
     }
   }
 
@@ -21,7 +32,7 @@ nonisolated enum PullRequestState: Equatable, Hashable {
     case .open: "OPEN"
     case .merged: "MERGED"
     case .closed: "CLOSED"
-    case .unknown(let rawValue): rawValue.uppercased()
+    case .unknown(let rawValue): rawValue
     }
   }
 }

@@ -61,10 +61,6 @@ nonisolated struct PullRequestMergeReadiness: Equatable, Hashable {
     return reason
   }
 
-  var isBlocking: Bool {
-    blockingReason != nil
-  }
-
   var isConflicting: Bool {
     assessment == .blocked(.mergeConflicts)
   }

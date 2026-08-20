@@ -78,6 +78,29 @@ final class GitLabSettingsViewModel {
   }
 }
 
+/// One CLI status row: title, secondary detail, and a tinted leading glyph.
+private struct ForgeStatusLabel: View {
+  let title: String
+  let detail: String
+  let systemImage: String
+  let tint: Color
+
+  var body: some View {
+    Label {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title)
+        Text(detail)
+          .foregroundStyle(.secondary)
+          .appFont(.callout)
+      }
+    } icon: {
+      Image(systemName: systemImage)
+        .foregroundStyle(tint)
+        .accessibilityHidden(true)
+    }
+  }
+}
+
 struct ForgesSettingsView: View {
   @Bindable var store: StoreOf<SettingsFeature>
   @State private var viewModel = GithubSettingsViewModel()
@@ -97,46 +120,28 @@ struct ForgesSettingsView: View {
           }
 
         case .unavailable:
-          Label {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("GitHub CLI not found")
-              Text("Install `gh` to enable pull request checks.")
-                .foregroundStyle(.secondary)
-                .appFont(.callout)
-            }
-          } icon: {
-            Image(systemName: "xmark.circle")
-              .foregroundStyle(.red)
-              .accessibilityHidden(true)
-          }
+          ForgeStatusLabel(
+            title: "GitHub CLI not found",
+            detail: "Install `gh` to enable pull request checks.",
+            systemImage: "xmark.circle",
+            tint: .red
+          )
 
         case .notAuthenticated:
-          Label {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("Not authenticated")
-              Text("Run `gh auth login` in a terminal to authenticate.")
-                .foregroundStyle(.secondary)
-                .appFont(.callout)
-            }
-          } icon: {
-            Image(systemName: "exclamationmark.triangle")
-              .foregroundStyle(.orange)
-              .accessibilityHidden(true)
-          }
+          ForgeStatusLabel(
+            title: "Not authenticated",
+            detail: "Run `gh auth login` in a terminal to authenticate.",
+            systemImage: "exclamationmark.triangle",
+            tint: .orange
+          )
 
         case .outdated:
-          Label {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("GitHub CLI outdated")
-              Text("Update to the latest version for full support.")
-                .foregroundStyle(.secondary)
-                .appFont(.callout)
-            }
-          } icon: {
-            Image(systemName: "exclamationmark.triangle")
-              .foregroundStyle(.orange)
-              .accessibilityHidden(true)
-          }
+          ForgeStatusLabel(
+            title: "GitHub CLI outdated",
+            detail: "Update to the latest version for full support.",
+            systemImage: "exclamationmark.triangle",
+            tint: .orange
+          )
 
         case .authenticated(let username, let host):
           LabeledContent("Signed in as") {
@@ -147,18 +152,12 @@ struct ForgesSettingsView: View {
           }
 
         case .error(let message):
-          Label {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("Error checking status")
-              Text(message)
-                .foregroundStyle(.secondary)
-                .appFont(.callout)
-            }
-          } icon: {
-            Image(systemName: "exclamationmark.triangle")
-              .foregroundStyle(.red)
-              .accessibilityHidden(true)
-          }
+          ForgeStatusLabel(
+            title: "Error checking status",
+            detail: message,
+            systemImage: "exclamationmark.triangle",
+            tint: .red
+          )
         }
 
         switch viewModel.state {
@@ -170,7 +169,7 @@ struct ForgesSettingsView: View {
           Button("Update GitHub CLI") {
             NSWorkspace.shared.open(URL(string: "https://cli.github.com")!)
           }
-        default:
+        case .loading, .notAuthenticated, .authenticated, .error:
           EmptyView()
         }
       }
@@ -181,37 +180,25 @@ struct ForgesSettingsView: View {
         }
         switch gitlabViewModel.state {
         case .loading:
-          LabeledContent("Checking GitLab CLI\u{2026}") {
+          LabeledContent("Checking GitLab CLI…") {
             ProgressView().controlSize(.small)
           }
 
         case .unavailable:
-          Label {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("GitLab CLI not found")
-              Text("Install `glab` to enable merge request data.")
-                .foregroundStyle(.secondary)
-                .appFont(.callout)
-            }
-          } icon: {
-            Image(systemName: "xmark.circle")
-              .foregroundStyle(.red)
-              .accessibilityHidden(true)
-          }
+          ForgeStatusLabel(
+            title: "GitLab CLI not found",
+            detail: "Install `glab` to enable merge request data.",
+            systemImage: "xmark.circle",
+            tint: .red
+          )
 
         case .notAuthenticated:
-          Label {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("Not authenticated")
-              Text("Run `glab auth login --hostname <host>` in a terminal to authenticate.")
-                .foregroundStyle(.secondary)
-                .appFont(.callout)
-            }
-          } icon: {
-            Image(systemName: "exclamationmark.triangle")
-              .foregroundStyle(.orange)
-              .accessibilityHidden(true)
-          }
+          ForgeStatusLabel(
+            title: "Not authenticated",
+            detail: "Run `glab auth login --hostname <host>` in a terminal to authenticate.",
+            systemImage: "exclamationmark.triangle",
+            tint: .orange
+          )
 
         case .authenticated(let hosts):
           ForEach(hosts, id: \.self) { host in
@@ -264,6 +251,11 @@ struct ForgesSettingsView: View {
     .onChange(of: store.githubIntegrationEnabled) { _, _ in
       Task {
         await viewModel.load()
+      }
+    }
+    .onChange(of: store.gitlabIntegrationEnabled) { _, _ in
+      Task {
+        await gitlabViewModel.load()
       }
     }
   }

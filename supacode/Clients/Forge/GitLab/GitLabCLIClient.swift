@@ -2,6 +2,8 @@ import ComposableArchitecture
 import Foundation
 import SupacodeSettingsShared
 
+private nonisolated let gitlabLogger = SupaLogger("GitLabCLI")
+
 nonisolated enum GitLabCLIError: LocalizedError, Equatable {
   case unavailable
   case commandFailed(String)
@@ -16,9 +18,9 @@ nonisolated enum GitLabCLIError: LocalizedError, Equatable {
   }
 }
 
-/// glab-backed GitLab adapter. Every invocation names its host explicitly
-/// (`--hostname` for `glab api`, a full `-R` URL otherwise) so a stray
-/// `GITLAB_HOST` in the user's login shell can never retarget a call.
+/// glab-backed GitLab adapter. Every host-targeted invocation names its host
+/// explicitly (`--hostname` for `glab api`, a full `-R` URL otherwise) so a
+/// stray `GITLAB_HOST` in the user's login shell can never retarget a call.
 struct GitLabCLIClient: Sendable {
   var fetchMergeRequests: @Sendable (String, String, [String]) async throws -> [String: ForgePullRequest]
   var fetchMergeRequestDetail: @Sendable (String, String, Int) async throws -> ForgePullRequestDetail?
@@ -76,7 +78,61 @@ extension GitLabCLIClient: DependencyKey {
   )
 }
 
+/// glab output decoding with glab-attributed error messages, over the shared
+/// balanced-JSON scanner (login-shell banner noise affects glab identically).
+nonisolated enum GitLabCLIOutput {
+  static let noPayloadMessage =
+    "Could not read GitLab CLI output. Your shell startup files may be printing extra output to stdout."
+  static let undecodableMessage =
+    "Could not parse GitLab CLI output. The installed GitLab CLI version may be incompatible."
+
+  static func decode<T: Decodable>(
+    _ type: T.Type,
+    from output: String,
+    decoder: JSONDecoder
+  ) throws -> T {
+    let spans = GithubCLIOutput.balancedJSONSpans(in: output)
+    guard !spans.isEmpty else {
+      gitlabLogger.error("Failed to read GitLab CLI JSON output: \(snapshot(of: output))")
+      throw GitLabCLIError.commandFailed(noPayloadMessage)
+    }
+    var sawValidJSON = false
+    var lastDecodingError: Error?
+    for span in spans.reversed() {
+      let data = Data(span.utf8)
+      do {
+        return try decoder.decode(T.self, from: data)
+      } catch {
+        lastDecodingError = error
+        if (try? JSONSerialization.jsonObject(with: data)) != nil {
+          sawValidJSON = true
+        }
+      }
+    }
+    let detail = lastDecodingError.map { "\($0)" } ?? "unknown"
+    gitlabLogger.error("Failed to decode GitLab CLI JSON output: \(snapshot(of: output)) error=\(detail)")
+    throw GitLabCLIError.commandFailed(sawValidJSON ? undecodableMessage : noPayloadMessage)
+  }
+
+  // Caps the logged output so a large banner does not flood the log stream.
+  private static func snapshot(of output: String) -> String {
+    let limit = 500
+    let prefix = output.prefix(limit)
+    return prefix.endIndex == output.endIndex ? String(prefix) : "\(prefix)\u{2026} (truncated)"
+  }
+}
+
 nonisolated enum GitLabAPI {
+  /// Unreserved characters only, so query metacharacters in branch names
+  /// (`&`, `=`, `+`) never split the query.
+  static let queryValueAllowed = CharacterSet(
+    charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+  )
+
+  static func encodedQueryValue(_ value: String) -> String? {
+    value.addingPercentEncoding(withAllowedCharacters: queryValueAllowed)
+  }
+
   /// GitLab REST project ids are the full namespace path with `/` escaped.
   static func encodedProjectPath(_ path: String) -> String {
     path.replacing("/", with: "%2F")
@@ -128,28 +184,31 @@ nonisolated private func fetchMergeRequestsFetcher(
       repoRoot: nil
     )
     let decoder = GitLabAPI.makeDecoder()
-    var mergeRequests = try GithubCLIOutput.decode([GitLabMergeRequest].self, from: listOutput, decoder: decoder)
+    var mergeRequests = try GitLabCLIOutput.decode([GitLabMergeRequest].self, from: listOutput, decoder: decoder)
     // A full page may have pushed an older worktree's merge request out; look
     // those branches up individually so a proposal never silently reads as
     // absent (which would clear the row and break the merged transition).
     if mergeRequests.count == 100 {
       let coveredBranches = Set(mergeRequests.compactMap(\.sourceBranch))
       for branch in branches where !coveredBranches.contains(branch) {
-        guard
-          let encodedBranch = branch.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
-        else { continue }
-        let branchOutput = try await runGlab(
-          shell: shell,
-          resolver: resolver,
-          arguments: [
-            "api", "--hostname", host,
-            "projects/\(encodedPath)/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=1"
-              + "&source_branch=\(encodedBranch)",
-          ],
-          repoRoot: nil
-        )
-        let extra = try GithubCLIOutput.decode([GitLabMergeRequest].self, from: branchOutput, decoder: decoder)
-        mergeRequests.append(contentsOf: extra)
+        guard let encodedBranch = GitLabAPI.encodedQueryValue(branch) else { continue }
+        do {
+          let branchOutput = try await runGlab(
+            shell: shell,
+            resolver: resolver,
+            arguments: [
+              "api", "--hostname", host,
+              "projects/\(encodedPath)/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=5"
+                + "&source_branch=\(encodedBranch)",
+            ],
+            repoRoot: nil
+          )
+          let extra = try GitLabCLIOutput.decode([GitLabMergeRequest].self, from: branchOutput, decoder: decoder)
+          mergeRequests.append(contentsOf: extra)
+        } catch {
+          // One branch's lookup failing must not discard the whole sweep.
+          gitlabLogger.warning("Merge request lookup failed for branch \(branch): \(error)")
+        }
       }
     }
     return GitLabMergeRequest.pullRequestsByBranch(mergeRequests, branches: branches)
@@ -270,7 +329,7 @@ nonisolated private func fetchMergeRequestDetailFetcher(
       repoRoot: nil
     )
     let decoder = GitLabAPI.makeDecoder()
-    let detail = try GithubCLIOutput.decode(GitLabMergeRequestDetail.self, from: output, decoder: decoder)
+    let detail = try GitLabCLIOutput.decode(GitLabMergeRequestDetail.self, from: output, decoder: decoder)
     return detail.pullRequestDetail
   }
 }
@@ -281,7 +340,7 @@ nonisolated private func latestPipelineFetcher(
 ) -> @Sendable (String, String, String) async throws -> ForgeWorkflowRun? {
   { host, projectPath, branch in
     let encodedPath = GitLabAPI.encodedProjectPath(projectPath)
-    guard let encodedBranch = branch.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+    guard let encodedBranch = GitLabAPI.encodedQueryValue(branch) else {
       return nil
     }
     let output = try await runGlab(
@@ -294,10 +353,8 @@ nonisolated private func latestPipelineFetcher(
       repoRoot: nil
     )
     let decoder = GitLabAPI.makeDecoder()
-    guard
-      let pipelines = try GithubCLIOutput.decodeIfPresent([GitLabPipeline].self, from: output, decoder: decoder),
-      let pipeline = pipelines.first
-    else {
+    let pipelines = try GitLabCLIOutput.decode([GitLabPipeline].self, from: output, decoder: decoder)
+    guard let pipeline = pipelines.first else {
       return nil
     }
     return pipeline.workflowRun

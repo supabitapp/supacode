@@ -155,7 +155,7 @@ struct WorktreeDetailView: View {
     }
   }
 
-  /// Whether a pull-request refresh is in flight for the selected worktree's repo.
+  /// Vocabulary of the selected repo's resolved forge; GitHub until resolved.
   private static func inspectorVocabulary(
     repositories: RepositoriesFeature.State,
     selectedWorktree: Worktree?
@@ -167,6 +167,7 @@ struct WorktreeDetailView: View {
     return repositories.forgeCapabilities(for: repositoryID).vocabulary
   }
 
+  /// Whether a pull-request refresh is in flight for the selected worktree's repo.
   private static func isCheckingPullRequest(
     selectedWorktree: Worktree?,
     selectedRow: SelectedWorktreeSlice?,
