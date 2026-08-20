@@ -38,10 +38,11 @@ enum WindowTitle {
       let fallback =
         repositories.repositories[id: repositoryID]?.name
         ?? Repository.name(for: URL(fileURLWithPath: repositoryID.rawValue).standardizedFileURL)
-      let name = repoDisplayName(
-        repositoryID: repositoryID,
-        fallback: fallback,
-        repositories: repositories
+      // Failed repositories never entered the roster, so only the section
+      // title is available here.
+      let name = Repository.sidebarDisplayName(
+        custom: repositories.sidebar.sections[repositoryID]?.title,
+        fallback: fallback
       )
       return format(repo: name, tab: "Unavailable")
     case .none:
@@ -61,8 +62,7 @@ enum WindowTitle {
       return appName
     }
     let repoTitle = repoDisplayName(
-      repositoryID: repositoryID,
-      fallback: repository.name,
+      repository: repository,
       repositories: repositories
     )
     let tabTitle = terminalManager.hostIfExists(for: worktreeID)?.focusedTab.flatMap { tab in
@@ -73,13 +73,12 @@ enum WindowTitle {
 
   @MainActor
   private static func repoDisplayName(
-    repositoryID: Repository.ID,
-    fallback: String,
+    repository: Repository,
     repositories: RepositoriesFeature.State
   ) -> String {
     Repository.sidebarDisplayName(
-      custom: repositories.sidebar.sections[repositoryID]?.title,
-      fallback: fallback
+      custom: repositories.sidebar.customTitle(for: repository),
+      fallback: repository.name
     )
   }
 

@@ -2146,24 +2146,17 @@ struct AppFeature {
 
   /// Settings sidebar names resolve like the main sidebar's: a "Customize
   /// Appearance" title overrides the repository's directory name, otherwise
-  /// identically-named directories are indistinguishable in settings. A folder
-  /// (non-git) repo's title lives on its synthetic folder-worktree item, not
-  /// the section — same dual rule as `computeSidebarStructure`.
+  /// identically-named directories are indistinguishable in settings.
   private static func settingsRepositorySummaries(
     repositories: IdentifiedArrayOf<Repository>,
     sidebar: SidebarState,
     titleOverride: (repositoryID: Repository.ID, title: String?)? = nil
   ) -> [SettingsRepositorySummary] {
     repositories.map { repository in
-      let section = sidebar.sections[repository.id]
-      let storedTitle =
-        repository.isGitRepository
-        ? section?.title
-        : (section?.title ?? section?.folderWorktreeItem(for: repository.id)?.title)
       let customTitle =
         repository.id == titleOverride?.repositoryID
         ? titleOverride?.title
-        : storedTitle
+        : sidebar.customTitle(for: repository)
       return SettingsRepositorySummary(
         id: repository.id.rawValue,
         name: SidebarDisplayName.resolved(custom: customTitle, fallback: repository.name)
@@ -3747,7 +3740,13 @@ struct AppFeature {
   ) -> Effect<Action> {
     let worktreeName = state.repositories.worktree(for: worktreeID)?.name ?? "Unknown"
     let repoName = state.repositories.repositoryID(containing: worktreeID)
-      .flatMap { state.repositories.repositories[id: $0]?.name }
+      .flatMap { state.repositories.repositories[id: $0] }
+      .map { repository in
+        Repository.sidebarDisplayName(
+          custom: state.repositories.sidebar.customTitle(for: repository),
+          fallback: repository.name
+        )
+      }
     // Close any previously pending FD so the CLI does not hang.
     let supersededEffect: Effect<Action> =
       state.deeplinkInputConfirmation?.responseFD.map {

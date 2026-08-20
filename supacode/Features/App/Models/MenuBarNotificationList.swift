@@ -87,7 +87,10 @@ extension RepositoriesFeature.State {
       else { continue }
       let section = sidebar.sections[repositoryID]
       sections.repositoryTagByID[repositoryID] = SidebarHighlightRepoTag(
-        repoName: Repository.sidebarDisplayName(custom: section?.title, fallback: repository.name),
+        repoName: Repository.sidebarDisplayName(
+          custom: sidebar.customTitle(for: repository),
+          fallback: repository.name
+        ),
         repoColor: section?.color,
         hostInfo: repository.host?.displayAuthority
       )

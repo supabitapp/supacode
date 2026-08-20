@@ -1,4 +1,5 @@
 import Foundation
+import IdentifiedCollections
 import OrderedCollections
 import Testing
 
@@ -593,5 +594,70 @@ struct SidebarStateTests {
 
     #expect(carried?.title == "Unpinned-Payload")
     #expect(carried?.color == .blue)
+  }
+
+  // MARK: - customTitle(for:)
+
+  private func repository(id: String, isGitRepository: Bool) -> Repository {
+    Repository(
+      id: Repository.ID(id),
+      rootURL: URL(fileURLWithPath: id),
+      name: URL(fileURLWithPath: id).lastPathComponent,
+      worktrees: [],
+      isGitRepository: isGitRepository
+    )
+  }
+
+  @Test func customTitleReadsSectionTitleForGitRepository() {
+    var state = SidebarState()
+    state.sections[repoA] = .init(title: "Backend")
+
+    #expect(state.customTitle(for: repository(id: repoA.rawValue, isGitRepository: true)) == "Backend")
+  }
+
+  @Test func customTitleReadsFolderTitleFromSyntheticItem() {
+    var state = SidebarState()
+    state.setCustomization(
+      title: "Files",
+      color: nil,
+      worktree: WorktreeID(repoA.rawValue),
+      in: repoA
+    )
+
+    #expect(state.customTitle(for: repository(id: repoA.rawValue, isGitRepository: false)) == "Files")
+  }
+
+  @Test func customTitlePrefersSectionTitleOverFolderItem() {
+    var state = SidebarState()
+    state.sections[repoA] = .init(title: "Section Wins")
+    state.setCustomization(
+      title: "Files",
+      color: nil,
+      worktree: WorktreeID(repoA.rawValue),
+      in: repoA
+    )
+
+    #expect(state.customTitle(for: repository(id: repoA.rawValue, isGitRepository: false)) == "Section Wins")
+  }
+
+  @Test func customTitleIgnoresSyntheticItemForGitRepository() {
+    // A git worktree can be keyed by the repo root path itself; its per-worktree
+    // title must never become the repository title.
+    var state = SidebarState()
+    state.setCustomization(
+      title: "Just A Worktree",
+      color: nil,
+      worktree: WorktreeID(repoA.rawValue),
+      in: repoA
+    )
+
+    #expect(state.customTitle(for: repository(id: repoA.rawValue, isGitRepository: true)) == nil)
+  }
+
+  @Test func customTitleIsNilWhenNothingCustomized() {
+    let state = SidebarState()
+
+    #expect(state.customTitle(for: repository(id: repoA.rawValue, isGitRepository: true)) == nil)
+    #expect(state.customTitle(for: repository(id: repoA.rawValue, isGitRepository: false)) == nil)
   }
 }

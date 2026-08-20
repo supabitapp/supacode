@@ -1205,3 +1205,15 @@ extension SidebarState.Section {
     return buckets[.pinned]?.items[folderID] ?? buckets[.unpinned]?.items[folderID]
   }
 }
+
+extension SidebarState {
+  /// The user-set title for a repository, wherever it lives: the section for
+  /// git repositories, the synthetic folder-worktree item for folder (non-git)
+  /// repositories — the same dual rule as `computeSidebarStructure`.
+  func customTitle(for repository: Repository) -> String? {
+    let section = sections[repository.id]
+    return repository.isGitRepository
+      ? section?.title
+      : (section?.title ?? section?.folderWorktreeItem(for: repository.id)?.title)
+  }
+}

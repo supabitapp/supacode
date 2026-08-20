@@ -984,6 +984,37 @@ struct RepositoriesFeatureTests {
     }
   }
 
+  @Test func createRandomWorktreePromptUsesCustomizedRepositoryTitle() async {
+    // A repo root no other test uses: the sidebar is process-global shared
+    // storage, and a parallel test rewriting the shared "/tmp/repo" section
+    // would wipe the customized title mid-flight.
+    let repoRoot = "/tmp/custom-titled-repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    var initialState = makeState(repositories: [repository])
+    initialState.reconcileSidebarForTesting()
+    initialState.$sidebar.withLock { sidebar in
+      sidebar.sections[repository.id, default: .init()].title = "Backend"
+    }
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.remoteNames = { _ in ["origin"] }
+      $0.gitClient.branchInventory = { _, _ in GitBranchInventory() }
+    }
+    // The prompt path parks the request and re-seeds shared state on send, so
+    // only the title is pinned here; the full prompt state is covered by
+    // `createRandomWorktreeInRepositoryWithPromptEnabledPresentsPrompt`.
+    store.exhaustivity = .off
+
+    await store.send(.createRandomWorktreeInRepository(repository.id))
+    await store.receive(\.promptedWorktreeCreationDataLoaded)
+
+    // The dialog names the repository by its customized title, like the sidebar.
+    #expect(store.state.worktreeCreationPrompt?.repositoryName == "Backend")
+  }
+
   @Test func promptedWorktreeBranchesLoadedResetsStalePersistedBaseRef() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)

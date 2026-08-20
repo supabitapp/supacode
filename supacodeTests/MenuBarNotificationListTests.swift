@@ -268,6 +268,39 @@ struct MenuBarNotificationListTests {
     #expect(state.computeMenuBarSections().unread == [folderID])
   }
 
+  @Test func folderTagUsesCustomTitleFromSyntheticItem() {
+    let folderURL = URL(fileURLWithPath: "/tmp/folder")
+    let folderID = Repository.folderWorktreeID(for: folderURL)
+    let repositoryID = RepositoryID(folderURL.path(percentEncoded: false))
+    var state = RepositoriesFeature.State(
+      reconciledRepositories: [
+        Repository(
+          id: repositoryID,
+          rootURL: folderURL,
+          name: "folder",
+          worktrees: [
+            Worktree(
+              id: folderID,
+              name: "folder",
+              detail: "",
+              workingDirectory: folderURL,
+              repositoryRootURL: folderURL
+            )
+          ],
+          isGitRepository: false
+        )
+      ]
+    )
+    // A folder's custom title lives on its synthetic row's item, not the section.
+    state.$sidebar.withLock { sidebar in
+      sidebar.setCustomization(title: "Files", color: nil, worktree: folderID, in: repositoryID)
+    }
+    setRowNotifications(&state, id: folderID, notifications: [makeNotification(isRead: false)])
+
+    let sections = state.computeMenuBarSections()
+    #expect(sections.repositoryTagByID[repositoryID]?.repoName == "Files")
+  }
+
   @Test func excludesArchivedWorktreesFromUnread() {
     let archived = makeWorktree(id: "/tmp/repo/archived", name: "archived")
     var state = RepositoriesFeature.State(

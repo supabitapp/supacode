@@ -67,7 +67,10 @@ struct ArchivedWorktreesDetailView: View {
             }
           } header: {
             ArchivedWorktreeSectionHeader(
-              name: group.repository.name,
+              name: Repository.sidebarDisplayName(
+                custom: store.state.sidebar.customTitle(for: group.repository),
+                fallback: group.repository.name
+              ),
               worktreeCount: group.worktrees.count,
               isCollapsed: collapsedRepositoryIDs.contains(group.repository.id),
               showsTopSeparator: index > 0,

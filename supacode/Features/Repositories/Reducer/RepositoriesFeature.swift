@@ -3987,7 +3987,10 @@ struct RepositoriesFeature {
         state.worktreeCreationPrompt = WorktreeCreationPromptFeature.State(
           repositoryID: repository.id,
           repositoryRootURL: repository.rootURL,
-          repositoryName: repository.name,
+          repositoryName: Repository.sidebarDisplayName(
+            custom: state.sidebar.customTitle(for: repository),
+            fallback: repository.name
+          ),
           automaticBaseRef: automaticBaseRef,
           defaultBranch: defaultBranch,
           remoteNames: remoteNames,
