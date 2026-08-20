@@ -4,7 +4,7 @@ import SwiftUI
 
 struct ArchivedWorktreeRowView: View {
   let worktree: Worktree
-  let pullRequest: GithubPullRequest?
+  let pullRequest: ForgePullRequest?
   let customTitle: String?
   let customTint: RepositoryColor?
   let onUnarchive: () -> Void

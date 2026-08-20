@@ -1,11 +1,11 @@
 import SwiftUI
 
 struct WorktreePullRequestDisplay {
-  let pullRequest: GithubPullRequest?
+  let pullRequest: ForgePullRequest?
   let pullRequestState: PullRequestState?
   let pullRequestBadgeStyle: (text: String, color: Color)?
 
-  init(worktreeName: String, pullRequest: GithubPullRequest?) {
+  init(worktreeName: String, pullRequest: ForgePullRequest?) {
     let matchesWorktree =
       if let pullRequest {
         pullRequest.headRefName == nil || pullRequest.headRefName == worktreeName

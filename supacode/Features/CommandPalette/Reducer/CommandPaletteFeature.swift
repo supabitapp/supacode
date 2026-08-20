@@ -554,7 +554,7 @@ struct CommandPaletteFeature {
 }
 
 private func pullRequestItems(
-  pullRequest: GithubPullRequest,
+  pullRequest: ForgePullRequest,
   worktreeID: Worktree.ID,
   repositoryID: Repository.ID
 ) -> [CommandPaletteItem] {

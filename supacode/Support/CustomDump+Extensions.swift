@@ -63,7 +63,7 @@ extension RepositorySettingsFeature.State: @retroactive CustomDumpRepresentable 
   }
 }
 
-extension GithubPullRequest: CustomDumpRepresentable {
+extension ForgePullRequest: CustomDumpRepresentable {
   var customDumpValue: Any {
     (
       number: number,
@@ -74,7 +74,7 @@ extension GithubPullRequest: CustomDumpRepresentable {
   }
 }
 
-extension GithubPullRequestStatusCheckRollup: CustomDumpRepresentable {
+extension ForgePullRequestStatusCheckRollup: CustomDumpRepresentable {
   var customDumpValue: Any {
     checks.count
   }

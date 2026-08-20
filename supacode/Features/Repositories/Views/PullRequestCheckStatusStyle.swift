@@ -5,7 +5,7 @@ struct PullRequestCheckStatusStyle {
   let color: Color
   let label: String
 
-  init(state: GithubPullRequestCheckState) {
+  init(state: ForgePullRequestCheckState) {
     switch state {
     case .success:
       self.symbol = "checkmark.circle.fill"

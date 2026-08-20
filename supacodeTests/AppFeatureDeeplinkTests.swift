@@ -3457,8 +3457,8 @@ struct AppFeatureDeeplinkTests {
     $settings.withLock { $0.archiveScript = "" }
   }
 
-  private func makeMergedPullRequest() -> GithubPullRequest {
-    GithubPullRequest(
+  private func makeMergedPullRequest() -> ForgePullRequest {
+    ForgePullRequest(
       number: 1,
       title: "PR",
       state: .merged,

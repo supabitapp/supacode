@@ -6547,7 +6547,7 @@ struct RepositoriesFeatureTests {
     // Re-receive a MERGED PR that differs in a field (updatedAt) so it passes
     // the `previousPullRequest != pullRequest` check, but should still be
     // skipped by the `!previousMerged` guard.
-    let refreshedPullRequest = GithubPullRequest(
+    let refreshedPullRequest = ForgePullRequest(
       number: mergedPullRequest.number,
       title: "PR",
       state: .merged,
@@ -7504,7 +7504,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
-    let pullRequestsByWorktreeID: [Worktree.ID: GithubPullRequest?] = [featureWorktree.id: nil]
+    let pullRequestsByWorktreeID: [Worktree.ID: ForgePullRequest?] = [featureWorktree.id: nil]
 
     await store.send(
       .repositoryPullRequestsLoaded(
@@ -9136,8 +9136,8 @@ struct RepositoriesFeatureTests {
     headRefName: String? = nil,
     number: Int = 1,
     mergedAt: Date? = nil
-  ) -> GithubPullRequest {
-    GithubPullRequest(
+  ) -> ForgePullRequest {
+    ForgePullRequest(
       number: number,
       title: "PR",
       state: state,

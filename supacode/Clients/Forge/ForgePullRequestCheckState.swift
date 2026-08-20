@@ -1,6 +1,6 @@
 import Foundation
 
-nonisolated enum GithubPullRequestCheckState: Equatable {
+nonisolated enum ForgePullRequestCheckState: Equatable {
   case success
   case failure
   case inProgress

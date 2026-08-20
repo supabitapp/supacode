@@ -1,6 +1,6 @@
 import Foundation
 
-nonisolated struct GithubPullRequestStatusCheck: Decodable, Equatable, Hashable {
+nonisolated struct ForgePullRequestStatusCheck: Decodable, Equatable, Hashable {
   let name: String?
   let detailsUrl: String?
   let status: String?
@@ -44,7 +44,7 @@ nonisolated struct GithubPullRequestStatusCheck: Decodable, Equatable, Hashable 
     self.state = try container.decodeIfPresent(String.self, forKey: .state)
   }
 
-  var checkState: GithubPullRequestCheckState {
+  var checkState: ForgePullRequestCheckState {
     if let status, status.uppercased() != "COMPLETED" {
       return .inProgress
     }
@@ -82,24 +82,24 @@ nonisolated struct GithubPullRequestStatusCheck: Decodable, Equatable, Hashable 
   }
 }
 
-nonisolated struct GithubPullRequestStatusCheckRollup: Decodable, Equatable, Hashable {
-  let checks: [GithubPullRequestStatusCheck]
+nonisolated struct ForgePullRequestStatusCheckRollup: Decodable, Equatable, Hashable {
+  let checks: [ForgePullRequestStatusCheck]
 
-  init(checks: [GithubPullRequestStatusCheck]) {
+  init(checks: [ForgePullRequestStatusCheck]) {
     self.checks = checks
   }
 
   init(from decoder: Decoder) throws {
-    if let checks = try? [GithubPullRequestStatusCheck](from: decoder) {
+    if let checks = try? [ForgePullRequestStatusCheck](from: decoder) {
       self.checks = checks
       return
     }
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    if let checks = try? container.decode([GithubPullRequestStatusCheck].self, forKey: .contexts) {
+    if let checks = try? container.decode([ForgePullRequestStatusCheck].self, forKey: .contexts) {
       self.checks = checks
       return
     }
-    if let contexts = try? container.decode(GithubPullRequestStatusCheckContexts.self, forKey: .contexts) {
+    if let contexts = try? container.decode(ForgePullRequestStatusCheckContexts.self, forKey: .contexts) {
       self.checks = contexts.nodes
       return
     }
@@ -111,8 +111,8 @@ nonisolated struct GithubPullRequestStatusCheckRollup: Decodable, Equatable, Has
   }
 }
 
-nonisolated private struct GithubPullRequestStatusCheckContexts: Decodable, Equatable {
-  let nodes: [GithubPullRequestStatusCheck]
+nonisolated private struct ForgePullRequestStatusCheckContexts: Decodable, Equatable {
+  let nodes: [ForgePullRequestStatusCheck]
 }
 
 nonisolated struct PullRequestCheckBreakdown: Equatable {
@@ -149,7 +149,7 @@ nonisolated struct PullRequestCheckBreakdown: Equatable {
     return parts.joined(separator: ", ")
   }
 
-  init(checks: [GithubPullRequestStatusCheck]) {
+  init(checks: [ForgePullRequestStatusCheck]) {
     var passed = 0
     var failed = 0
     var inProgress = 0

@@ -1,6 +1,6 @@
 import Foundation
 
-nonisolated struct GithubPullRequest: Decodable, Equatable, Hashable {
+nonisolated struct ForgePullRequest: Decodable, Equatable, Hashable {
   let number: Int
   let title: String
   let state: PullRequestState
@@ -17,6 +17,6 @@ nonisolated struct GithubPullRequest: Decodable, Equatable, Hashable {
   let baseRefName: String?
   let commitsCount: Int?
   let authorLogin: String?
-  let statusCheckRollup: GithubPullRequestStatusCheckRollup?
-  let mergeQueueEntry: GithubMergeQueueEntry?
+  let statusCheckRollup: ForgePullRequestStatusCheckRollup?
+  let mergeQueueEntry: ForgeMergeQueueEntry?
 }

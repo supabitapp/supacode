@@ -202,7 +202,7 @@ enum SidebarCheckBadgeState: Equatable {
     }
   }
 
-  static func resolve(_ pullRequest: GithubPullRequest?) -> SidebarCheckBadgeState? {
+  static func resolve(_ pullRequest: ForgePullRequest?) -> SidebarCheckBadgeState? {
     guard let checks = pullRequest?.statusCheckRollup?.checks, !checks.isEmpty else { return nil }
     let breakdown = PullRequestCheckBreakdown(checks: checks)
     if breakdown.failed > 0 { return .failing }
@@ -219,7 +219,7 @@ enum SidebarPullRequestIcon: Equatable {
   case merged
   case closed
 
-  static func resolve(_ pullRequest: GithubPullRequest?) -> Self {
+  static func resolve(_ pullRequest: ForgePullRequest?) -> Self {
     guard let pullRequest else { return .branch }
     switch pullRequest.state {
     case .merged: return .merged
@@ -349,7 +349,7 @@ private struct IconView: View {
   let isRemote: Bool
   let isMissing: Bool
   let branchName: String
-  let pullRequest: GithubPullRequest?
+  let pullRequest: ForgePullRequest?
   let showsPullRequestInfo: Bool
   let lifecycle: SidebarItemFeature.State.Lifecycle
 

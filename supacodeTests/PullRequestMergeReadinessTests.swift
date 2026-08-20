@@ -38,8 +38,8 @@ struct PullRequestMergeReadinessTests {
       mergeable: "MERGEABLE",
       mergeStateStatus: "CLEAN",
       checks: [
-        GithubPullRequestStatusCheck(status: "COMPLETED", conclusion: "FAILURE", state: nil),
-        GithubPullRequestStatusCheck(status: "COMPLETED", conclusion: "FAILURE", state: nil),
+        ForgePullRequestStatusCheck(status: "COMPLETED", conclusion: "FAILURE", state: nil),
+        ForgePullRequestStatusCheck(status: "COMPLETED", conclusion: "FAILURE", state: nil),
       ]
     )
 
@@ -95,10 +95,10 @@ private func makePullRequest(
   reviewDecision: String? = nil,
   mergeable: String? = nil,
   mergeStateStatus: String? = nil,
-  checks: [GithubPullRequestStatusCheck] = [],
-  mergeQueueEntry: GithubMergeQueueEntry? = nil
-) -> GithubPullRequest {
-  GithubPullRequest(
+  checks: [ForgePullRequestStatusCheck] = [],
+  mergeQueueEntry: ForgeMergeQueueEntry? = nil
+) -> ForgePullRequest {
+  ForgePullRequest(
     number: 1,
     title: "PR",
     state: .open,
@@ -115,7 +115,7 @@ private func makePullRequest(
     baseRefName: "main",
     commitsCount: 1,
     authorLogin: "khoi",
-    statusCheckRollup: checks.isEmpty ? nil : GithubPullRequestStatusCheckRollup(checks: checks),
+    statusCheckRollup: checks.isEmpty ? nil : ForgePullRequestStatusCheckRollup(checks: checks),
     mergeQueueEntry: mergeQueueEntry
   )
 }

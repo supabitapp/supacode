@@ -1,6 +1,6 @@
 import Foundation
 
-nonisolated struct GithubWorkflowRun: Decodable, Equatable {
+nonisolated struct ForgeWorkflowRun: Decodable, Equatable {
   let databaseId: Int
   let workflowName: String?
   let name: String?

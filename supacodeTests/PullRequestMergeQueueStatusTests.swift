@@ -17,7 +17,7 @@ struct PullRequestMergeQueueStatusTests {
   }
 
   @Test func surfacesPositionAndEstimatedTime() {
-    let entry = GithubMergeQueueEntry(position: 2, estimatedTimeToMerge: 600, state: "QUEUED")
+    let entry = ForgeMergeQueueEntry(position: 2, estimatedTimeToMerge: 600, state: "QUEUED")
     let pullRequest = makePullRequest(mergeQueueEntry: entry)
     let status = PullRequestMergeQueueStatus(pullRequest: pullRequest)
 
@@ -36,7 +36,7 @@ struct PullRequestMergeQueueStatusTests {
   }
 
   @Test func dropsEstimatedTimeWhenZeroOrMissing() {
-    let entry = GithubMergeQueueEntry(position: 1, estimatedTimeToMerge: 0, state: "MERGEABLE")
+    let entry = ForgeMergeQueueEntry(position: 1, estimatedTimeToMerge: 0, state: "MERGEABLE")
     let pullRequest = makePullRequest(mergeQueueEntry: entry)
     let status = PullRequestMergeQueueStatus(pullRequest: pullRequest)
 
@@ -45,7 +45,7 @@ struct PullRequestMergeQueueStatusTests {
   }
 
   @Test func rendersSubMinuteEstimateAsLessThanOneMinute() {
-    let entry = GithubMergeQueueEntry(position: 1, estimatedTimeToMerge: 30, state: "QUEUED")
+    let entry = ForgeMergeQueueEntry(position: 1, estimatedTimeToMerge: 30, state: "QUEUED")
     let status = PullRequestMergeQueueStatus(pullRequest: makePullRequest(mergeQueueEntry: entry))
 
     #expect(status?.estimatedTimeLabel == "<1 min left")
@@ -53,8 +53,8 @@ struct PullRequestMergeQueueStatusTests {
   }
 
   @Test func estimatedTimeLabelPinsTheOneMinuteBoundary() {
-    let justUnder = GithubMergeQueueEntry(position: 1, estimatedTimeToMerge: 59, state: "QUEUED")
-    let exactlyOne = GithubMergeQueueEntry(position: 1, estimatedTimeToMerge: 60, state: "QUEUED")
+    let justUnder = ForgeMergeQueueEntry(position: 1, estimatedTimeToMerge: 59, state: "QUEUED")
+    let exactlyOne = ForgeMergeQueueEntry(position: 1, estimatedTimeToMerge: 60, state: "QUEUED")
 
     #expect(
       PullRequestMergeQueueStatus(pullRequest: makePullRequest(mergeQueueEntry: justUnder))?.estimatedTimeLabel
@@ -65,7 +65,7 @@ struct PullRequestMergeQueueStatusTests {
   }
 
   @Test func formatsMultiUnitEstimate() {
-    let entry = GithubMergeQueueEntry(position: 1, estimatedTimeToMerge: 3660, state: "QUEUED")
+    let entry = ForgeMergeQueueEntry(position: 1, estimatedTimeToMerge: 3660, state: "QUEUED")
     let label = PullRequestMergeQueueStatus(pullRequest: makePullRequest(mergeQueueEntry: entry))?.estimatedTimeLabel
 
     // Exact unit strings are locale/format-version sensitive; assert the shape, not the spelling.
@@ -84,19 +84,19 @@ struct PullRequestMergeQueueStatusTests {
   }
 
   @Test func ignoresStaleEntryOnMergedPR() {
-    let entry = GithubMergeQueueEntry(position: 1, estimatedTimeToMerge: nil, state: "QUEUED")
+    let entry = ForgeMergeQueueEntry(position: 1, estimatedTimeToMerge: nil, state: "QUEUED")
     let pullRequest = makePullRequest(state: .merged, mergeQueueEntry: entry)
     #expect(PullRequestMergeQueueStatus(pullRequest: pullRequest) == nil)
   }
 
   @Test func ignoresEntryOnDraftPR() {
-    let entry = GithubMergeQueueEntry(position: 1, estimatedTimeToMerge: nil, state: "QUEUED")
+    let entry = ForgeMergeQueueEntry(position: 1, estimatedTimeToMerge: nil, state: "QUEUED")
     let pullRequest = makePullRequest(isDraft: true, mergeQueueEntry: entry)
     #expect(PullRequestMergeQueueStatus(pullRequest: pullRequest) == nil)
   }
 
   @Test func toolbarBadgeIsBrownWhenQueued() {
-    let entry = GithubMergeQueueEntry(position: 1, estimatedTimeToMerge: nil, state: "QUEUED")
+    let entry = ForgeMergeQueueEntry(position: 1, estimatedTimeToMerge: nil, state: "QUEUED")
     let queued = makePullRequest(mergeQueueEntry: entry)
     let open = makePullRequest(mergeStateStatus: "CLEAN")
 
@@ -108,7 +108,7 @@ struct PullRequestMergeQueueStatusTests {
   }
 
   @Test func sidebarIconResolvesQueued() {
-    let entry = GithubMergeQueueEntry(position: 1, estimatedTimeToMerge: nil, state: "QUEUED")
+    let entry = ForgeMergeQueueEntry(position: 1, estimatedTimeToMerge: nil, state: "QUEUED")
     let queued = makePullRequest(mergeQueueEntry: entry)
     let open = makePullRequest(mergeStateStatus: "CLEAN")
     let draft = makePullRequest(isDraft: true, mergeQueueEntry: entry)
@@ -120,7 +120,7 @@ struct PullRequestMergeQueueStatusTests {
   }
 
   private func summary(for entryState: String) -> String? {
-    let entry = GithubMergeQueueEntry(position: 1, estimatedTimeToMerge: nil, state: entryState)
+    let entry = ForgeMergeQueueEntry(position: 1, estimatedTimeToMerge: nil, state: entryState)
     return PullRequestMergeQueueStatus(pullRequest: makePullRequest(mergeQueueEntry: entry))?.summary
   }
 }
@@ -129,9 +129,9 @@ private func makePullRequest(
   state: PullRequestState = .open,
   isDraft: Bool = false,
   mergeStateStatus: String? = nil,
-  mergeQueueEntry: GithubMergeQueueEntry? = nil
-) -> GithubPullRequest {
-  GithubPullRequest(
+  mergeQueueEntry: ForgeMergeQueueEntry? = nil
+) -> ForgePullRequest {
+  ForgePullRequest(
     number: 1,
     title: "PR",
     state: state,

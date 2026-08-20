@@ -153,7 +153,7 @@ struct RepositoriesFeatureSidebarTests {
       name: "repo",
       worktrees: IdentifiedArray(uniqueElements: [worktree])
     )
-    let pullRequest = GithubPullRequest(
+    let pullRequest = ForgePullRequest(
       number: 7,
       title: "Live",
       state: .open,

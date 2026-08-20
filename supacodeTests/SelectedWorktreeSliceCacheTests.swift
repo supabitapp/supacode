@@ -134,7 +134,7 @@ struct SelectedWorktreeSliceCacheTests {
 
     let store = TestStore(initialState: state) { RepositoriesFeature() }
     store.exhaustivity = .off
-    let pullRequest = GithubPullRequest(
+    let pullRequest = ForgePullRequest(
       number: 1, title: "PR", state: .open, additions: 0, deletions: 0, isDraft: false,
       reviewDecision: nil, mergeable: nil, mergeStateStatus: nil, updatedAt: nil, mergedAt: nil,
       url: "https://example.com/pull/1", headRefName: "wt", baseRefName: "main",

@@ -7,10 +7,10 @@ nonisolated struct GithubGraphQLPullRequestResponse: Decodable {
     aliasMap: [String: String],
     owner: String,
     repo: String
-  ) -> [String: GithubPullRequest] {
+  ) -> [String: ForgePullRequest] {
     let normalizedOwner = owner.lowercased()
     let normalizedRepo = repo.lowercased()
-    var results: [String: GithubPullRequest] = [:]
+    var results: [String: ForgePullRequest] = [:]
     for (alias, connection) in data.repository.pullRequestsByAlias {
       guard let branch = aliasMap[alias] else {
         continue
@@ -119,12 +119,12 @@ nonisolated struct GithubGraphQLPullRequestResponse: Decodable {
     let baseRefName: String?
     let commits: CommitConnection?
     let author: PullRequestAuthor?
-    let statusCheckRollup: GithubPullRequestStatusCheckRollup?
-    let mergeQueueEntry: GithubMergeQueueEntry?
+    let statusCheckRollup: ForgePullRequestStatusCheckRollup?
+    let mergeQueueEntry: ForgeMergeQueueEntry?
     let headRepository: HeadRepository?
 
-    var pullRequest: GithubPullRequest {
-      GithubPullRequest(
+    var pullRequest: ForgePullRequest {
+      ForgePullRequest(
         number: number,
         title: title,
         state: state,

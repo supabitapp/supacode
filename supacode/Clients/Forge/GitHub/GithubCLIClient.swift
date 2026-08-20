@@ -184,9 +184,9 @@ enum GithubAuthStatusParsing {
 }
 
 struct GithubCLIClient: Sendable {
-  var latestRun: @Sendable (URL, String) async throws -> GithubWorkflowRun?
+  var latestRun: @Sendable (URL, String) async throws -> ForgeWorkflowRun?
   var resolveRemoteInfo: @Sendable (URL) async -> GithubRemoteInfo?
-  var batchPullRequests: @Sendable (String, String, String, [String]) async throws -> [String: GithubPullRequest]
+  var batchPullRequests: @Sendable (String, String, String, [String]) async throws -> [String: ForgePullRequest]
   var mergePullRequest: @Sendable (URL, GithubRemoteInfo?, Int, PullRequestMergeStrategy) async throws -> Void
   var closePullRequest: @Sendable (URL, GithubRemoteInfo?, Int) async throws -> Void
   var markPullRequestReady: @Sendable (URL, GithubRemoteInfo?, Int) async throws -> Void
@@ -353,7 +353,7 @@ actor GithubCLIExecutableResolver {
 nonisolated private func latestRunFetcher(
   shell: ShellClient,
   resolver: GithubCLIExecutableResolver
-) -> @Sendable (URL, String) async throws -> GithubWorkflowRun? {
+) -> @Sendable (URL, String) async throws -> ForgeWorkflowRun? {
   { repoRoot, branch in
     let output = try await runGh(
       shell: shell,
@@ -373,7 +373,7 @@ nonisolated private func latestRunFetcher(
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     // nil payload means no runs; a present-but-undecodable payload still throws.
-    let runs = try GithubCLIOutput.decodeIfPresent([GithubWorkflowRun].self, from: output, decoder: decoder)
+    let runs = try GithubCLIOutput.decodeIfPresent([ForgeWorkflowRun].self, from: output, decoder: decoder)
     return runs?.first
   }
 }
@@ -444,7 +444,7 @@ nonisolated private func repoSlug(for remote: GithubRemoteInfo) -> String {
 nonisolated private func batchPullRequestsFetcher(
   shell: ShellClient,
   resolver: GithubCLIExecutableResolver
-) -> @Sendable (String, String, String, [String]) async throws -> [String: GithubPullRequest] {
+) -> @Sendable (String, String, String, [String]) async throws -> [String: ForgePullRequest] {
   { host, owner, repo, branches in
     let dedupedBranches = deduplicatedBranches(branches)
     guard !dedupedBranches.isEmpty else {
@@ -656,9 +656,9 @@ nonisolated private func loadPullRequestChunks(
   resolver: GithubCLIExecutableResolver,
   request: GithubPullRequestsRequest,
   chunks: [[String]]
-) async throws -> [Int: [String: GithubPullRequest]] {
+) async throws -> [Int: [String: ForgePullRequest]] {
   try await withThrowingTaskGroup(
-    of: (Int, [String: GithubPullRequest]).self
+    of: (Int, [String: ForgePullRequest]).self
   ) { group in
     var nextChunkIndex = 0
     let initialCount = min(batchPullRequestsMaxConcurrentRequests, chunks.count)
@@ -677,7 +677,7 @@ nonisolated private func loadPullRequestChunks(
       nextChunkIndex += 1
     }
 
-    var resultsByChunkIndex: [Int: [String: GithubPullRequest]] = [:]
+    var resultsByChunkIndex: [Int: [String: ForgePullRequest]] = [:]
     while let (chunkIndex, prsByBranch) = try await group.next() {
       resultsByChunkIndex[chunkIndex] = prsByBranch
       if nextChunkIndex < chunks.count {
@@ -701,10 +701,10 @@ nonisolated private func loadPullRequestChunks(
 }
 
 nonisolated private func mergePullRequestChunkResults(
-  _ chunkResults: [Int: [String: GithubPullRequest]],
+  _ chunkResults: [Int: [String: ForgePullRequest]],
   chunkCount: Int
-) -> [String: GithubPullRequest] {
-  var results: [String: GithubPullRequest] = [:]
+) -> [String: ForgePullRequest] {
+  var results: [String: ForgePullRequest] = [:]
   for chunkIndex in 0..<chunkCount {
     guard let prsByBranch = chunkResults[chunkIndex] else {
       continue
@@ -720,7 +720,7 @@ nonisolated private func fetchPullRequestsChunk(
   request: GithubPullRequestsRequest,
   chunk: [String],
   chunkIndex: Int
-) async throws -> (Int, [String: GithubPullRequest]) {
+) async throws -> (Int, [String: ForgePullRequest]) {
   @Dependency(\.continuousClock) var clock
 
   func runChunkQuery(includeMergeQueueEntry: Bool) async throws -> (output: String, aliasMap: [String: String]) {

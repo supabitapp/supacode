@@ -3,7 +3,7 @@ import SupacodeSettingsShared
 import SwiftUI
 
 struct PullRequestChecksPopoverButton<Label: View>: View {
-  let pullRequest: GithubPullRequest
+  let pullRequest: ForgePullRequest
   @ViewBuilder let label: () -> Label
   @State private var isPresented = false
   @State private var isHoveringButton = false

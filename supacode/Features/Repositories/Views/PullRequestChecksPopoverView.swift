@@ -3,17 +3,17 @@ import SupacodeSettingsShared
 import SwiftUI
 
 struct PullRequestChecksPopoverView: View {
-  let pullRequest: GithubPullRequest
-  let checks: [GithubPullRequestStatusCheck]
+  let pullRequest: ForgePullRequest
+  let checks: [ForgePullRequestStatusCheck]
   private let breakdown: PullRequestCheckBreakdown
-  private let sortedChecks: [GithubPullRequestStatusCheck]
+  private let sortedChecks: [ForgePullRequestStatusCheck]
   @Environment(\.analyticsClient) private var analyticsClient
   @Environment(\.openURL) private var openURL
   @Shared(.settingsFile) private var settingsFile
 
   init(
-    pullRequest: GithubPullRequest,
-    checks: [GithubPullRequestStatusCheck]
+    pullRequest: ForgePullRequest,
+    checks: [ForgePullRequestStatusCheck]
   ) {
     self.pullRequest = pullRequest
     self.checks = checks
@@ -168,7 +168,7 @@ struct PullRequestChecksPopoverView: View {
     }
   }
 
-  private static func sortRank(for state: GithubPullRequestCheckState) -> Int {
+  private static func sortRank(for state: ForgePullRequestCheckState) -> Int {
     switch state {
     case .failure:
       return 0

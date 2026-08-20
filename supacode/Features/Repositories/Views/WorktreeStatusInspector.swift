@@ -8,7 +8,7 @@ struct WorktreeStatusInspectorContainer: View {
   let pane: WorktreeInspectorPane
   let isFolder: Bool
   let isCheckingPullRequest: Bool
-  let pullRequest: GithubPullRequest?
+  let pullRequest: ForgePullRequest?
   let repositoriesStore: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   let fileOpenActions: [OpenWorktreeAction]
@@ -81,7 +81,7 @@ extension View {
 /// Inspector pane mirroring the pull-request popover, re-laid out as a grouped
 /// `Form` so it reads cleanly in a narrow inspector column.
 struct WorktreeGitInspectorView: View {
-  let pullRequest: GithubPullRequest?
+  let pullRequest: ForgePullRequest?
   let isFolder: Bool
   let isCheckingPullRequest: Bool
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
@@ -148,7 +148,7 @@ private struct GitInspectorEmptyState: View {
 /// Pull-request pane header, shown only over the pull-request content. The Open
 /// in Browser affordance appears when the pull request has a URL.
 private struct GitInspectorHeader: View {
-  let pullRequest: GithubPullRequest
+  let pullRequest: ForgePullRequest
   @Environment(\.openURL) private var openURL
   @Environment(\.analyticsClient) private var analyticsClient
 
@@ -174,7 +174,7 @@ private struct GitInspectorHeader: View {
 }
 
 private struct GitInspectorContent: View {
-  let pullRequest: GithubPullRequest
+  let pullRequest: ForgePullRequest
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
 
   var body: some View {
@@ -266,8 +266,8 @@ private struct GitInspectorContent: View {
     .scrollEdgeEffectStyle(.soft, for: .all)
   }
 
-  private static func sortedChecks(_ checks: [GithubPullRequestStatusCheck])
-    -> [GithubPullRequestStatusCheck]
+  private static func sortedChecks(_ checks: [ForgePullRequestStatusCheck])
+    -> [ForgePullRequestStatusCheck]
   {
     checks.sorted {
       let left = sortRank(for: $0.checkState)
@@ -279,7 +279,7 @@ private struct GitInspectorContent: View {
     }
   }
 
-  private static func sortRank(for state: GithubPullRequestCheckState) -> Int {
+  private static func sortRank(for state: ForgePullRequestCheckState) -> Int {
     switch state {
     case .failure: 0
     case .inProgress: 1
@@ -293,7 +293,7 @@ private struct GitInspectorContent: View {
 /// Pull-request actions gated the same way as the command palette (mark ready
 /// for drafts, merge when ready, CI helpers when failing, close while open).
 private struct PullRequestActionsSection: View {
-  let pullRequest: GithubPullRequest
+  let pullRequest: ForgePullRequest
   let breakdown: PullRequestCheckBreakdown
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
 
@@ -386,7 +386,7 @@ private struct PullRequestActionRow: View {
 }
 
 private struct CheckRow: View {
-  let check: GithubPullRequestStatusCheck
+  let check: ForgePullRequestStatusCheck
   @Environment(\.openURL) private var openURL
   @Environment(\.analyticsClient) private var analyticsClient
 
@@ -411,7 +411,7 @@ private struct CheckRow: View {
 }
 
 private struct CheckRowLabel: View {
-  let check: GithubPullRequestStatusCheck
+  let check: ForgePullRequestStatusCheck
   let style: PullRequestCheckStatusStyle
 
   var body: some View {

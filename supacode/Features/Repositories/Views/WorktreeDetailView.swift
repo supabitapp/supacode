@@ -144,7 +144,7 @@ struct WorktreeDetailView: View {
   private static func inspectorPullRequest(
     selectedWorktree: Worktree?,
     selectedRow: SelectedWorktreeSlice?
-  ) -> GithubPullRequest? {
+  ) -> ForgePullRequest? {
     selectedWorktree.flatMap { worktree in
       if case .git(let pullRequest) = toolbarKind(for: worktree, selectedRow: selectedRow) {
         return pullRequest
@@ -482,7 +482,7 @@ struct WorktreeDetailView: View {
     // Folders have no git remote, so the PR payload is scoped to
     // `.git` — this makes "folder with a pull request" unrepresentable.
     enum Kind {
-      case git(pullRequest: GithubPullRequest?)
+      case git(pullRequest: ForgePullRequest?)
       case folder
     }
 
@@ -520,7 +520,7 @@ struct WorktreeDetailView: View {
       return action.remoteOpenDisabledReason(host: remoteOpenHost, remotePath: remoteOpenPath)
     }
 
-    var pullRequest: GithubPullRequest? {
+    var pullRequest: ForgePullRequest? {
       if case .git(let pullRequest) = kind { pullRequest } else { nil }
     }
 
@@ -796,7 +796,7 @@ struct WorktreeDetailView: View {
 
   /// Trailing git + notifications status toggles, always real controls (never skeletons).
   fileprivate struct TrailingStatusToolbarContent: ToolbarContent {
-    let pullRequest: GithubPullRequest?
+    let pullRequest: ForgePullRequest?
     let repositoriesStore: StoreOf<RepositoriesFeature>?
     let terminalManager: WorktreeTerminalManager
     let inspectorPane: WorktreeInspectorPane

@@ -16,7 +16,7 @@ nonisolated struct PullRequestMergeReadiness: Equatable, Hashable {
 
   let assessment: Assessment
 
-  init(pullRequest: GithubPullRequest) {
+  init(pullRequest: ForgePullRequest) {
     let mergeable = pullRequest.mergeable?.uppercased()
     let mergeStateStatus = pullRequest.mergeStateStatus?.uppercased()
     let reviewDecision = pullRequest.reviewDecision?.uppercased()

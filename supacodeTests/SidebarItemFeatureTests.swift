@@ -198,7 +198,7 @@ struct SidebarItemFeatureTests {
     // and a late result from the prior "feature/x" query is about to arrive.
     var state = makeState(name: "feature/y")
     state.branchName = "feature/y"
-    let livePR = GithubPullRequest(
+    let livePR = ForgePullRequest(
       number: 12,
       title: "Live",
       state: .open,
@@ -222,7 +222,7 @@ struct SidebarItemFeatureTests {
     let store = TestStore(initialState: state) {
       SidebarItemFeature()
     }
-    let stalePR = GithubPullRequest(
+    let stalePR = ForgePullRequest(
       number: 99,
       title: "Stale",
       state: .open,
@@ -253,7 +253,7 @@ struct SidebarItemFeatureTests {
     let store = TestStore(initialState: state) {
       SidebarItemFeature()
     }
-    let pullRequest = GithubPullRequest(
+    let pullRequest = ForgePullRequest(
       number: 1,
       title: "First",
       state: .open,

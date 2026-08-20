@@ -5,7 +5,7 @@ import SwiftUI
 /// Trailing toolbar toggle for git / pull-request status, reusing the sidebar's
 /// icon + check-status badge. Always tappable: it toggles the git inspector pane.
 struct WorktreeGitStatusButton: View {
-  let pullRequest: GithubPullRequest?
+  let pullRequest: ForgePullRequest?
   let isSelected: Bool
   // Selection highlight color, derived from the terminal background luminance
   // so the lit state tracks the chrome instead of the system accent.

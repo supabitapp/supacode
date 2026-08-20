@@ -560,7 +560,7 @@ struct RepositoriesFeature {
     case repositoryPullRequestRefreshCompleted(Repository.ID)
     case repositoryPullRequestsLoaded(
       repositoryID: Repository.ID,
-      pullRequestsByWorktreeID: [Worktree.ID: GithubPullRequest?]
+      pullRequestsByWorktreeID: [Worktree.ID: ForgePullRequest?]
     )
     case setGithubIntegrationEnabled(Bool)
     /// Installed editors resolved by `AppFeature`'s LaunchServices sweep. Mirrored
@@ -4795,7 +4795,7 @@ struct RepositoriesFeature {
           remoteInfo.repo,
           branches
         )
-        var pullRequestsByWorktreeID: [Worktree.ID: GithubPullRequest?] = [:]
+        var pullRequestsByWorktreeID: [Worktree.ID: ForgePullRequest?] = [:]
         for worktree in worktrees {
           pullRequestsByWorktreeID[worktree.id] = prsByBranch[worktree.name]
         }
@@ -6389,7 +6389,7 @@ extension RepositoriesFeature.State {
   /// The row's own equality guard short-circuits the PR-value mutation.
   func updateWorktreePullRequestEffect(
     worktreeID: Worktree.ID,
-    pullRequest: GithubPullRequest?,
+    pullRequest: ForgePullRequest?,
     branchAtQueryTime: String? = nil,
   ) -> Effect<RepositoriesFeature.Action> {
     guard let row = sidebarItems[id: worktreeID] else { return .none }

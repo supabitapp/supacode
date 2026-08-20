@@ -6,12 +6,12 @@ import Testing
 struct PullRequestCheckBreakdownTests {
   @Test func breakdownClassifiesChecksByStatusStateAndConclusion() {
     let checks = [
-      GithubPullRequestStatusCheck(status: "IN_PROGRESS", conclusion: "SUCCESS", state: "SUCCESS"),
-      GithubPullRequestStatusCheck(status: "COMPLETED", conclusion: nil, state: "EXPECTED"),
-      GithubPullRequestStatusCheck(status: "COMPLETED", conclusion: nil, state: "PENDING"),
-      GithubPullRequestStatusCheck(status: nil, conclusion: "SKIPPED", state: nil),
-      GithubPullRequestStatusCheck(status: nil, conclusion: "SUCCESS", state: nil),
-      GithubPullRequestStatusCheck(status: nil, conclusion: "FAILURE", state: nil),
+      ForgePullRequestStatusCheck(status: "IN_PROGRESS", conclusion: "SUCCESS", state: "SUCCESS"),
+      ForgePullRequestStatusCheck(status: "COMPLETED", conclusion: nil, state: "EXPECTED"),
+      ForgePullRequestStatusCheck(status: "COMPLETED", conclusion: nil, state: "PENDING"),
+      ForgePullRequestStatusCheck(status: nil, conclusion: "SKIPPED", state: nil),
+      ForgePullRequestStatusCheck(status: nil, conclusion: "SUCCESS", state: nil),
+      ForgePullRequestStatusCheck(status: nil, conclusion: "FAILURE", state: nil),
     ]
 
     let breakdown = PullRequestCheckBreakdown(checks: checks)
@@ -26,9 +26,9 @@ struct PullRequestCheckBreakdownTests {
 
   @Test func breakdownDefaultsUnknownStatesToInProgress() {
     let checks = [
-      GithubPullRequestStatusCheck(status: "COMPLETED", conclusion: nil, state: "UNKNOWN"),
-      GithubPullRequestStatusCheck(status: nil, conclusion: "UNKNOWN", state: nil),
-      GithubPullRequestStatusCheck(status: nil, conclusion: nil, state: nil),
+      ForgePullRequestStatusCheck(status: "COMPLETED", conclusion: nil, state: "UNKNOWN"),
+      ForgePullRequestStatusCheck(status: nil, conclusion: "UNKNOWN", state: nil),
+      ForgePullRequestStatusCheck(status: nil, conclusion: nil, state: nil),
     ]
 
     let breakdown = PullRequestCheckBreakdown(checks: checks)
@@ -39,12 +39,12 @@ struct PullRequestCheckBreakdownTests {
 
   @Test func breakdownSummaryTextIncludesAllStatuses() {
     let checks = [
-      GithubPullRequestStatusCheck(status: "IN_PROGRESS", conclusion: "SUCCESS", state: "SUCCESS"),
-      GithubPullRequestStatusCheck(status: "COMPLETED", conclusion: nil, state: "EXPECTED"),
-      GithubPullRequestStatusCheck(status: "COMPLETED", conclusion: nil, state: "PENDING"),
-      GithubPullRequestStatusCheck(status: nil, conclusion: "SKIPPED", state: nil),
-      GithubPullRequestStatusCheck(status: nil, conclusion: "SUCCESS", state: nil),
-      GithubPullRequestStatusCheck(status: nil, conclusion: "FAILURE", state: nil),
+      ForgePullRequestStatusCheck(status: "IN_PROGRESS", conclusion: "SUCCESS", state: "SUCCESS"),
+      ForgePullRequestStatusCheck(status: "COMPLETED", conclusion: nil, state: "EXPECTED"),
+      ForgePullRequestStatusCheck(status: "COMPLETED", conclusion: nil, state: "PENDING"),
+      ForgePullRequestStatusCheck(status: nil, conclusion: "SKIPPED", state: nil),
+      ForgePullRequestStatusCheck(status: nil, conclusion: "SUCCESS", state: nil),
+      ForgePullRequestStatusCheck(status: nil, conclusion: "FAILURE", state: nil),
     ]
 
     let breakdown = PullRequestCheckBreakdown(checks: checks)
