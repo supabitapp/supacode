@@ -610,15 +610,10 @@ struct AppFeature {
           .send(
             .settings(
               .repositoriesChanged(
-                repositories.map {
-                  SettingsRepositorySummary(
-                    id: $0.id.rawValue,
-                    name: $0.name,
-                    isGitRepository: $0.isGitRepository,
-                    host: $0.host,
-                    rootURL: $0.rootURL
-                  )
-                }
+                Self.settingsRepositorySummaries(
+                  repositories: repositories,
+                  sidebar: state.repositories.sidebar
+                )
               )
             )
           ),
@@ -666,6 +661,25 @@ struct AppFeature {
           }
         }
         return .merge(effects)
+
+      // A "Customize Appearance" save writes the shared sidebar state without
+      // firing `repositoriesChanged`, so re-send the settings summaries here.
+      // `core` runs before the child reducer applies the save, hence the
+      // explicit title override.
+      case .repositories(
+        .repositoryCustomization(.presented(.delegate(.save(let repositoryID, let title, _))))
+      ):
+        return .send(
+          .settings(
+            .repositoriesChanged(
+              Self.settingsRepositorySummaries(
+                repositories: state.repositories.repositories,
+                sidebar: state.repositories.sidebar,
+                titleOverride: (repositoryID, title)
+              )
+            )
+          )
+        )
 
       case .repositories(.delegate(.openWorktreeInApp(let worktreeID, let action))):
         guard let worktree = state.repositories.worktree(for: worktreeID) else {
@@ -2106,6 +2120,30 @@ struct AppFeature {
         }
       }
     )
+  }
+
+  /// Settings sidebar names resolve like the main sidebar's: a "Customize
+  /// Appearance" title overrides the repository's directory name, otherwise
+  /// identically-named directories are indistinguishable in settings.
+  private static func settingsRepositorySummaries(
+    repositories: IdentifiedArrayOf<Repository>,
+    sidebar: SidebarState,
+    titleOverride: (repositoryID: Repository.ID, title: String?)? = nil
+  ) -> [SettingsRepositorySummary] {
+    repositories.map { repository in
+      let customTitle =
+        repository.id == titleOverride?.repositoryID
+        ? titleOverride?.title
+        : sidebar.sections[repository.id]?.title
+      return SettingsRepositorySummary(
+        id: repository.id.rawValue,
+        name: SidebarDisplayName.resolved(custom: customTitle, fallback: repository.name)
+          ?? repository.name,
+        isGitRepository: repository.isGitRepository,
+        host: repository.host,
+        rootURL: repository.rootURL
+      )
+    }
   }
 
   /// Re-sweeps LaunchServices off the main thread, debounced so a launch that is
