@@ -184,7 +184,6 @@ enum GithubAuthStatusParsing {
 }
 
 struct GithubCLIClient: Sendable {
-  var defaultBranch: @Sendable (URL) async throws -> String
   var latestRun: @Sendable (URL, String) async throws -> GithubWorkflowRun?
   var resolveRemoteInfo: @Sendable (URL) async -> GithubRemoteInfo?
   var batchPullRequests: @Sendable (String, String, String, [String]) async throws -> [String: GithubPullRequest]
@@ -207,7 +206,6 @@ extension GithubCLIClient: DependencyKey {
   ) -> GithubCLIClient {
     let resolver = GithubCLIExecutableResolver(fallbackExecutableURLs: fallbackExecutableURLs)
     return GithubCLIClient(
-      defaultBranch: defaultBranchFetcher(shell: shell, resolver: resolver),
       latestRun: latestRunFetcher(shell: shell, resolver: resolver),
       resolveRemoteInfo: resolveRemoteInfoFetcher(shell: shell, resolver: resolver),
       batchPullRequests: batchPullRequestsFetcher(shell: shell, resolver: resolver),
@@ -223,7 +221,6 @@ extension GithubCLIClient: DependencyKey {
   }
 
   static let testValue = GithubCLIClient(
-    defaultBranch: { _ in "main" },
     latestRun: { _, _ in nil },
     resolveRemoteInfo: { _ in nil },
     batchPullRequests: { _, _, _, _ in [:] },
@@ -350,24 +347,6 @@ actor GithubCLIExecutableResolver {
     } catch {
       return nil
     }
-  }
-}
-
-nonisolated private func defaultBranchFetcher(
-  shell: ShellClient,
-  resolver: GithubCLIExecutableResolver
-) -> @Sendable (URL) async throws -> String {
-  { repoRoot in
-    let output = try await runGh(
-      shell: shell,
-      resolver: resolver,
-      arguments: ["repo", "view", "--json", "defaultBranchRef"],
-      repoRoot: repoRoot
-    )
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
-    let response = try GithubCLIOutput.decode(GithubRepoViewResponse.self, from: output, decoder: decoder)
-    return response.defaultBranchRef.name
   }
 }
 
