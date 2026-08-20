@@ -1200,7 +1200,7 @@ extension SidebarItemGroup {
 extension SidebarState.Section {
   /// A folder repo's custom title / color live on its synthetic folder-worktree
   /// item (the row is a worktree row), keyed by the repo id string.
-  fileprivate func folderWorktreeItem(for repositoryID: Repository.ID) -> SidebarState.Item? {
+  func folderWorktreeItem(for repositoryID: Repository.ID) -> SidebarState.Item? {
     let folderID = WorktreeID(repositoryID.rawValue)
     return buckets[.pinned]?.items[folderID] ?? buckets[.unpinned]?.items[folderID]
   }

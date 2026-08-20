@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import OrderedCollections
 import Testing
 
 @testable import SupacodeSettingsFeature
@@ -159,5 +160,156 @@ struct AppFeatureSettingsSelectionTests {
         SettingsRepositorySummary(id: repository.id.rawValue, name: "Backend")
       ]
     }
+  }
+
+  /// A folder (non-git) repo's custom title lives on its synthetic
+  /// folder-worktree bucket item, not the section title; settings must read
+  /// the same place the sidebar does.
+  @Test func repositoriesChangedResolvesFolderTitleFromSyntheticItem() async {
+    let repository = Repository(
+      id: "/tmp/notes",
+      rootURL: URL(fileURLWithPath: "/tmp/notes"),
+      name: "notes",
+      worktrees: [],
+      isGitRepository: false
+    )
+    var repositoriesState = RepositoriesFeature.State(reconciledRepositories: [repository])
+    repositoriesState.$sidebar.withLock { sidebar in
+      sidebar.setCustomization(
+        title: "Files",
+        color: nil,
+        worktree: WorktreeID(repository.id.rawValue),
+        in: repository.id
+      )
+    }
+    // Production seeds every cache on the roster load; keep the state under
+    // test consistent so the send below has no stale-cache diff.
+    repositoriesState.applyPostReduceCacheRecomputes()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(.repositories(.delegate(.repositoriesChanged([repository]))))
+    await store.receive(\.settings.repositoriesChanged) {
+      $0.settings.repositorySummaries = [
+        SettingsRepositorySummary(
+          id: repository.id.rawValue,
+          name: "Files",
+          isGitRepository: false
+        )
+      ]
+    }
+    await store.receive(\.commandPalette.pruneRecency)
+  }
+
+  /// Renaming a folder goes through the worktree-appearance path, which never
+  /// fires `repositoriesChanged`; the summaries must refresh from the save.
+  @Test func folderAppearanceSaveRefreshesSummariesWithNewTitle() async {
+    let repository = Repository(
+      id: "/tmp/notes",
+      rootURL: URL(fileURLWithPath: "/tmp/notes"),
+      name: "notes",
+      worktrees: [],
+      isGitRepository: false
+    )
+    var repositoriesState = RepositoriesFeature.State(reconciledRepositories: [repository])
+    repositoriesState.applyPostReduceCacheRecomputes()
+    var settingsState = SettingsFeature.State()
+    settingsState.repositorySummaries = [
+      SettingsRepositorySummary(
+        id: repository.id.rawValue,
+        name: repository.name,
+        isGitRepository: false
+      )
+    ]
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: settingsState
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(
+      .repositories(
+        .setWorktreeAppearance(
+          WorktreeID(repository.id.rawValue),
+          repository.id,
+          title: "Files",
+          color: nil
+        )
+      )
+    ) {
+      $0.repositories.$sidebar.withLock { sidebar in
+        sidebar.setCustomization(
+          title: "Files",
+          color: nil,
+          worktree: WorktreeID(repository.id.rawValue),
+          in: repository.id
+        )
+      }
+      $0.repositories.reconcileSidebarForTesting()
+    }
+    await store.receive(\.settings.repositoriesChanged) {
+      $0.settings.repositorySummaries = [
+        SettingsRepositorySummary(
+          id: repository.id.rawValue,
+          name: "Files",
+          isGitRepository: false
+        )
+      ]
+    }
+  }
+
+  /// Git worktree renames never surface in settings, so the appearance path
+  /// must not re-send summaries for them.
+  @Test func gitWorktreeAppearanceSaveDoesNotResendSummaries() async {
+    let worktree = Worktree(
+      id: WorktreeID("/tmp/repo/main"),
+      name: "main",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo"),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
+    )
+    let repository = Repository(
+      id: "/tmp/repo",
+      rootURL: URL(fileURLWithPath: "/tmp/repo"),
+      name: "repo",
+      worktrees: [worktree]
+    )
+    var repositoriesState = RepositoriesFeature.State(reconciledRepositories: [repository])
+    repositoriesState.applyPostReduceCacheRecomputes()
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(
+      .repositories(
+        .setWorktreeAppearance(worktree.id, repository.id, title: "Feature X", color: nil)
+      )
+    ) {
+      $0.repositories.$sidebar.withLock { sidebar in
+        sidebar.setCustomization(
+          title: "Feature X",
+          color: nil,
+          worktree: worktree.id,
+          in: repository.id
+        )
+      }
+      $0.repositories.reconcileSidebarForTesting()
+    }
+    // No `.settings(.repositoriesChanged(...))` follows: the TestStore fails
+    // at scope completion if an action went un-received.
   }
 }

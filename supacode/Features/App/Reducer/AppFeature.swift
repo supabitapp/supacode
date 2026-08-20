@@ -681,6 +681,28 @@ struct AppFeature {
           )
         )
 
+      // Folder (non-git) repos are renamed through the worktree-appearance
+      // path: their title lives on the synthetic folder-worktree item. Same
+      // re-send as above, gated to folders so git worktree renames (never
+      // shown in settings) stay cheap.
+      case .repositories(
+        .worktreeCustomization(.presented(.delegate(.save(_, let repositoryID, let title, _))))
+      ),
+        .repositories(.setWorktreeAppearance(_, let repositoryID, let title, _)):
+        guard state.repositories.repositories[id: repositoryID]?.isGitRepository == false
+        else { return .none }
+        return .send(
+          .settings(
+            .repositoriesChanged(
+              Self.settingsRepositorySummaries(
+                repositories: state.repositories.repositories,
+                sidebar: state.repositories.sidebar,
+                titleOverride: (repositoryID, title)
+              )
+            )
+          )
+        )
+
       case .repositories(.delegate(.openWorktreeInApp(let worktreeID, let action))):
         guard let worktree = state.repositories.worktree(for: worktreeID) else {
           appLogger.warning("openWorktreeInApp: worktree \(worktreeID) not found, ignoring.")
@@ -2124,17 +2146,24 @@ struct AppFeature {
 
   /// Settings sidebar names resolve like the main sidebar's: a "Customize
   /// Appearance" title overrides the repository's directory name, otherwise
-  /// identically-named directories are indistinguishable in settings.
+  /// identically-named directories are indistinguishable in settings. A folder
+  /// (non-git) repo's title lives on its synthetic folder-worktree item, not
+  /// the section — same dual rule as `computeSidebarStructure`.
   private static func settingsRepositorySummaries(
     repositories: IdentifiedArrayOf<Repository>,
     sidebar: SidebarState,
     titleOverride: (repositoryID: Repository.ID, title: String?)? = nil
   ) -> [SettingsRepositorySummary] {
     repositories.map { repository in
+      let section = sidebar.sections[repository.id]
+      let storedTitle =
+        repository.isGitRepository
+        ? section?.title
+        : (section?.title ?? section?.folderWorktreeItem(for: repository.id)?.title)
       let customTitle =
         repository.id == titleOverride?.repositoryID
         ? titleOverride?.title
-        : sidebar.sections[repository.id]?.title
+        : storedTitle
       return SettingsRepositorySummary(
         id: repository.id.rawValue,
         name: SidebarDisplayName.resolved(custom: customTitle, fallback: repository.name)
