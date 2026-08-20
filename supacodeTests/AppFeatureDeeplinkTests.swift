@@ -3461,7 +3461,7 @@ struct AppFeatureDeeplinkTests {
     GithubPullRequest(
       number: 1,
       title: "PR",
-      state: "MERGED",
+      state: .merged,
       additions: 0,
       deletions: 0,
       isDraft: false,

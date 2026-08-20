@@ -304,7 +304,7 @@ struct CommandPaletteFeature {
       let repositoryID = repositories.repositoryID(containing: selectedWorktreeID),
       let pullRequest = repositories.sidebarItems[id: selectedWorktreeID]?.pullRequest,
       pullRequest.number > 0,
-      pullRequest.state.uppercased() != "CLOSED"
+      pullRequest.state != .closed
     {
       let pullRequestActions = pullRequestItems(
         pullRequest: pullRequest,
@@ -558,14 +558,13 @@ private func pullRequestItems(
   worktreeID: Worktree.ID,
   repositoryID: Repository.ID
 ) -> [CommandPaletteItem] {
-  let state = pullRequest.state.uppercased()
-  let isOpen = state == "OPEN"
+  let isOpen = pullRequest.state == .open
   let isDraft = pullRequest.isDraft
   let mergeReadiness = PullRequestMergeReadiness(pullRequest: pullRequest)
   let checks = pullRequest.statusCheckRollup?.checks ?? []
   let breakdown = PullRequestCheckBreakdown(checks: checks)
   let hasFailingChecks = breakdown.failed > 0
-  let canMerge = isOpen && !isDraft && !mergeReadiness.isBlocking
+  let canMerge = isOpen && !isDraft && mergeReadiness.canMergeNow
 
   func makeReadyItem() -> CommandPaletteItem? {
     guard isOpen && isDraft else { return nil }

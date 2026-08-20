@@ -4293,7 +4293,7 @@ struct RepositoriesFeatureTests {
       )
     }
     state.reconcileSidebarForTesting()
-    state.setWorktreeInfoForTesting(id: featureWorktree.id, pullRequest: makePullRequest(state: "MERGED"))
+    state.setWorktreeInfoForTesting(id: featureWorktree.id, pullRequest: makePullRequest(state: .merged))
     let fixedDate = Date(timeIntervalSince1970: 1_000_000)
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -6142,7 +6142,7 @@ struct RepositoriesFeatureTests {
     // the meaningful end state via `#expect`.
     store.exhaustivity = .off
     let mergedPullRequest = makePullRequest(
-      state: "MERGED",
+      state: .merged,
       headRefName: featureWorktree.name,
       mergedAt: Date(timeIntervalSince1970: 950_000)
     )
@@ -6174,7 +6174,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
-    let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: mainWorktree.name)
+    let mergedPullRequest = makePullRequest(state: .merged, headRefName: mainWorktree.name)
 
     await store.send(
       .repositoryPullRequestsLoaded(
@@ -6208,7 +6208,7 @@ struct RepositoriesFeatureTests {
     // async git operations that require extensive dependency mocking.
     store.exhaustivity = .off
     let mergedPullRequest = makePullRequest(
-      state: "MERGED",
+      state: .merged,
       headRefName: featureWorktree.name,
       mergedAt: Date(timeIntervalSince1970: 950_000)
     )
@@ -6246,7 +6246,7 @@ struct RepositoriesFeatureTests {
     }
     store.exhaustivity = .off
     let mergedPullRequest = makePullRequest(
-      state: "MERGED",
+      state: .merged,
       headRefName: featureWorktree.name,
       mergedAt: Date(timeIntervalSince1970: 950_000)
     )
@@ -6284,7 +6284,7 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
     let mergedPullRequest = makePullRequest(
-      state: "MERGED",
+      state: .merged,
       headRefName: featureWorktree.name,
       mergedAt: Date(timeIntervalSince1970: 950_000)
     )
@@ -6320,7 +6320,7 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
     let mergedPullRequest = makePullRequest(
-      state: "MERGED",
+      state: .merged,
       headRefName: featureWorktree.name,
       mergedAt: Date(timeIntervalSince1970: 900_000)
     )
@@ -6353,7 +6353,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
-    let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: featureWorktree.name)
+    let mergedPullRequest = makePullRequest(state: .merged, headRefName: featureWorktree.name)
 
     await store.send(
       .repositoryPullRequestsLoaded(
@@ -6383,7 +6383,7 @@ struct RepositoriesFeatureTests {
       RepositoriesFeature()
     }
     let mergedPullRequest = makePullRequest(
-      state: "MERGED",
+      state: .merged,
       headRefName: featureWorktree.name,
       mergedAt: Date(timeIntervalSince1970: 950_000)
     )
@@ -6415,7 +6415,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
-    let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: featureWorktree.name)
+    let mergedPullRequest = makePullRequest(state: .merged, headRefName: featureWorktree.name)
 
     await store.send(
       .repositoryPullRequestsLoaded(
@@ -6452,7 +6452,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
-    let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: featureWorktree.name)
+    let mergedPullRequest = makePullRequest(state: .merged, headRefName: featureWorktree.name)
 
     await store.send(
       .repositoryPullRequestsLoaded(
@@ -6482,7 +6482,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
-    let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: featureWorktree.name)
+    let mergedPullRequest = makePullRequest(state: .merged, headRefName: featureWorktree.name)
 
     await store.send(
       .repositoryPullRequestsLoaded(
@@ -6512,7 +6512,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
-    let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: featureWorktree.name)
+    let mergedPullRequest = makePullRequest(state: .merged, headRefName: featureWorktree.name)
 
     await store.send(
       .repositoryPullRequestsLoaded(
@@ -6535,7 +6535,7 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let mergedPullRequest = makePullRequest(state: "MERGED", headRefName: featureWorktree.name)
+    let mergedPullRequest = makePullRequest(state: .merged, headRefName: featureWorktree.name)
     var state = makeState(repositories: [repository])
     state.mergedWorktreeAction = .delete
     state.reconcileSidebarForTesting()
@@ -6550,7 +6550,7 @@ struct RepositoriesFeatureTests {
     let refreshedPullRequest = GithubPullRequest(
       number: mergedPullRequest.number,
       title: "PR",
-      state: "MERGED",
+      state: .merged,
       additions: 0,
       deletions: 0,
       isDraft: false,
@@ -6589,7 +6589,7 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let openPullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name, number: 12)
+    let openPullRequest = makePullRequest(state: .open, headRefName: featureWorktree.name, number: 12)
     var state = makeState(repositories: [repository])
     state.githubIntegrationAvailability = .disabled
     state.mergedWorktreeAction = .archive
@@ -6616,7 +6616,7 @@ struct RepositoriesFeatureTests {
       $0.statusToast = .success("Pull request merged")
     }
     await store.receive(\.worktreeInfoEvent)
-    #expect(store.state.sidebarItems[id: featureWorktree.id]?.pullRequest?.state == "OPEN")
+    #expect(store.state.sidebarItems[id: featureWorktree.id]?.pullRequest?.state == .open)
     #expect(store.state.archivedWorktreeIDs.isEmpty)
     #expect(mergedNumbers.value == [12])
     await store.finish()
@@ -6631,7 +6631,7 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let openPullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name, number: 12)
+    let openPullRequest = makePullRequest(state: .open, headRefName: featureWorktree.name, number: 12)
     var state = makeState(repositories: [repository])
     state.githubIntegrationAvailability = .disabled
     state.reconcileSidebarForTesting()
@@ -6808,7 +6808,7 @@ struct RepositoriesFeatureTests {
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
     let featureWorktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let openPullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name, number: 12)
+    let openPullRequest = makePullRequest(state: .open, headRefName: featureWorktree.name, number: 12)
     var state = makeState(repositories: [repository])
     state.githubIntegrationAvailability = .available
     state.reconcileSidebarForTesting()
@@ -6925,7 +6925,7 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let openPullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name, number: 88)
+    let openPullRequest = makePullRequest(state: .open, headRefName: featureWorktree.name, number: 88)
     var state = makeState(repositories: [repository])
     state.githubIntegrationAvailability = .disabled
     state.reconcileSidebarForTesting()
@@ -6964,7 +6964,7 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let openPullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name, number: 88)
+    let openPullRequest = makePullRequest(state: .open, headRefName: featureWorktree.name, number: 88)
     var state = makeState(repositories: [repository])
     state.githubIntegrationAvailability = .disabled
     state.reconcileSidebarForTesting()
@@ -7463,7 +7463,7 @@ struct RepositoriesFeatureTests {
       repoRoot: repoRoot
     )
     let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
-    let pullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name)
+    let pullRequest = makePullRequest(state: .open, headRefName: featureWorktree.name)
     var state = makeState(repositories: [repository])
     state.reconcileSidebarForTesting()
     state.setWorktreeInfoForTesting(
@@ -7499,7 +7499,7 @@ struct RepositoriesFeatureTests {
     var state = makeState(repositories: [repository])
     state.reconcileSidebarForTesting()
     state.setWorktreeInfoForTesting(
-      id: featureWorktree.id, addedLines: nil, removedLines: nil, pullRequest: makePullRequest(state: "OPEN")
+      id: featureWorktree.id, addedLines: nil, removedLines: nil, pullRequest: makePullRequest(state: .open)
     )
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -7529,7 +7529,7 @@ struct RepositoriesFeatureTests {
     var state = makeState(repositories: [repository])
     state.githubIntegrationAvailability = .available
     state.reconcileSidebarForTesting()
-    let pullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name)
+    let pullRequest = makePullRequest(state: .open, headRefName: featureWorktree.name)
     let featureName = featureWorktree.name
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -9132,7 +9132,7 @@ struct RepositoriesFeatureTests {
   }
 
   private func makePullRequest(
-    state: String,
+    state: PullRequestState,
     headRefName: String? = nil,
     number: Int = 1,
     mergedAt: Date? = nil

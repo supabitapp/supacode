@@ -15,6 +15,7 @@ struct PullRequestMergeReadinessTests {
 
     #expect(readiness.blockingReason == .mergeConflicts)
     #expect(readiness.isBlocking)
+    #expect(!readiness.canMergeNow)
     #expect(readiness.label == "Merge conflicts")
     #expect(readiness.isConflicting)
   }
@@ -58,10 +59,11 @@ struct PullRequestMergeReadinessTests {
 
     #expect(readiness.blockingReason == nil)
     #expect(!readiness.isBlocking)
+    #expect(readiness.canMergeNow)
     #expect(readiness.label == "Mergeable")
   }
 
-  @Test func mergeReadinessFallsBackToBlockedForOtherStates() {
+  @Test func mergeReadinessIsCheckingWhileMergeabilityIsUnknown() {
     let pullRequest = makePullRequest(
       mergeable: "UNKNOWN",
       mergeStateStatus: "BEHIND"
@@ -69,8 +71,23 @@ struct PullRequestMergeReadinessTests {
 
     let readiness = PullRequestMergeReadiness(pullRequest: pullRequest)
 
-    #expect(readiness.blockingReason == .blocked)
-    #expect(readiness.label == "Blocked")
+    #expect(readiness.assessment == .checking)
+    #expect(readiness.blockingReason == nil)
+    #expect(!readiness.isBlocking)
+    #expect(!readiness.canMergeNow)
+    #expect(readiness.label == "Checking")
+  }
+
+  @Test func mergeReadinessIsCheckingWhenMergeabilityIsMissing() {
+    let pullRequest = makePullRequest(
+      mergeable: nil,
+      mergeStateStatus: nil
+    )
+
+    let readiness = PullRequestMergeReadiness(pullRequest: pullRequest)
+
+    #expect(readiness.assessment == .checking)
+    #expect(!readiness.canMergeNow)
   }
 }
 
@@ -84,7 +101,7 @@ private func makePullRequest(
   GithubPullRequest(
     number: 1,
     title: "PR",
-    state: "OPEN",
+    state: .open,
     additions: 0,
     deletions: 0,
     isDraft: false,

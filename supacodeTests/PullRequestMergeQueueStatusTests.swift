@@ -85,7 +85,7 @@ struct PullRequestMergeQueueStatusTests {
 
   @Test func ignoresStaleEntryOnMergedPR() {
     let entry = GithubMergeQueueEntry(position: 1, estimatedTimeToMerge: nil, state: "QUEUED")
-    let pullRequest = makePullRequest(state: "MERGED", mergeQueueEntry: entry)
+    let pullRequest = makePullRequest(state: .merged, mergeQueueEntry: entry)
     #expect(PullRequestMergeQueueStatus(pullRequest: pullRequest) == nil)
   }
 
@@ -126,7 +126,7 @@ struct PullRequestMergeQueueStatusTests {
 }
 
 private func makePullRequest(
-  state: String = "OPEN",
+  state: PullRequestState = .open,
   isDraft: Bool = false,
   mergeStateStatus: String? = nil,
   mergeQueueEntry: GithubMergeQueueEntry? = nil

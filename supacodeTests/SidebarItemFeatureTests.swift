@@ -201,7 +201,7 @@ struct SidebarItemFeatureTests {
     let livePR = GithubPullRequest(
       number: 12,
       title: "Live",
-      state: "OPEN",
+      state: .open,
       additions: 1,
       deletions: 0,
       isDraft: false,
@@ -225,7 +225,7 @@ struct SidebarItemFeatureTests {
     let stalePR = GithubPullRequest(
       number: 99,
       title: "Stale",
-      state: "OPEN",
+      state: .open,
       additions: 0,
       deletions: 0,
       isDraft: false,
@@ -256,7 +256,7 @@ struct SidebarItemFeatureTests {
     let pullRequest = GithubPullRequest(
       number: 1,
       title: "First",
-      state: "OPEN",
+      state: .open,
       additions: 1,
       deletions: 0,
       isDraft: false,

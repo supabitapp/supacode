@@ -496,7 +496,7 @@ struct GithubBatchPullRequestsTests {
       repo: "supacode"
     )
     #expect(prs["feat/add-support-for-rubymine"]?.number == 248)
-    #expect(prs["feat/add-support-for-rubymine"]?.state == "MERGED")
+    #expect(prs["feat/add-support-for-rubymine"]?.state == .merged)
   }
 
   @Test func decodesMergeQueueEntry() throws {

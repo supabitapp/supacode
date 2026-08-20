@@ -34,7 +34,7 @@ struct PullRequestChecksPopoverView: View {
 
   var body: some View {
     let pullRequestURL = URL(string: pullRequest.url)
-    let stateLabel = pullRequest.state.uppercased()
+    let stateLabel = pullRequest.state.displayLabel
     let draftLabel = pullRequest.isDraft ? "\(stateLabel)/DRAFT" : stateLabel
     let titlePrefix = Text("\(draftLabel) - ").foregroundStyle(.secondary)
     let titleSuffix = Text(verbatim: " #\(pullRequest.number)")

@@ -330,10 +330,10 @@ struct ToolbarNotificationGroupingTests {
     }
     // Open PR whose branch matches the worktree -> the open glyph.
     state.sidebarItems[id: open.id]?.branchName = "open"
-    state.sidebarItems[id: open.id]?.pullRequest = makePullRequest(state: "OPEN", headRefName: "open")
+    state.sidebarItems[id: open.id]?.pullRequest = makePullRequest(state: .open, headRefName: "open")
     // A PR whose branch no longer matches is gated out -> the plain branch glyph.
     state.sidebarItems[id: stale.id]?.branchName = "stale"
-    state.sidebarItems[id: stale.id]?.pullRequest = makePullRequest(state: "OPEN", headRefName: "renamed")
+    state.sidebarItems[id: stale.id]?.pullRequest = makePullRequest(state: .open, headRefName: "renamed")
 
     let worktrees = state.computeToolbarNotificationGroups().first?.worktrees ?? []
     let iconsByID = Dictionary(uniqueKeysWithValues: worktrees.map { ($0.id, $0.pullRequestIcon) })
@@ -342,7 +342,7 @@ struct ToolbarNotificationGroupingTests {
     #expect(iconsByID[stale.id] == .branch)
   }
 
-  private func makePullRequest(state: String, headRefName: String, isDraft: Bool = false) -> GithubPullRequest {
+  private func makePullRequest(state: PullRequestState, headRefName: String, isDraft: Bool = false) -> GithubPullRequest {
     GithubPullRequest(
       number: 1,
       title: "PR",

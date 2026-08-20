@@ -221,13 +221,13 @@ enum SidebarPullRequestIcon: Equatable {
 
   static func resolve(_ pullRequest: GithubPullRequest?) -> Self {
     guard let pullRequest else { return .branch }
-    switch pullRequest.state.uppercased() {
-    case "MERGED": return .merged
-    case "CLOSED": return .closed
-    case "OPEN" where pullRequest.isDraft: return .draft
-    case "OPEN" where PullRequestMergeQueueStatus(pullRequest: pullRequest) != nil: return .queued
-    case "OPEN": return .open
-    default: return .branch
+    switch pullRequest.state {
+    case .merged: return .merged
+    case .closed: return .closed
+    case .open where pullRequest.isDraft: return .draft
+    case .open where PullRequestMergeQueueStatus(pullRequest: pullRequest) != nil: return .queued
+    case .open: return .open
+    case .unknown: return .branch
     }
   }
 

@@ -2599,8 +2599,8 @@ struct RepositoriesFeature {
           }
           let pullRequest = pullRequestsByWorktreeID[worktreeID] ?? nil
           let previousPullRequest = state.sidebarItems[id: worktreeID]?.pullRequest
-          let previousMerged = previousPullRequest?.state == "MERGED"
-          let nextMerged = pullRequest?.state == "MERGED"
+          let previousMerged = previousPullRequest?.state == .merged
+          let nextMerged = pullRequest?.state == .merged
           // Dispatch unconditionally so an identical-PR result still clears the row's watermark.
           rowEffects.append(
             state.updateWorktreePullRequestEffect(
@@ -5891,7 +5891,7 @@ extension RepositoriesFeature.State {
   }
 
   func isWorktreeMerged(_ worktree: Worktree) -> Bool {
-    sidebarItems[id: worktree.id]?.pullRequest?.state == "MERGED"
+    sidebarItems[id: worktree.id]?.pullRequest?.state == .merged
   }
 
   func orderedPinnedWorktreeIDs(in repository: Repository) -> [Worktree.ID] {

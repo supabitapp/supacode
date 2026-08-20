@@ -298,9 +298,9 @@ private struct PullRequestActionsSection: View {
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
 
   var body: some View {
-    let isOpen = pullRequest.state.uppercased() == "OPEN"
+    let isOpen = pullRequest.state == .open
     let isDraft = pullRequest.isDraft
-    let canMerge = isOpen && !isDraft && !PullRequestMergeReadiness(pullRequest: pullRequest).isBlocking
+    let canMerge = isOpen && !isDraft && PullRequestMergeReadiness(pullRequest: pullRequest).canMergeNow
     let hasFailingChecks = breakdown.failed > 0
     let checks = pullRequest.statusCheckRollup?.checks ?? []
     let hasFailingCheckWithDetails = checks.contains { $0.checkState == .failure && $0.detailsUrl != nil }

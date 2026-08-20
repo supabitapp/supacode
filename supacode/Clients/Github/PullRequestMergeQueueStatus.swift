@@ -28,7 +28,7 @@ nonisolated struct PullRequestMergeQueueStatus: Equatable, Hashable {
   // Only an open, non-draft PR with a live queue entry is in the merge queue, so a stale entry
   // on a merged / draft PR never surfaces as queued across the sidebar and popover.
   init?(pullRequest: GithubPullRequest) {
-    guard pullRequest.state.uppercased() == "OPEN",
+    guard pullRequest.state == .open,
       !pullRequest.isDraft,
       let entry = pullRequest.mergeQueueEntry
     else { return nil }

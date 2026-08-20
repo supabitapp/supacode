@@ -105,7 +105,7 @@ nonisolated struct GithubGraphQLPullRequestResponse: Decodable {
   nonisolated struct PullRequestNode: Decodable {
     let number: Int
     let title: String
-    let state: String
+    let state: PullRequestState
     let additions: Int
     let deletions: Int
     let isDraft: Bool
@@ -147,12 +147,12 @@ nonisolated struct GithubGraphQLPullRequestResponse: Decodable {
     }
 
     var stateRank: Int {
-      switch state.uppercased() {
-      case "OPEN":
+      switch state {
+      case .open:
         return 2
-      case "MERGED":
+      case .merged:
         return 1
-      default:
+      case .closed, .unknown:
         return 0
       }
     }

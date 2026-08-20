@@ -4,11 +4,17 @@ nonisolated enum PullRequestMergeBlockingReason: Equatable, Hashable {
   case mergeConflicts
   case changesRequested
   case checksFailed(Int)
-  case blocked
 }
 
 nonisolated struct PullRequestMergeReadiness: Equatable, Hashable {
-  let blockingReason: PullRequestMergeBlockingReason?
+  enum Assessment: Equatable, Hashable {
+    case mergeable
+    // The forge has not confirmed mergeability yet; "not yet", never a red block.
+    case checking
+    case blocked(PullRequestMergeBlockingReason)
+  }
+
+  let assessment: Assessment
 
   init(pullRequest: GithubPullRequest) {
     let mergeable = pullRequest.mergeable?.uppercased()
@@ -18,24 +24,34 @@ nonisolated struct PullRequestMergeReadiness: Equatable, Hashable {
     let breakdown = PullRequestCheckBreakdown(checks: checks)
 
     if mergeable == "CONFLICTING" || mergeStateStatus == "DIRTY" {
-      self.blockingReason = .mergeConflicts
+      self.assessment = .blocked(.mergeConflicts)
       return
     }
     if reviewDecision == "CHANGES_REQUESTED" {
-      self.blockingReason = .changesRequested
+      self.assessment = .blocked(.changesRequested)
       return
     }
     if breakdown.failed > 0 {
-      self.blockingReason = .checksFailed(breakdown.failed)
+      self.assessment = .blocked(.checksFailed(breakdown.failed))
       return
     }
 
     if mergeable == "MERGEABLE" {
-      self.blockingReason = nil
+      self.assessment = .mergeable
       return
     }
 
-    self.blockingReason = .blocked
+    self.assessment = .checking
+  }
+
+  /// Only a confirmed-mergeable pull request may be merged.
+  var canMergeNow: Bool {
+    assessment == .mergeable
+  }
+
+  var blockingReason: PullRequestMergeBlockingReason? {
+    guard case .blocked(let reason) = assessment else { return nil }
+    return reason
   }
 
   var isBlocking: Bool {
@@ -43,22 +59,22 @@ nonisolated struct PullRequestMergeReadiness: Equatable, Hashable {
   }
 
   var isConflicting: Bool {
-    blockingReason == .mergeConflicts
+    assessment == .blocked(.mergeConflicts)
   }
 
   var label: String {
-    switch blockingReason {
-    case .none:
+    switch assessment {
+    case .mergeable:
       return "Mergeable"
-    case .mergeConflicts:
+    case .checking:
+      return "Checking"
+    case .blocked(.mergeConflicts):
       return "Merge conflicts"
-    case .changesRequested:
+    case .blocked(.changesRequested):
       return "Changes requested"
-    case .checksFailed(let count):
+    case .blocked(.checksFailed(let count)):
       let checksLabel = count == 1 ? "check" : "checks"
       return "\(count) \(checksLabel) failed"
-    case .blocked:
-      return "Blocked"
     }
   }
 }

@@ -3,7 +3,7 @@ import Foundation
 nonisolated struct GithubPullRequest: Decodable, Equatable, Hashable {
   let number: Int
   let title: String
-  let state: String
+  let state: PullRequestState
   let additions: Int
   let deletions: Int
   let isDraft: Bool

@@ -2,7 +2,7 @@ import SwiftUI
 
 struct WorktreePullRequestDisplay {
   let pullRequest: GithubPullRequest?
-  let pullRequestState: String?
+  let pullRequestState: PullRequestState?
   let pullRequestBadgeStyle: (text: String, color: Color)?
 
   init(worktreeName: String, pullRequest: GithubPullRequest?) {
@@ -13,7 +13,7 @@ struct WorktreePullRequestDisplay {
         false
       }
     let displayPullRequest = matchesWorktree ? pullRequest : nil
-    let pullRequestState = displayPullRequest?.state.uppercased()
+    let pullRequestState = displayPullRequest?.state
     let pullRequestNumber = displayPullRequest?.number
     let isQueued = displayPullRequest.map { PullRequestMergeQueueStatus(pullRequest: $0) != nil } ?? false
     self.pullRequest = displayPullRequest

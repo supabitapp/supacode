@@ -156,7 +156,7 @@ struct RepositoriesFeatureSidebarTests {
     let pullRequest = GithubPullRequest(
       number: 7,
       title: "Live",
-      state: "OPEN",
+      state: .open,
       additions: 1,
       deletions: 0,
       isDraft: false,
