@@ -63,6 +63,7 @@ struct WorktreeDetailView: View {
       selectedRow: selectedRow,
       repositories: repositories
     )
+    let inspectorVocabulary = Self.inspectorVocabulary(repositories: repositories, selectedWorktree: selectedWorktree)
     // Read the manager's stored color here (tracked body evaluation, not the
     // deferred toolbar closure) so the toolbar scheme invalidates on change.
     let toolbarScheme: ColorScheme =
@@ -117,6 +118,7 @@ struct WorktreeDetailView: View {
         isCheckingPullRequest: isCheckingPullRequest,
         pullRequest: inspectorPullRequest,
         repositoriesStore: repositoriesStore,
+        vocabulary: inspectorVocabulary,
         terminalManager: terminalManager,
         fileOpenActions: state.installedOpenActions.filter(\.canOpenFiles),
         resolvedOpenAction: resolvedSelection,
@@ -154,6 +156,17 @@ struct WorktreeDetailView: View {
   }
 
   /// Whether a pull-request refresh is in flight for the selected worktree's repo.
+  private static func inspectorVocabulary(
+    repositories: RepositoriesFeature.State,
+    selectedWorktree: Worktree?
+  ) -> ForgeVocabulary {
+    guard
+      let selectedWorktree,
+      let repositoryID = repositories.repositoryID(containing: selectedWorktree.id)
+    else { return .github }
+    return repositories.forgeCapabilities(for: repositoryID).vocabulary
+  }
+
   private static func isCheckingPullRequest(
     selectedWorktree: Worktree?,
     selectedRow: SelectedWorktreeSlice?,

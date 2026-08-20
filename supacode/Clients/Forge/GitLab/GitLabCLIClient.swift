@@ -21,6 +21,9 @@ nonisolated enum GitLabCLIError: LocalizedError, Equatable {
 /// `GITLAB_HOST` in the user's login shell can never retarget a call.
 struct GitLabCLIClient: Sendable {
   var fetchMergeRequests: @Sendable (String, String, [String]) async throws -> [String: ForgePullRequest]
+  var fetchMergeRequestDetail: @Sendable (String, String, Int) async throws -> ForgePullRequestDetail?
+  var latestPipeline: @Sendable (String, String, String) async throws -> ForgeWorkflowRun?
+  var retryPipeline: @Sendable (String, String, Int) async throws -> Void
   var mergeMergeRequest: @Sendable (URL, String, String, Int, PullRequestMergeStrategy) async throws -> Void
   var closeMergeRequest: @Sendable (URL, String, String, Int) async throws -> Void
   var markMergeRequestReady: @Sendable (URL, String, String, Int) async throws -> Void
@@ -41,6 +44,9 @@ extension GitLabCLIClient: DependencyKey {
     )
     return GitLabCLIClient(
       fetchMergeRequests: fetchMergeRequestsFetcher(shell: shell, resolver: resolver),
+      fetchMergeRequestDetail: fetchMergeRequestDetailFetcher(shell: shell, resolver: resolver),
+      latestPipeline: latestPipelineFetcher(shell: shell, resolver: resolver),
+      retryPipeline: retryPipelineFetcher(shell: shell, resolver: resolver),
       mergeMergeRequest: mergeMergeRequestFetcher(shell: shell, resolver: resolver),
       closeMergeRequest: closeMergeRequestFetcher(shell: shell, resolver: resolver),
       markMergeRequestReady: markMergeRequestReadyFetcher(shell: shell, resolver: resolver),
@@ -59,6 +65,9 @@ extension GitLabCLIClient: DependencyKey {
 
   static let testValue = GitLabCLIClient(
     fetchMergeRequests: { _, _, _ in [:] },
+    fetchMergeRequestDetail: { _, _, _ in nil },
+    latestPipeline: { _, _, _ in nil },
+    retryPipeline: { _, _, _ in },
     mergeMergeRequest: { _, _, _, _, _ in },
     closeMergeRequest: { _, _, _, _ in },
     markMergeRequestReady: { _, _, _, _ in },
@@ -245,5 +254,110 @@ nonisolated private func runGlab(
       throw GitLabCLIError.commandFailed(message)
     }
     throw GitLabCLIError.commandFailed(error.localizedDescription)
+  }
+}
+
+nonisolated private func fetchMergeRequestDetailFetcher(
+  shell: ShellClient,
+  resolver: ForgeCLIExecutableResolver
+) -> @Sendable (String, String, Int) async throws -> ForgePullRequestDetail? {
+  { host, projectPath, number in
+    let encodedPath = GitLabAPI.encodedProjectPath(projectPath)
+    let output = try await runGlab(
+      shell: shell,
+      resolver: resolver,
+      arguments: ["api", "--hostname", host, "projects/\(encodedPath)/merge_requests/\(number)"],
+      repoRoot: nil
+    )
+    let decoder = GitLabAPI.makeDecoder()
+    let detail = try GithubCLIOutput.decode(GitLabMergeRequestDetail.self, from: output, decoder: decoder)
+    return detail.pullRequestDetail
+  }
+}
+
+nonisolated private func latestPipelineFetcher(
+  shell: ShellClient,
+  resolver: ForgeCLIExecutableResolver
+) -> @Sendable (String, String, String) async throws -> ForgeWorkflowRun? {
+  { host, projectPath, branch in
+    let encodedPath = GitLabAPI.encodedProjectPath(projectPath)
+    guard let encodedBranch = branch.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+      return nil
+    }
+    let output = try await runGlab(
+      shell: shell,
+      resolver: resolver,
+      arguments: [
+        "api", "--hostname", host,
+        "projects/\(encodedPath)/pipelines?ref=\(encodedBranch)&per_page=1&order_by=updated_at&sort=desc",
+      ],
+      repoRoot: nil
+    )
+    let decoder = GitLabAPI.makeDecoder()
+    guard
+      let pipelines = try GithubCLIOutput.decodeIfPresent([GitLabPipeline].self, from: output, decoder: decoder),
+      let pipeline = pipelines.first
+    else {
+      return nil
+    }
+    return pipeline.workflowRun
+  }
+}
+
+nonisolated private func retryPipelineFetcher(
+  shell: ShellClient,
+  resolver: ForgeCLIExecutableResolver
+) -> @Sendable (String, String, Int) async throws -> Void {
+  { host, projectPath, pipelineID in
+    let encodedPath = GitLabAPI.encodedProjectPath(projectPath)
+    _ = try await runGlab(
+      shell: shell,
+      resolver: resolver,
+      arguments: [
+        "api", "--hostname", host, "--method", "POST",
+        "projects/\(encodedPath)/pipelines/\(pipelineID)/retry",
+      ],
+      repoRoot: nil
+    )
+  }
+}
+
+/// GitLab pipeline list object mapped onto the shared workflow-run shape so
+/// the existing rerun flow works unchanged.
+nonisolated struct GitLabPipeline: Decodable, Equatable {
+  let id: Int
+  let status: String?
+  let ref: String?
+  let webUrl: String?
+  let createdAt: Date?
+  let updatedAt: Date?
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case status
+    case ref
+    case webUrl = "web_url"
+    case createdAt = "created_at"
+    case updatedAt = "updated_at"
+  }
+
+  var workflowRun: ForgeWorkflowRun {
+    let conclusion: String? =
+      switch status?.lowercased() {
+      case "success": "success"
+      case "failed": "failure"
+      case "canceled", "skipped": "cancelled"
+      default: nil
+      }
+    return ForgeWorkflowRun(
+      databaseId: id,
+      workflowName: "Pipeline",
+      name: "Pipeline",
+      displayTitle: ref ?? "Pipeline",
+      status: status ?? "unknown",
+      conclusion: conclusion,
+      createdAt: createdAt,
+      updatedAt: updatedAt
+    )
   }
 }

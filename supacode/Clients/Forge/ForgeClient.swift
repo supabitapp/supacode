@@ -7,10 +7,6 @@ import SupacodeSettingsShared
 nonisolated struct ForgeID: RawRepresentable, Hashable, Sendable, Codable {
   let rawValue: String
 
-  init(rawValue: String) {
-    self.rawValue = rawValue
-  }
-
   static let github = ForgeID(rawValue: "github")
 }
 
@@ -34,6 +30,36 @@ nonisolated struct ForgePullRequestDetail: Equatable, Sendable {
   let mergeStateStatus: String?
   let reviewDecision: String?
   let statusCheckRollup: ForgePullRequestStatusCheckRollup?
+  /// Forge-reported merge block outside the shared vocabulary, verbatim.
+  let forgeBlockedReason: String?
+}
+
+extension ForgePullRequest {
+  /// Detail-tier enrichment: replaces only the detail fields. `state`,
+  /// `mergedAt`, and identity always come from the summary tier.
+  nonisolated func applying(_ detail: ForgePullRequestDetail) -> ForgePullRequest {
+    ForgePullRequest(
+      number: number,
+      title: title,
+      state: state,
+      additions: additions,
+      deletions: deletions,
+      isDraft: isDraft,
+      reviewDecision: detail.reviewDecision,
+      mergeable: detail.mergeable,
+      mergeStateStatus: detail.mergeStateStatus,
+      updatedAt: updatedAt,
+      mergedAt: mergedAt,
+      url: url,
+      headRefName: headRefName,
+      baseRefName: baseRefName,
+      commitsCount: commitsCount,
+      authorLogin: authorLogin,
+      statusCheckRollup: detail.statusCheckRollup,
+      mergeQueueEntry: mergeQueueEntry,
+      forgeBlockedReason: detail.forgeBlockedReason
+    )
+  }
 }
 
 nonisolated enum ForgeClientError: LocalizedError, Equatable {

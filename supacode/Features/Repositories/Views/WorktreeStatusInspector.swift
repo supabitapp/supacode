@@ -10,6 +10,7 @@ struct WorktreeStatusInspectorContainer: View {
   let isCheckingPullRequest: Bool
   let pullRequest: ForgePullRequest?
   let repositoriesStore: StoreOf<RepositoriesFeature>
+  let vocabulary: ForgeVocabulary
   let terminalManager: WorktreeTerminalManager
   let fileOpenActions: [OpenWorktreeAction]
   let resolvedOpenAction: OpenWorktreeAction?
@@ -29,6 +30,7 @@ struct WorktreeStatusInspectorContainer: View {
           pullRequest: pullRequest,
           isFolder: isFolder,
           isCheckingPullRequest: isCheckingPullRequest,
+          vocabulary: vocabulary,
           onPullRequestAction: onPullRequestAction
         )
       case .files:
@@ -84,12 +86,17 @@ struct WorktreeGitInspectorView: View {
   let pullRequest: ForgePullRequest?
   let isFolder: Bool
   let isCheckingPullRequest: Bool
+  let vocabulary: ForgeVocabulary
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
 
   var body: some View {
     Group {
       if !isFolder, let pullRequest {
-        GitInspectorContent(pullRequest: pullRequest, onPullRequestAction: onPullRequestAction)
+        GitInspectorContent(
+          pullRequest: pullRequest,
+          vocabulary: vocabulary,
+          onPullRequestAction: onPullRequestAction
+        )
       } else {
         Color.clear
       }
@@ -98,7 +105,7 @@ struct WorktreeGitInspectorView: View {
     // under it for the native top blur; the empty/checking states reserve no bar.
     .safeAreaBar(edge: .top) {
       if !isFolder, let pullRequest {
-        GitInspectorHeader(pullRequest: pullRequest)
+        GitInspectorHeader(pullRequest: pullRequest, vocabulary: vocabulary)
       }
     }
     // Empty states as a background so they fill the whole pane (past the safe
@@ -107,7 +114,8 @@ struct WorktreeGitInspectorView: View {
       GitInspectorEmptyState(
         isFolder: isFolder,
         hasPullRequest: pullRequest != nil,
-        isCheckingPullRequest: isCheckingPullRequest
+        isCheckingPullRequest: isCheckingPullRequest,
+        vocabulary: vocabulary
       )
     }
   }
@@ -119,6 +127,7 @@ private struct GitInspectorEmptyState: View {
   let isFolder: Bool
   let hasPullRequest: Bool
   let isCheckingPullRequest: Bool
+  let vocabulary: ForgeVocabulary
 
   var body: some View {
     if isFolder {
@@ -136,9 +145,9 @@ private struct GitInspectorEmptyState: View {
         }
       } else {
         ContentUnavailableView(
-          "No Pull Request",
+          "No \(vocabulary.noun)",
           systemImage: "arrow.trianglehead.branch",
-          description: Text("This worktree has no open pull request.")
+          description: Text("This worktree has no open \(vocabulary.noun.lowercased()).")
         )
       }
     }
@@ -149,12 +158,13 @@ private struct GitInspectorEmptyState: View {
 /// in Browser affordance appears when the pull request has a URL.
 private struct GitInspectorHeader: View {
   let pullRequest: ForgePullRequest
+  let vocabulary: ForgeVocabulary
   @Environment(\.openURL) private var openURL
   @Environment(\.analyticsClient) private var analyticsClient
 
   var body: some View {
     HStack {
-      Text("Pull Request")
+      Text(vocabulary.noun)
         .appFont(.headline)
       Spacer()
       if let url = URL(string: pullRequest.url) {
@@ -175,6 +185,7 @@ private struct GitInspectorHeader: View {
 
 private struct GitInspectorContent: View {
   let pullRequest: ForgePullRequest
+  let vocabulary: ForgeVocabulary
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
 
   var body: some View {
@@ -186,7 +197,8 @@ private struct GitInspectorContent: View {
     let badge = PullRequestBadgeStyle.style(
       state: pullRequest.state,
       number: pullRequest.number,
-      isQueued: mergeQueueStatus != nil
+      isQueued: mergeQueueStatus != nil,
+      numberSigil: vocabulary.numberSigil
     )
 
     Form {

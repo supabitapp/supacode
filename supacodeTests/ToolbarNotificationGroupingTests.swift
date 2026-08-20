@@ -342,7 +342,9 @@ struct ToolbarNotificationGroupingTests {
     #expect(iconsByID[stale.id] == .branch)
   }
 
-  private func makePullRequest(state: PullRequestState, headRefName: String, isDraft: Bool = false) -> ForgePullRequest {
+  private func makePullRequest(
+    state: PullRequestState, headRefName: String, isDraft: Bool = false
+  ) -> ForgePullRequest {
     ForgePullRequest(
       number: 1,
       title: "PR",

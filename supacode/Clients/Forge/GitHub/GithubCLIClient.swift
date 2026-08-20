@@ -848,5 +848,3 @@ nonisolated private func runGh(
     throw GithubCLIError.commandFailed(error.localizedDescription)
   }
 }
-
-

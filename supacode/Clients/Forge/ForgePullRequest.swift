@@ -19,4 +19,7 @@ nonisolated struct ForgePullRequest: Decodable, Equatable, Hashable {
   let authorLogin: String?
   let statusCheckRollup: ForgePullRequestStatusCheckRollup?
   let mergeQueueEntry: ForgeMergeQueueEntry?
+  /// Forge-reported merge block outside the shared vocabulary (detail tier
+  /// only); rendered verbatim. Never set by the GitHub adapter.
+  var forgeBlockedReason: String?
 }

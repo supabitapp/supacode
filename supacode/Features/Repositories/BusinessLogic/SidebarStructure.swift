@@ -423,7 +423,7 @@ extension SidebarItemFeature.Action {
       return [.sidebarStructure, .selectedWorktreeSlice, .toolbarNotificationGroups]
     // `.toolbarNotificationGroups` because the notification header bakes the
     // row's resolved pull-request glyph into that cache.
-    case .pullRequestChanged:
+    case .pullRequestChanged, .pullRequestDetailApplied:
       return [.selectedWorktreeSlice, .toolbarNotificationGroups]
     case .diffStatsChanged, .pullRequestQueryStarted,
       .dragSessionChanged,
@@ -533,6 +533,14 @@ extension RepositoriesFeature.Action {
     // Caches the re-fetched PR into the row; the open / failed arms mutate no row.
     case .pullRequestOpenFetchLoaded:
       return [.sidebarStructure, .selectedWorktreeSlice]
+
+    // Only re-dispatches a per-row detail action, which declares its own.
+    case .worktreePullRequestDetailLoaded:
+      return []
+
+    // Palette items rebuild on demand; no row-derived cache reads the forge.
+    case .repositoryForgeResolved:
+      return []
 
     // Selection changes refresh both selection-derived caches.
     case .selectionChanged, .selectWorktree, .selectArchivedWorktrees,

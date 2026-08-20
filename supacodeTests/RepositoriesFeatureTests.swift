@@ -7035,6 +7035,9 @@ struct RepositoriesFeatureTests {
       $0.inFlightPullRequestRefreshRepositoryIDs = [repository.id]
       $0.inFlightPullRequestBranchSnapshotsByRepositoryID[repository.id] = [:]
     }
+    await store.receive(\.repositoryForgeResolved) {
+      $0.resolvedForgeByRepositoryID[repository.id] = .github
+    }
     await store.receive(\.repositoryPullRequestRefreshCompleted) {
       $0.inFlightPullRequestRefreshRepositoryIDs = []
       $0.inFlightPullRequestBranchSnapshotsByRepositoryID = [:]
@@ -7382,6 +7385,9 @@ struct RepositoriesFeatureTests {
       $0.inFlightPullRequestRefreshRepositoryIDs = [repository.id]
       $0.inFlightPullRequestBranchSnapshotsByRepositoryID[repository.id] = [:]
     }
+    await store.receive(\.repositoryForgeResolved) {
+      $0.resolvedForgeByRepositoryID[repository.id] = .github
+    }
     await store.receive(\.repositoryPullRequestRefreshCompleted) {
       $0.inFlightPullRequestRefreshRepositoryIDs = []
       $0.inFlightPullRequestBranchSnapshotsByRepositoryID = [:]
@@ -7500,6 +7506,9 @@ struct RepositoriesFeatureTests {
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.pullRequestBranchAtQueryTime = featureWorktree.name
     }
+    await store.receive(\.repositoryForgeResolved) {
+      $0.resolvedForgeByRepositoryID[repository.id] = .github
+    }
     await store.receive(\.repositoryPullRequestRefreshCompleted) {
       $0.inFlightPullRequestRefreshRepositoryIDs = []
       $0.inFlightPullRequestBranchSnapshotsByRepositoryID = [:]
@@ -7611,6 +7620,9 @@ struct RepositoriesFeatureTests {
     }
     await store.receive(\.sidebarItems) {
       $0.sidebarItems[id: featureWorktree.id]?.pullRequestBranchAtQueryTime = featureWorktree.name
+    }
+    await store.receive(\.repositoryForgeResolved) {
+      $0.resolvedForgeByRepositoryID[repository.id] = .github
     }
     await store.receive(\.repositoryPullRequestsLoaded)
     // Main carries `pullRequest == nil` and the completion result is `nil`; the row reducer

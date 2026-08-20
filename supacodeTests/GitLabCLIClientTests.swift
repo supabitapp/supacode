@@ -164,3 +164,87 @@ struct GitLabCLIClientTests {
     #expect(GitLabConfigHosts.parse(configYAML: nested) == ["gitlab.com"])
   }
 }
+
+struct GitLabMergeStatusMappingTests {
+  private func readiness(
+    detailedMergeStatus: String?,
+    hasConflicts: Bool? = nil,
+    pipelineStatus: String? = nil
+  ) -> PullRequestMergeReadiness {
+    let detail = GitLabMergeRequestDetail(
+      iid: 12,
+      detailedMergeStatus: detailedMergeStatus,
+      hasConflicts: hasConflicts,
+      headPipeline: pipelineStatus.map {
+        GitLabMergeRequestDetail.Pipeline(id: 7, status: $0, webUrl: "https://gitlab.com/p/1")
+      }
+    )
+    let summary = ForgePullRequest(
+      number: 12,
+      title: "MR",
+      state: .open,
+      additions: nil,
+      deletions: nil,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: nil,
+      mergedAt: nil,
+      url: "https://gitlab.com/group/proj/-/merge_requests/12",
+      headRefName: "feature",
+      baseRefName: "main",
+      commitsCount: nil,
+      authorLogin: "dev",
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
+    )
+    return PullRequestMergeReadiness(pullRequest: summary.applying(detail.pullRequestDetail))
+  }
+
+  @Test func mergeableResolvesToMergeable() {
+    #expect(readiness(detailedMergeStatus: "mergeable").canMergeNow)
+  }
+
+  @Test func conflictResolvesToMergeConflicts() {
+    #expect(readiness(detailedMergeStatus: "conflict").assessment == .blocked(.mergeConflicts))
+    let conflicted = readiness(detailedMergeStatus: "cannot_be_merged", hasConflicts: true)
+    #expect(conflicted.assessment == .blocked(.mergeConflicts))
+  }
+
+  @Test func requestedChangesResolvesToChangesRequested() {
+    #expect(readiness(detailedMergeStatus: "requested_changes").assessment == .blocked(.changesRequested))
+  }
+
+  @Test func blockingStatusesCarryForgeProse() {
+    #expect(readiness(detailedMergeStatus: "not_approved").assessment == .blocked(.other("Not approved")))
+    #expect(readiness(detailedMergeStatus: "ci_must_pass").assessment == .blocked(.other("Pipeline must succeed")))
+    #expect(readiness(detailedMergeStatus: "not_approved").label == "Not approved")
+  }
+
+  @Test func pendingAndUnknownStatusesResolveToChecking() {
+    // In-flight statuses must read as pending, never as a red block.
+    for status in ["checking", "unchecked", "ci_still_running", "approvals_syncing", "some_future_status"] {
+      #expect(readiness(detailedMergeStatus: status).assessment == .checking, "\(status)")
+    }
+  }
+
+  @Test func failedPipelineBlocksThroughTheSharedChecksLadder() {
+    let readiness = readiness(detailedMergeStatus: "ci_must_pass", pipelineStatus: "failed")
+    #expect(readiness.assessment == .blocked(.checksFailed(1)))
+  }
+
+  @Test func pipelineMapsToASingleRollupCheck() {
+    let detail = GitLabMergeRequestDetail(
+      iid: 12,
+      detailedMergeStatus: "mergeable",
+      hasConflicts: false,
+      headPipeline: GitLabMergeRequestDetail.Pipeline(id: 7, status: "running", webUrl: "https://gitlab.com/p/1")
+    ).pullRequestDetail
+    let checks = detail.statusCheckRollup?.checks ?? []
+    #expect(checks.count == 1)
+    #expect(checks.first?.checkState == .inProgress)
+    #expect(checks.first?.displayName == "Pipeline")
+    #expect(detail.forgeBlockedReason == nil)
+  }
+}

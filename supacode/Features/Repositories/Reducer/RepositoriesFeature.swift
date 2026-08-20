@@ -206,6 +206,9 @@ struct RepositoriesFeature {
     var githubIntegrationAvailability: GithubIntegrationAvailability = .unknown
     var pendingPullRequestRefreshByRepositoryID: [Repository.ID: PendingPullRequestRefresh] = [:]
     var inFlightPullRequestRefreshRepositoryIDs: Set<Repository.ID> = []
+    /// Forge serving each repository, cached from the last refresh resolution;
+    /// drives forge vocabulary and capability gating in synchronous UI builds.
+    var resolvedForgeByRepositoryID: [Repository.ID: ForgeID] = [:]
     /// Branch snapshot per worktree at query-start time; consumed when the result lands
     /// so `pullRequestChanged.branchAtQueryTime` matches the branch the watermark armed.
     var inFlightPullRequestBranchSnapshotsByRepositoryID: [Repository.ID: [Worktree.ID: String]] = [:]
@@ -542,6 +545,8 @@ struct RepositoriesFeature {
     case refreshGithubIntegrationAvailability
     case githubIntegrationAvailabilityUpdated(Bool)
     case repositoryPullRequestRefreshCompleted(Repository.ID)
+    case worktreePullRequestDetailLoaded(Worktree.ID, pullRequestNumber: Int, ForgePullRequestDetail)
+    case repositoryForgeResolved(Repository.ID, ForgeID)
     case repositoryPullRequestsLoaded(
       repositoryID: Repository.ID,
       pullRequestsByWorktreeID: [Worktree.ID: ForgePullRequest?]
@@ -2514,6 +2519,21 @@ struct RepositoriesFeature {
           )
         )
 
+      case .repositoryForgeResolved(let repositoryID, let forgeID):
+        guard state.resolvedForgeByRepositoryID[repositoryID] != forgeID else { return .none }
+        state.resolvedForgeByRepositoryID[repositoryID] = forgeID
+        return .none
+
+      case .worktreePullRequestDetailLoaded(let worktreeID, let pullRequestNumber, let detail):
+        return .send(
+          .sidebarItems(
+            .element(
+              id: worktreeID,
+              action: .pullRequestDetailApplied(pullRequestNumber: pullRequestNumber, detail)
+            )
+          )
+        )
+
       case .repositoryPullRequestRefreshCompleted(let repositoryID):
         state.inFlightPullRequestRefreshRepositoryIDs.remove(repositoryID)
         state.inFlightPullRequestBranchSnapshotsByRepositoryID.removeValue(forKey: repositoryID)
@@ -2616,8 +2636,41 @@ struct RepositoriesFeature {
             }
           }
         }
+        // Detail tier: enrich only the selected worktree's proposal, riding the
+        // summary refresh that already carries the selection cooldown.
+        var detailEffects: [Effect<Action>] = []
+        if let selectedWorktreeID = state.selectedWorktreeID,
+          dispatchIDs.contains(selectedWorktreeID),
+          let selectedPullRequest = pullRequestsByWorktreeID[selectedWorktreeID] ?? nil,
+          selectedPullRequest.state == .open
+        {
+          let forgeRegistry = forgeRegistry
+          let repositoryRootURL = repository.rootURL
+          let repositoryHost = repository.host
+          let number = selectedPullRequest.number
+          detailEffects.append(
+            .run { send in
+              guard
+                let forgeID = await forgeRegistry.resolveForgeID(repositoryRootURL, repositoryHost),
+                let capabilities = forgeRegistry.capabilities(forgeID),
+                capabilities.providesDetailTier,
+                let forge = forgeRegistry.client(forgeID),
+                let project = await forge.resolveProject(repositoryRootURL),
+                let detail = try? await forge.fetchDetail(project, number)
+              else { return }
+              await send(
+                .worktreePullRequestDetailLoaded(
+                  selectedWorktreeID,
+                  pullRequestNumber: number,
+                  detail
+                )
+              )
+            }
+          )
+        }
         let effects: [Effect<Action>] =
           rowEffects
+          + detailEffects
           + archiveWorktreeIDs.map { .send(.archiveWorktreeConfirmed($0, repositoryID)) }
           + deleteWorktreeIDs.map { .send(.deleteSidebarItemConfirmed($0, repositoryID)) }
         guard !effects.isEmpty else {
@@ -4502,7 +4555,8 @@ struct RepositoriesFeature {
 
       case .refreshGithubIntegrationAvailability, .githubIntegrationAvailabilityUpdated,
         .repositoryPullRequestRefreshCompleted, .worktreeBranchNameLoaded, .worktreeLineChangesLoaded,
-        .repositoryPullRequestsLoaded, .pullRequestAction, .setGithubIntegrationEnabled, .setMergedWorktreeAction,
+        .repositoryPullRequestsLoaded, .repositoryForgeResolved, .worktreePullRequestDetailLoaded,
+        .pullRequestAction, .setGithubIntegrationEnabled, .setMergedWorktreeAction,
         .openSelectedWorktreePullRequest, .pullRequestOpenFetchLoaded, .pullRequestOpenFetchFailed,
         .setAutoDeleteArchivedWorktreesAfterDays, .autoDeleteExpiredArchivedWorktrees, .setMoveNotifiedWorktreeToTop,
         .setInstalledOpenActions, .openActionSettingsChanged, .resolveOpenActions, .openActionsResolved:
@@ -4751,9 +4805,13 @@ struct RepositoriesFeature {
     return .run { send in
       guard
         let forgeID = await forgeRegistry.resolveForgeID(repositoryRootURL, repositoryHost),
-        let forge = forgeRegistry.client(forgeID),
-        let project = await forge.resolveProject(repositoryRootURL)
+        let forge = forgeRegistry.client(forgeID)
       else {
+        await send(.repositoryPullRequestRefreshCompleted(repositoryID))
+        return
+      }
+      await send(.repositoryForgeResolved(repositoryID, forgeID))
+      guard let project = await forge.resolveProject(repositoryRootURL) else {
         await send(.repositoryPullRequestRefreshCompleted(repositoryID))
         return
       }
@@ -5852,6 +5910,10 @@ extension RepositoriesFeature.State {
 
   func isMainWorktree(_ worktree: Worktree) -> Bool {
     worktree.isMainWorktree
+  }
+
+  func forgeCapabilities(for repositoryID: Repository.ID) -> ForgeCapabilities {
+    ForgeCapabilities.forID(resolvedForgeByRepositoryID[repositoryID] ?? .github)
   }
 
   func isWorktreeMerged(_ worktree: Worktree) -> Bool {

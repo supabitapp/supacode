@@ -318,6 +318,67 @@ struct SidebarItemFeatureTests {
 
   // MARK: - Helpers.
 
+  @Test func pullRequestDetailAppliedEnrichesOnlyDetailFields() async {
+    var state = makeState(name: "feature")
+    let summary = ForgePullRequest(
+      number: 12,
+      title: "MR",
+      state: .open,
+      additions: nil,
+      deletions: nil,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: nil,
+      mergedAt: nil,
+      url: "https://gitlab.com/group/proj/-/merge_requests/12",
+      headRefName: "feature",
+      baseRefName: "main",
+      commitsCount: nil,
+      authorLogin: "dev",
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
+    )
+    state.pullRequest = summary
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    let detail = ForgePullRequestDetail(
+      mergeable: "MERGEABLE",
+      mergeStateStatus: nil,
+      reviewDecision: nil,
+      statusCheckRollup: nil,
+      forgeBlockedReason: nil
+    )
+
+    await store.send(.pullRequestDetailApplied(pullRequestNumber: 12, detail)) {
+      $0.pullRequest = summary.applying(detail)
+    }
+    // The summary tier stays the sole writer of state and merge timestamps.
+    #expect(store.state.pullRequest?.state == .open)
+    #expect(store.state.pullRequest?.mergedAt == nil)
+    #expect(store.state.pullRequest?.mergeable == "MERGEABLE")
+    // A detail result for a different proposal is dropped.
+    await store.send(.pullRequestDetailApplied(pullRequestNumber: 99, detail))
+    // Detail never touches the branch watermark.
+    #expect(store.state.pullRequestBranchAtQueryTime == nil)
+  }
+
+  @Test func pullRequestDetailAppliedNoopsWithoutASummaryProposal() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    let detail = ForgePullRequestDetail(
+      mergeable: "MERGEABLE",
+      mergeStateStatus: nil,
+      reviewDecision: nil,
+      statusCheckRollup: nil,
+      forgeBlockedReason: nil
+    )
+    await store.send(.pullRequestDetailApplied(pullRequestNumber: 12, detail))
+  }
+
   private func makeState(name: String) -> SidebarItemFeature.State {
     SidebarItemFeature.State(
       id: SidebarItemID("/tmp/repo/wt-\(name)"),

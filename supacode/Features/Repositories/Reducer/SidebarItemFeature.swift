@@ -142,6 +142,7 @@ struct SidebarItemFeature {
     case diffStatsChanged(added: Int?, removed: Int?)
     case pullRequestQueryStarted(branch: String)
     case pullRequestChanged(ForgePullRequest?, branchAtQueryTime: String)
+    case pullRequestDetailApplied(pullRequestNumber: Int, ForgePullRequestDetail)
     case agentSnapshotChanged(AgentPresenceFeature.RowSnapshot)
     case terminalProjectionChanged(WorktreeRowProjection)
     case dragSessionChanged(isDragging: Bool)
@@ -179,6 +180,18 @@ struct SidebarItemFeature {
         }
         state.pullRequest = pullRequest
         state.pullRequestBranchAtQueryTime = nil
+        return .none
+
+      case .pullRequestDetailApplied(let pullRequestNumber, let detail):
+        // Detail enrichment never arms or clears the branch watermark, and its
+        // payload type carries no state or merge timestamp, so it can never
+        // influence the merged-worktree transition.
+        guard let pullRequest = state.pullRequest, pullRequest.number == pullRequestNumber else {
+          return .none
+        }
+        let enriched = pullRequest.applying(detail)
+        guard state.pullRequest != enriched else { return .none }
+        state.pullRequest = enriched
         return .none
 
       case .agentSnapshotChanged(let snapshot):

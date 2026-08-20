@@ -37,6 +37,9 @@ nonisolated struct ForgeVocabulary: Equatable, Hashable, Sendable {
 /// must name a live UI consumer; thrown `.unsupported` is only the backstop.
 nonisolated struct ForgeCapabilities: Equatable, Hashable, Sendable {
   let mergeStrategies: [PullRequestMergeStrategy]
+  /// Whether the summary tier is thin and a per-selection detail fetch adds
+  /// data. False for forges whose summaries already carry everything.
+  let providesDetailTier: Bool
   let canMarkReady: Bool
   let canRerunChecks: Bool
   let canCopyCIFailureLogs: Bool
@@ -44,6 +47,7 @@ nonisolated struct ForgeCapabilities: Equatable, Hashable, Sendable {
 
   static let github = ForgeCapabilities(
     mergeStrategies: [.merge, .squash, .rebase],
+    providesDetailTier: false,
     canMarkReady: true,
     canRerunChecks: true,
     canCopyCIFailureLogs: true,
@@ -51,12 +55,22 @@ nonisolated struct ForgeCapabilities: Equatable, Hashable, Sendable {
   )
 
   // GitLab's merge method is a project setting; only squash is a per-merge
-  // choice. CI affordances need the detail tier's pipeline data.
+  // choice. Aggregate CI failure logs have no glab equivalent.
   static let gitlab = ForgeCapabilities(
     mergeStrategies: [.merge, .squash],
+    providesDetailTier: true,
     canMarkReady: true,
-    canRerunChecks: false,
+    canRerunChecks: true,
     canCopyCIFailureLogs: false,
     vocabulary: .gitlab
   )
+}
+
+extension ForgeCapabilities {
+  static func forID(_ forgeID: ForgeID) -> ForgeCapabilities {
+    switch forgeID {
+    case .gitlab: .gitlab
+    default: .github
+    }
+  }
 }

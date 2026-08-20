@@ -20,8 +20,9 @@ extension ForgeClient {
         @Dependency(GitLabCLIClient.self) var gitlabCLI
         return try await gitlabCLI.fetchMergeRequests(project.host, project.path, branches)
       },
-      fetchDetail: { _, _ in
-        nil
+      fetchDetail: { project, number in
+        @Dependency(GitLabCLIClient.self) var gitlabCLI
+        return try await gitlabCLI.fetchMergeRequestDetail(project.host, project.path, number)
       },
       mergePullRequest: { worktreeRoot, project, number, strategy in
         @Dependency(GitLabCLIClient.self) var gitlabCLI
@@ -44,11 +45,21 @@ extension ForgeClient {
         }
         try await gitlabCLI.markMergeRequestReady(worktreeRoot, project.host, project.path, number)
       },
-      latestRun: { _, _ in
-        throw ForgeClientError.unsupported(operation: "workflow runs")
+      latestRun: { worktreeRoot, branch in
+        @Dependency(GitClientDependency.self) var gitClient
+        @Dependency(GitLabCLIClient.self) var gitlabCLI
+        guard let remote = await gitClient.gitRemote(worktreeRoot) else { return nil }
+        let path = remote.pathComponents.joined(separator: "/")
+        return try await gitlabCLI.latestPipeline(remote.host, path, branch)
       },
-      rerunFailedJobs: { _, _ in
-        throw ForgeClientError.unsupported(operation: "re-running failed jobs")
+      rerunFailedJobs: { worktreeRoot, pipelineID in
+        @Dependency(GitClientDependency.self) var gitClient
+        @Dependency(GitLabCLIClient.self) var gitlabCLI
+        guard let remote = await gitClient.gitRemote(worktreeRoot) else {
+          throw GitLabCLIError.commandFailed("Could not resolve the GitLab project for this repository.")
+        }
+        let path = remote.pathComponents.joined(separator: "/")
+        try await gitlabCLI.retryPipeline(remote.host, path, pipelineID)
       },
       failedRunLogs: { _, _ in
         throw ForgeClientError.unsupported(operation: "CI failure logs")

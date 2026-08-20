@@ -53,7 +53,6 @@ final class GithubSettingsViewModel {
   }
 }
 
-
 @MainActor @Observable
 final class GitLabSettingsViewModel {
   enum State: Equatable {

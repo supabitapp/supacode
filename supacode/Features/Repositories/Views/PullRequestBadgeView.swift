@@ -6,12 +6,17 @@ enum PullRequestBadgeStyle {
   static let openColor = Color.green
   static let queuedColor = Color.brown
 
-  static func style(state: PullRequestState?, number: Int?, isQueued: Bool = false) -> (text: String, color: Color)? {
+  static func style(
+    state: PullRequestState?,
+    number: Int?,
+    isQueued: Bool = false,
+    numberSigil: String = "#"
+  ) -> (text: String, color: Color)? {
     switch state {
     case .merged:
-      return (text: number.map { "#\($0)" } ?? "MERGED", color: mergedColor)
+      return (text: number.map { "\(numberSigil)\($0)" } ?? "MERGED", color: mergedColor)
     case .open:
-      return (text: number.map { "#\($0)" } ?? "OPEN", color: isQueued ? queuedColor : openColor)
+      return (text: number.map { "\(numberSigil)\($0)" } ?? "OPEN", color: isQueued ? queuedColor : openColor)
     case .closed, .unknown, .none:
       return nil
     }

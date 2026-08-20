@@ -4,6 +4,9 @@ nonisolated enum PullRequestMergeBlockingReason: Equatable, Hashable {
   case mergeConflicts
   case changesRequested
   case checksFailed(Int)
+  /// Forge-reported block outside the shared vocabulary, carrying the forge's
+  /// own prose (e.g. GitLab's "Not approved").
+  case other(String)
 }
 
 nonisolated struct PullRequestMergeReadiness: Equatable, Hashable {
@@ -33,6 +36,10 @@ nonisolated struct PullRequestMergeReadiness: Equatable, Hashable {
     }
     if breakdown.failed > 0 {
       self.assessment = .blocked(.checksFailed(breakdown.failed))
+      return
+    }
+    if let forgeBlockedReason = pullRequest.forgeBlockedReason {
+      self.assessment = .blocked(.other(forgeBlockedReason))
       return
     }
 
@@ -75,6 +82,8 @@ nonisolated struct PullRequestMergeReadiness: Equatable, Hashable {
     case .blocked(.checksFailed(let count)):
       let checksLabel = count == 1 ? "check" : "checks"
       return "\(count) \(checksLabel) failed"
+    case .blocked(.other(let reason)):
+      return reason
     }
   }
 }

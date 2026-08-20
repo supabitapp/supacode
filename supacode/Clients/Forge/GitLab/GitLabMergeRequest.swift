@@ -133,3 +133,114 @@ nonisolated enum GitLabConfigHosts {
     return URL(fileURLWithPath: home).appending(path: ".config/glab-cli/config.yml")
   }
 }
+
+/// Single merge request served by `glab mr view -F json`; only the detail-tier
+/// fields the app consumes.
+nonisolated struct GitLabMergeRequestDetail: Decodable, Equatable {
+  let iid: Int
+  let detailedMergeStatus: String?
+  let hasConflicts: Bool?
+  let headPipeline: Pipeline?
+
+  nonisolated struct Pipeline: Decodable, Equatable {
+    let id: Int
+    let status: String?
+    let webUrl: String?
+
+    private enum CodingKeys: String, CodingKey {
+      case id
+      case status
+      case webUrl = "web_url"
+    }
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case iid
+    case detailedMergeStatus = "detailed_merge_status"
+    case hasConflicts = "has_conflicts"
+    case headPipeline = "head_pipeline"
+  }
+
+  var pullRequestDetail: ForgePullRequestDetail {
+    GitLabMergeStatusMapping.pullRequestDetail(for: self)
+  }
+}
+
+/// Adapter-owned table over GitLab's `detailed_merge_status` vocabulary.
+/// Unmapped and in-flight values degrade to a non-blocking pending state,
+/// never to blocked.
+nonisolated enum GitLabMergeStatusMapping {
+  static func pullRequestDetail(for detail: GitLabMergeRequestDetail) -> ForgePullRequestDetail {
+    let status = detail.detailedMergeStatus?.lowercased()
+    var mergeable: String?
+    var reviewDecision: String?
+    var blockedReason: String?
+    switch status {
+    case "mergeable":
+      mergeable = "MERGEABLE"
+    case "conflict":
+      mergeable = "CONFLICTING"
+    case "requested_changes":
+      reviewDecision = "CHANGES_REQUESTED"
+    default:
+      if detail.hasConflicts == true {
+        mergeable = "CONFLICTING"
+      } else {
+        blockedReason = status.flatMap(Self.blockedProse)
+      }
+    }
+    return ForgePullRequestDetail(
+      mergeable: mergeable,
+      mergeStateStatus: nil,
+      reviewDecision: reviewDecision,
+      statusCheckRollup: Self.rollup(for: detail.headPipeline),
+      forgeBlockedReason: blockedReason
+    )
+  }
+
+  /// Blocking statuses rendered with their own prose. Pending-style statuses
+  /// (checking, unchecked, ci_still_running, approvals_syncing, ...) are
+  /// deliberately absent so they fall through to the checking assessment.
+  static func blockedProse(_ status: String) -> String? {
+    switch status {
+    case "not_approved": "Not approved"
+    case "ci_must_pass": "Pipeline must succeed"
+    case "discussions_not_resolved": "Unresolved discussions"
+    case "draft_status": "Draft"
+    case "need_rebase": "Needs rebase"
+    case "blocked_status": "Blocked by another merge request"
+    case "policies_denied": "Denied by policy"
+    case "jira_association_missing": "Missing Jira association"
+    case "commits_status": "Nothing to merge"
+    case "external_status_checks": "External status checks must pass"
+    case "locked_paths", "locked_lfs_files": "Locked files"
+    default: nil
+    }
+  }
+
+  private static func rollup(for pipeline: GitLabMergeRequestDetail.Pipeline?) -> ForgePullRequestStatusCheckRollup? {
+    guard let pipeline else { return nil }
+    let status: String
+    var conclusion: String?
+    switch pipeline.status?.lowercased() {
+    case "success":
+      status = "COMPLETED"
+      conclusion = "SUCCESS"
+    case "failed":
+      status = "COMPLETED"
+      conclusion = "FAILURE"
+    case "canceled", "skipped":
+      status = "COMPLETED"
+      conclusion = "SKIPPED"
+    default:
+      status = "IN_PROGRESS"
+    }
+    let check = ForgePullRequestStatusCheck(
+      name: "Pipeline",
+      detailsUrl: pipeline.webUrl,
+      status: status,
+      conclusion: conclusion
+    )
+    return ForgePullRequestStatusCheckRollup(checks: [check])
+  }
+}
