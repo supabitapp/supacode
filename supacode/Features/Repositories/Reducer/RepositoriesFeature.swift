@@ -33,22 +33,6 @@ private nonisolated let githubIntegrationRecoveryInterval: Duration = .seconds(1
 private nonisolated let toastAutoDismissDelay: Duration = .milliseconds(2500)
 private nonisolated let delayedPullRequestRefreshDelay: Duration = .seconds(2)
 
-// Resolve `(host, owner, repo)` for a repository root. `gh repo
-// view` honours the user's default-repo resolution (fork →
-// upstream), so it wins when available. The git remote parser is
-// the fallback for when `gh` is unavailable or unauthenticated.
-@Sendable
-private func resolveRemoteInfo(
-  repositoryRootURL: URL,
-  githubCLI: GithubCLIClient,
-  gitClient: GitClientDependency
-) async -> GithubRemoteInfo? {
-  if let info = await githubCLI.resolveRemoteInfo(repositoryRootURL) {
-    return info
-  }
-  return await gitClient.remoteInfo(repositoryRootURL)
-}
-
 /// Injected so the open paths stay testable without launching a real browser.
 struct URLOpenerClient: Sendable {
   var open: @Sendable (URL) -> Void
@@ -674,7 +658,7 @@ struct RepositoriesFeature {
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
   @Dependency(GitClientDependency.self) private var gitClient
-  @Dependency(GithubCLIClient.self) private var githubCLI
+  @Dependency(ForgeClient.self) private var forge
   @Dependency(GithubIntegrationClient.self) private var githubIntegration
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
   @Dependency(ShellClient.self) private var shellClient
@@ -2669,31 +2653,19 @@ struct RepositoriesFeature {
         }
         let repositoryRootURL = repository.rootURL
         let branch = worktree.name
-        let githubCLI = githubCLI
-        let gitClient = gitClient
+        let forge = forge
         return .merge(
           .send(.showToast(.inProgress("Checking for pull request…"))),
           .run { send in
-            guard
-              let remoteInfo = await resolveRemoteInfo(
-                repositoryRootURL: repositoryRootURL,
-                githubCLI: githubCLI,
-                gitClient: gitClient
-              )
-            else {
+            guard let project = await forge.resolveProject(repositoryRootURL) else {
               repositoriesLogger.error(
-                "Open-PR fetch: no GitHub remote for \(repositoryRootURL.path(percentEncoded: false))."
+                "Open-PR fetch: no forge remote for \(repositoryRootURL.path(percentEncoded: false))."
               )
               await send(.pullRequestOpenFetchFailed(worktreeID: worktreeID, hasRemote: false))
               return
             }
             do {
-              let prsByBranch = try await githubCLI.batchPullRequests(
-                remoteInfo.host,
-                remoteInfo.owner,
-                remoteInfo.repo,
-                [branch]
-              )
+              let prsByBranch = try await forge.fetchSummaries(project, [branch])
               await send(
                 .pullRequestOpenFetchLoaded(
                   worktreeID: worktreeID,
@@ -2812,8 +2784,7 @@ struct RepositoriesFeature {
           }
 
         case .markReadyForReview:
-          let githubCLI = githubCLI
-          let gitClient = gitClient
+          let forge = forge
           let githubIntegration = githubIntegration
           return .run { send in
             guard await githubIntegration.isAvailable() else {
@@ -2825,14 +2796,10 @@ struct RepositoriesFeature {
               )
               return
             }
-            let remote = await resolveRemoteInfo(
-              repositoryRootURL: repoRoot,
-              githubCLI: githubCLI,
-              gitClient: gitClient
-            )
+            let project = await forge.resolveProject(repoRoot)
             await send(.showToast(.inProgress("Marking PR ready…")))
             do {
-              try await githubCLI.markPullRequestReady(worktreeRoot, remote, pullRequest.number)
+              try await forge.markPullRequestReady(worktreeRoot, project, pullRequest.number)
               await send(.showToast(.success("Pull request marked ready")))
               await send(.delayedPullRequestRefresh(worktreeID))
             } catch {
@@ -2847,8 +2814,7 @@ struct RepositoriesFeature {
           }
 
         case .merge:
-          let githubCLI = githubCLI
-          let gitClient = gitClient
+          let forge = forge
           let githubIntegration = githubIntegration
           return .run { send in
             guard await githubIntegration.isAvailable() else {
@@ -2864,14 +2830,10 @@ struct RepositoriesFeature {
             @Shared(.settingsFile) var settingsFile
             let strategy =
               repositorySettings.pullRequestMergeStrategy ?? settingsFile.global.pullRequestMergeStrategy
-            let remote = await resolveRemoteInfo(
-              repositoryRootURL: repoRoot,
-              githubCLI: githubCLI,
-              gitClient: gitClient
-            )
+            let project = await forge.resolveProject(repoRoot)
             await send(.showToast(.inProgress("Merging pull request…")))
             do {
-              try await githubCLI.mergePullRequest(worktreeRoot, remote, pullRequest.number, strategy)
+              try await forge.mergePullRequest(worktreeRoot, project, pullRequest.number, strategy)
               await send(.showToast(.success("Pull request merged")))
               await send(.worktreeInfoEvent(pullRequestRefresh))
               await send(.delayedPullRequestRefresh(worktreeID))
@@ -2887,8 +2849,7 @@ struct RepositoriesFeature {
           }
 
         case .close:
-          let githubCLI = githubCLI
-          let gitClient = gitClient
+          let forge = forge
           let githubIntegration = githubIntegration
           return .run { send in
             guard await githubIntegration.isAvailable() else {
@@ -2900,14 +2861,10 @@ struct RepositoriesFeature {
               )
               return
             }
-            let remote = await resolveRemoteInfo(
-              repositoryRootURL: repoRoot,
-              githubCLI: githubCLI,
-              gitClient: gitClient
-            )
+            let project = await forge.resolveProject(repoRoot)
             await send(.showToast(.inProgress("Closing pull request…")))
             do {
-              try await githubCLI.closePullRequest(worktreeRoot, remote, pullRequest.number)
+              try await forge.closePullRequest(worktreeRoot, project, pullRequest.number)
               await send(.showToast(.success("Pull request closed")))
               await send(.worktreeInfoEvent(pullRequestRefresh))
               await send(.delayedPullRequestRefresh(worktreeID))
@@ -2923,7 +2880,7 @@ struct RepositoriesFeature {
           }
 
         case .copyCiFailureLogs:
-          let githubCLI = githubCLI
+          let forge = forge
           let githubIntegration = githubIntegration
           return .run { send in
             guard await githubIntegration.isAvailable() else {
@@ -2946,7 +2903,7 @@ struct RepositoriesFeature {
             }
             await send(.showToast(.inProgress("Fetching CI logs…")))
             do {
-              guard let run = try await githubCLI.latestRun(worktreeRoot, branchName) else {
+              guard let run = try await forge.latestRun(worktreeRoot, branchName) else {
                 await send(.dismissToast)
                 await send(
                   .presentAlert(
@@ -2966,10 +2923,10 @@ struct RepositoriesFeature {
                 )
                 return
               }
-              let failedLogs = try await githubCLI.failedRunLogs(worktreeRoot, run.databaseId)
+              let failedLogs = try await forge.failedRunLogs(worktreeRoot, run.databaseId)
               let logs =
                 if failedLogs.isEmpty {
-                  try await githubCLI.runLogs(worktreeRoot, run.databaseId)
+                  try await forge.runLogs(worktreeRoot, run.databaseId)
                 } else {
                   failedLogs
                 }
@@ -3000,7 +2957,7 @@ struct RepositoriesFeature {
           }
 
         case .rerunFailedJobs:
-          let githubCLI = githubCLI
+          let forge = forge
           let githubIntegration = githubIntegration
           return .run { send in
             guard await githubIntegration.isAvailable() else {
@@ -3023,7 +2980,7 @@ struct RepositoriesFeature {
             }
             await send(.showToast(.inProgress("Re-running failed jobs…")))
             do {
-              guard let run = try await githubCLI.latestRun(worktreeRoot, branchName) else {
+              guard let run = try await forge.latestRun(worktreeRoot, branchName) else {
                 await send(.dismissToast)
                 await send(
                   .presentAlert(
@@ -3043,7 +3000,7 @@ struct RepositoriesFeature {
                 )
                 return
               }
-              try await githubCLI.rerunFailedJobs(worktreeRoot, run.databaseId)
+              try await forge.rerunFailedJobs(worktreeRoot, run.databaseId)
               await send(.showToast(.success("Failed jobs re-run started")))
               await send(.delayedPullRequestRefresh(worktreeID))
             } catch {
@@ -4775,26 +4732,15 @@ struct RepositoriesFeature {
     worktrees: [Worktree],
     branches: [String]
   ) -> Effect<Action> {
-    let gitClient = gitClient
-    let githubCLI = githubCLI
+    let forge = forge
     return .run { send in
-      guard
-        let remoteInfo = await resolveRemoteInfo(
-          repositoryRootURL: repositoryRootURL,
-          githubCLI: githubCLI,
-          gitClient: gitClient
-        )
+      guard let project = await forge.resolveProject(repositoryRootURL)
       else {
         await send(.repositoryPullRequestRefreshCompleted(repositoryID))
         return
       }
       do {
-        let prsByBranch = try await githubCLI.batchPullRequests(
-          remoteInfo.host,
-          remoteInfo.owner,
-          remoteInfo.repo,
-          branches
-        )
+        let prsByBranch = try await forge.fetchSummaries(project, branches)
         var pullRequestsByWorktreeID: [Worktree.ID: ForgePullRequest?] = [:]
         for worktree in worktrees {
           pullRequestsByWorktreeID[worktree.id] = prsByBranch[worktree.name]

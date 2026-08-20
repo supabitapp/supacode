@@ -195,6 +195,7 @@ struct GithubCLIClient: Sendable {
   var runLogs: @Sendable (URL, Int) async throws -> String
   var isAvailable: @Sendable () async -> Bool
   var authStatus: @Sendable () async throws -> GithubAuthStatus?
+  var authenticatedHosts: @Sendable () async throws -> Set<String>
 }
 
 extension GithubCLIClient: DependencyKey {
@@ -216,7 +217,8 @@ extension GithubCLIClient: DependencyKey {
       failedRunLogs: failedRunLogsFetcher(shell: shell, resolver: resolver),
       runLogs: runLogsFetcher(shell: shell, resolver: resolver),
       isAvailable: isAvailableFetcher(shell: shell, resolver: resolver),
-      authStatus: authStatusFetcher(shell: shell, resolver: resolver)
+      authStatus: authStatusFetcher(shell: shell, resolver: resolver),
+      authenticatedHosts: authenticatedHostsFetcher(shell: shell, resolver: resolver)
     )
   }
 
@@ -231,7 +233,8 @@ extension GithubCLIClient: DependencyKey {
     failedRunLogs: { _, _ in "" },
     runLogs: { _, _ in "" },
     isAvailable: { true },
-    authStatus: { GithubAuthStatus(username: "testuser", host: "github.com") }
+    authStatus: { GithubAuthStatus(username: "testuser", host: "github.com") },
+    authenticatedHosts: { ["github.com"] }
   )
 }
 
@@ -614,6 +617,26 @@ nonisolated private func authStatusFetcher(
       return nil
     }
     return GithubAuthStatus(username: active.login, host: active.host)
+  }
+}
+
+nonisolated private func authenticatedHostsFetcher(
+  shell: ShellClient,
+  resolver: GithubCLIExecutableResolver
+) -> @Sendable () async throws -> Set<String> {
+  {
+    let output = try await runGh(
+      shell: shell,
+      resolver: resolver,
+      arguments: ["auth", "status", "--json", "hosts"],
+      repoRoot: nil
+    )
+    let response = try GithubCLIOutput.decode(GithubAuthStatusResponse.self, from: output)
+    var hosts = Set<String>()
+    for (host, accounts) in response.hosts where !accounts.isEmpty {
+      hosts.insert(host.lowercased())
+    }
+    return hosts
   }
 }
 
