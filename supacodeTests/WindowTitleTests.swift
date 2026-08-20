@@ -120,6 +120,21 @@ struct WindowTitleTests {
     #expect(WindowTitle.compute(repositories: state, terminalManager: manager) == "My Project · Unavailable")
   }
 
+  @Test func computeFailedFolderRepositoryReadsSyntheticItemTitle() {
+    var state = RepositoriesFeature.State()
+    let id: Repository.ID = "/tmp/missing-folder"
+    state.repositoryRoots = [URL(fileURLWithPath: id.rawValue)]
+    state.loadFailuresByID = [id: "Not found"]
+    state.selection = .failedRepository(id)
+    // A folder never wrote a section title, so the failed row (and the window
+    // title with it) has to fall back to the synthetic folder-worktree item.
+    state.$sidebar.withLock { sidebar in
+      sidebar.setCustomization(title: "Files", color: nil, worktree: WorktreeID(id.rawValue), in: id)
+    }
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    #expect(WindowTitle.compute(repositories: state, terminalManager: manager) == "Files · Unavailable")
+  }
+
   @Test func computeFailedRemoteRepositoryUsesPlaceholderNameNotFileURL() {
     let config = TestRemoteRepo(
       host: RemoteHost(alias: "devbox"),

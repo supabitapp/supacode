@@ -289,7 +289,7 @@ extension RepositoriesFeature {
   ) -> AlertState<Alert> {
     let fallback = Repository.name(for: URL(fileURLWithPath: repositoryID.rawValue).standardizedFileURL)
     let name = Repository.sidebarDisplayName(
-      custom: state.sidebar.sections[repositoryID]?.title,
+      custom: state.sidebar.customTitleForUnloadedRepository(repositoryID),
       fallback: fallback
     )
     return AlertState {

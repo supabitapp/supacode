@@ -627,9 +627,11 @@ struct SidebarStateTests {
     #expect(state.customTitle(for: repository(id: repoA.rawValue, isGitRepository: false)) == "Files")
   }
 
-  @Test func customTitlePrefersSectionTitleOverFolderItem() {
+  // The sidebar renders a folder through `SidebarFolderRow`, which reads the
+  // row's own title and never the section, so the row has to win here too.
+  @Test func customTitlePrefersFolderItemOverSectionTitle() {
     var state = SidebarState()
-    state.sections[repoA] = .init(title: "Section Wins")
+    state.sections[repoA] = .init(title: "Stale Section")
     state.setCustomization(
       title: "Files",
       color: nil,
@@ -637,7 +639,49 @@ struct SidebarStateTests {
       in: repoA
     )
 
-    #expect(state.customTitle(for: repository(id: repoA.rawValue, isGitRepository: false)) == "Section Wins")
+    #expect(state.customTitle(for: repository(id: repoA.rawValue, isGitRepository: false)) == "Files")
+  }
+
+  @Test func customColorFollowsTheSameDualRuleAsTheTitle() {
+    var state = SidebarState()
+    state.sections[repoA] = .init(color: .purple)
+    state.setCustomization(
+      title: nil,
+      color: .teal,
+      worktree: WorktreeID(repoA.rawValue),
+      in: repoA
+    )
+
+    #expect(state.customColor(for: repository(id: repoA.rawValue, isGitRepository: false)) == .teal)
+    #expect(state.customColor(for: repository(id: repoA.rawValue, isGitRepository: true)) == .purple)
+  }
+
+  // A repository that never loaded has no kind to branch on, so the section
+  // wins: for a git repo the item keyed by the repo root is the main worktree
+  // row, whose title is not the repository's.
+  @Test func customTitleForUnloadedRepositoryPrefersSectionTitle() {
+    var state = SidebarState()
+    state.sections[repoA] = .init(title: "Section")
+    state.setCustomization(
+      title: "Row",
+      color: nil,
+      worktree: WorktreeID(repoA.rawValue),
+      in: repoA
+    )
+
+    #expect(state.customTitleForUnloadedRepository(repoA) == "Section")
+  }
+
+  @Test func customTitleForUnloadedRepositoryFallsBackToFolderItem() {
+    var state = SidebarState()
+    state.setCustomization(
+      title: "Files",
+      color: nil,
+      worktree: WorktreeID(repoA.rawValue),
+      in: repoA
+    )
+
+    #expect(state.customTitleForUnloadedRepository(repoA) == "Files")
   }
 
   @Test func customTitleIgnoresSyntheticItemForGitRepository() {

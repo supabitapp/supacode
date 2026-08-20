@@ -346,10 +346,7 @@ final class PaneWindowManager {
     guard let row = repositories.sidebarItems[id: worktreeID] else { return "" }
     let worktreeName = SidebarDisplayName.resolved(custom: row.customTitle, fallback: row.name) ?? row.name
     guard let repositoryID = repositories.repositoryID(containing: worktreeID) else { return worktreeName }
-    let repositoryName = Repository.sidebarDisplayName(
-      custom: repositories.sidebar.sections[repositoryID]?.title,
-      fallback: repositories.repositoryName(for: repositoryID) ?? "Repository"
-    )
+    let repositoryName = repositories.repositoryName(for: repositoryID) ?? "Repository"
     return "\(repositoryName) / \(worktreeName)"
   }
 

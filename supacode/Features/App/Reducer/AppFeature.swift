@@ -2159,8 +2159,7 @@ struct AppFeature {
         : sidebar.customTitle(for: repository)
       return SettingsRepositorySummary(
         id: repository.id.rawValue,
-        name: SidebarDisplayName.resolved(custom: customTitle, fallback: repository.name)
-          ?? repository.name,
+        name: Repository.sidebarDisplayName(custom: customTitle, fallback: repository.name),
         isGitRepository: repository.isGitRepository,
         host: repository.host,
         rootURL: repository.rootURL
@@ -3323,7 +3322,7 @@ struct AppFeature {
         && state.repositories.alert == nil
         && (state.repositories.sidebarItems[id: worktreeID]?.lifecycle ?? .idle) == .idle
       guard folderEligible else {
-        let folderName = state.repositories.repositories[id: repositoryID]?.name ?? "This folder"
+        let folderName = state.repositories.repositoryName(for: repositoryID) ?? "This folder"
         state.alert = AlertState {
           TextState("Delete unavailable")
         } actions: {

@@ -38,10 +38,10 @@ enum WindowTitle {
       let fallback =
         repositories.repositories[id: repositoryID]?.name
         ?? Repository.name(for: URL(fileURLWithPath: repositoryID.rawValue).standardizedFileURL)
-      // Failed repositories never entered the roster, so only the section
-      // title is available here.
+      // Failed repositories never entered the roster, so git-vs-folder is
+      // unknown here; resolve the title the way the failed sidebar row does.
       let name = Repository.sidebarDisplayName(
-        custom: repositories.sidebar.sections[repositoryID]?.title,
+        custom: repositories.sidebar.customTitleForUnloadedRepository(repositoryID),
         fallback: fallback
       )
       return format(repo: name, tab: "Unavailable")

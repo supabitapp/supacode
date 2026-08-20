@@ -293,12 +293,13 @@ struct MenuBarNotificationListTests {
     )
     // A folder's custom title lives on its synthetic row's item, not the section.
     state.$sidebar.withLock { sidebar in
-      sidebar.setCustomization(title: "Files", color: nil, worktree: folderID, in: repositoryID)
+      sidebar.setCustomization(title: "Files", color: .teal, worktree: folderID, in: repositoryID)
     }
     setRowNotifications(&state, id: folderID, notifications: [makeNotification(isRead: false)])
 
     let sections = state.computeMenuBarSections()
     #expect(sections.repositoryTagByID[repositoryID]?.repoName == "Files")
+    #expect(sections.repositoryTagByID[repositoryID]?.repoColor == .teal)
   }
 
   @Test func excludesArchivedWorktreesFromUnread() {

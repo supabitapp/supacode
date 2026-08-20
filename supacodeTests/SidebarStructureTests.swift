@@ -679,6 +679,47 @@ struct SidebarStructureTests {
     #expect(tag?.repoColor == .purple)
   }
 
+  @Test func highlightTagReadsFolderTitleAndColorFromSyntheticItem() {
+    let folderURL = URL(fileURLWithPath: "/tmp/folder")
+    let folderID = Repository.folderWorktreeID(for: folderURL)
+    let folderRepo = Repository(
+      id: RepositoryID(folderURL.path(percentEncoded: false)),
+      rootURL: folderURL,
+      name: "folder",
+      worktrees: IdentifiedArray(
+        uniqueElements: [
+          Worktree(
+            id: folderID,
+            name: "folder",
+            detail: "",
+            workingDirectory: folderURL,
+            repositoryRootURL: folderURL
+          )
+        ]
+      ),
+      isGitRepository: false
+    )
+    var state = makeState(repositories: [folderRepo])
+    // Pinning hoists the folder row, which is what builds a highlight tag.
+    state.$sidebar.withLock { sidebar in
+      sidebar.setCustomization(title: "Files", color: .teal, worktree: folderID, in: folderRepo.id)
+      var section = sidebar.sections[folderRepo.id] ?? .init()
+      var pinnedBucket = section.buckets[.pinned] ?? .init()
+      pinnedBucket.items[folderID] = section.buckets[.unpinned]?.items[folderID] ?? .init()
+      section.buckets[.pinned] = pinnedBucket
+      section.buckets[.unpinned]?.items.removeValue(forKey: folderID)
+      sidebar.sections[folderRepo.id] = section
+    }
+
+    let structure = state.computeSidebarStructure(groupPinned: true, groupActive: false)
+
+    // A folder's customization lives on its row, not the section, so the tag
+    // has to read there — the same place the sidebar row renders from.
+    let tag = structure.repositoryHighlightByID[folderRepo.id]
+    #expect(tag?.repoName == "Files")
+    #expect(tag?.repoColor == .teal)
+  }
+
   @Test func highlightTagFallsBackToRepositoryNameOnEmptyCustomTitle() {
     let repoRoot = URL(fileURLWithPath: "/tmp/repo")
     let main = makeMainWorktree(repoRoot: repoRoot)

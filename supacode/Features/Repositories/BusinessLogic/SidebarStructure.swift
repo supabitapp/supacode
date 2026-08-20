@@ -963,10 +963,12 @@ extension RepositoriesFeature.State {
     var summaries: [Repository.ID: SidebarHoistSummary] = [:]
     for repoID in contributingRepoIDs {
       guard let repository = repositories[id: repoID] else { continue }
-      let section = sidebar.sections[repoID]
       tags[repoID] = SidebarHighlightRepoTag(
-        repoName: Repository.sidebarDisplayName(custom: section?.title, fallback: repository.name),
-        repoColor: section?.color,
+        repoName: Repository.sidebarDisplayName(
+          custom: sidebar.customTitle(for: repository),
+          fallback: repository.name
+        ),
+        repoColor: sidebar.customColor(for: repository),
         hostInfo: repository.host?.displayAuthority
       )
       guard repository.isGitRepository, let revealTarget = firstPinned[repoID] ?? firstActive[repoID] else {
@@ -1209,11 +1211,32 @@ extension SidebarState.Section {
 extension SidebarState {
   /// The user-set title for a repository, wherever it lives: the section for
   /// git repositories, the synthetic folder-worktree item for folder (non-git)
-  /// repositories — the same dual rule as `computeSidebarStructure`.
+  /// repositories — the row title the sidebar itself renders for a folder
+  /// (`SidebarFolderRow`), with the section as a fallback for a remote folder
+  /// whose row hasn't loaded yet.
   func customTitle(for repository: Repository) -> String? {
     let section = sections[repository.id]
     return repository.isGitRepository
       ? section?.title
-      : (section?.title ?? section?.folderWorktreeItem(for: repository.id)?.title)
+      : (section?.folderWorktreeItem(for: repository.id)?.title ?? section?.title)
+  }
+
+  /// Tint counterpart to `customTitle(for:)`, same dual rule: a folder's color
+  /// lives on its synthetic row, a git repository's on its section.
+  func customColor(for repository: Repository) -> RepositoryColor? {
+    let section = sections[repository.id]
+    return repository.isGitRepository
+      ? section?.color
+      : (section?.folderWorktreeItem(for: repository.id)?.color ?? section?.color)
+  }
+
+  /// Title for a repository that never entered the roster (load failure /
+  /// environment blocked), where git-vs-folder can't be known. The section
+  /// wins, with the synthetic folder item as fallback — never the reverse: for
+  /// a git repository the item keyed by the repo root is its *main worktree*
+  /// row, whose title is not the repository's.
+  func customTitleForUnloadedRepository(_ repositoryID: Repository.ID) -> String? {
+    let section = sections[repositoryID]
+    return section?.title ?? section?.folderWorktreeItem(for: repositoryID)?.title
   }
 }

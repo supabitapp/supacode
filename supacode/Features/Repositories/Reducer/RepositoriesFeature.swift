@@ -1757,7 +1757,7 @@ struct RepositoriesFeature {
               // reloads prune an entry before the alert is read.
               var namesByRepositoryID: [Repository.ID: String] = [:]
               for id in batch.failureMessagesByRepositoryID.keys {
-                if let name = state.repositories[id: id]?.name {
+                if let name = state.repositoryName(for: id) {
                   namesByRepositoryID[id] = name
                 }
               }
@@ -5311,7 +5311,7 @@ struct RepositoriesFeature {
   ) -> AlertState<Alert> {
     let worktreeName = state.worktree(for: worktreeID)?.name
     let repoName = state.repositoryID(containing: worktreeID)
-      .flatMap { state.repositories[id: $0]?.name }
+      .flatMap { state.repositoryName(for: $0) }
     let parts = [repoName, worktreeName].compactMap(\.self)
     if parts.isEmpty {
       repositoriesLogger.debug("blockingScriptFailureAlert: worktree \(worktreeID) not found in state")
@@ -5611,8 +5611,12 @@ extension RepositoriesFeature.State {
     return sidebarItems[id: id]
   }
 
+  /// Display name for a repository: the customized sidebar title when one is
+  /// set, else the directory name. `nil` when the repo isn't in the roster.
   func repositoryName(for id: Repository.ID) -> String? {
-    repositories[id: id]?.name
+    repositories[id: id].map {
+      Repository.sidebarDisplayName(custom: sidebar.customTitle(for: $0), fallback: $0.name)
+    }
   }
 
   func orderedRepositoryRoots() -> [URL] {
@@ -5972,13 +5976,9 @@ extension RepositoriesFeature.State {
   /// has composed an order the reducer can't derive on its own (e.g. highlight
   /// sections hoisted above per-repo rows).
   func hotkeyWorktreeSlots(for ids: [Worktree.ID]) -> [HotkeyWorktreeSlot] {
-    let nameByRepoID = Dictionary(uniqueKeysWithValues: repositories.map { ($0.id, $0.name) })
     return ids.compactMap { id in
       guard let item = sidebarItems[id: id] else { return nil }
-      let repositoryName = Repository.sidebarDisplayName(
-        custom: sidebar.sections[item.repositoryID]?.title,
-        fallback: nameByRepoID[item.repositoryID] ?? ""
-      )
+      let repositoryName = repositoryName(for: item.repositoryID) ?? ""
       return HotkeyWorktreeSlot(
         id: item.id,
         name: SidebarDisplayName.resolved(custom: item.customTitle, fallback: item.name) ?? item.name,

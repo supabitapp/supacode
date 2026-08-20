@@ -340,10 +340,7 @@ struct CommandPaletteFeature {
     else {
       return nil
     }
-    let repositoryName = Repository.sidebarDisplayName(
-      custom: repositories.sidebar.sections[selectedRepositoryID]?.title,
-      fallback: repositories.repositoryName(for: selectedRepositoryID) ?? "Repository"
-    )
+    let repositoryName = repositories.repositoryName(for: selectedRepositoryID) ?? "Repository"
     let worktreeDisplayName =
       SidebarDisplayName.resolved(custom: selectedRow.customTitle, fallback: selectedRow.name)
       ?? selectedRow.name
@@ -409,10 +406,7 @@ struct CommandPaletteFeature {
     // Repository-level appearance for git repos (folder repos have no section
     // header to tint). Hidden mid-removal, matching the disabled sidebar entry.
     if isGitRepository, repositories.removingRepositoryIDs[selectedRepositoryID] == nil {
-      let repositoryName = Repository.sidebarDisplayName(
-        custom: section?.title,
-        fallback: repositories.repositoryName(for: selectedRepositoryID) ?? "Repository"
-      )
+      let repositoryName = repositories.repositoryName(for: selectedRepositoryID) ?? "Repository"
       items.append(
         CommandPaletteItem(
           id: CommandPaletteItemID.customizeRepositoryAppearance(selectedRepositoryID),
@@ -511,10 +505,7 @@ struct CommandPaletteFeature {
       // row. Git rows tint the worktree name over the repo name; folders collapse
       // to their own name with no subtitle; the host stays a distinct badge.
       let repoColor = section?.color
-      let repositoryName = Repository.sidebarDisplayName(
-        custom: section?.title,
-        fallback: resolvedRepositoryName ?? "Repository"
-      )
+      let repositoryName = resolvedRepositoryName ?? "Repository"
       let hostInfo = row.host?.displayAuthority
       // Mirror the sidebar's leading glyph. Missing wins over folder wins over
       // the pull-request icon, matching `IconContent`; rows are idle-only here.
@@ -539,7 +530,7 @@ struct CommandPaletteFeature {
         // Fall back to the row's own name (never a generic constant) so a
         // not-yet-loaded remote folder stays identifiable as its whole title.
         title = Repository.sidebarDisplayName(
-          custom: section?.title ?? row.customTitle,
+          custom: row.customTitle ?? section?.title,
           fallback: resolvedRepositoryName ?? row.name
         )
         subtitle = nil
