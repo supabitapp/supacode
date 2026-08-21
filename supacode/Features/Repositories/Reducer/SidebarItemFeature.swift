@@ -452,10 +452,8 @@ struct SidebarSelectionSlice: Equatable, Sendable {
 }
 
 extension SidebarItemFeature {
-  /// A thin summary for the same, provably unchanged proposal (GitLab sweeps
-  /// carry no detail fields) must not wipe the enrichment between detail
-  /// fetches. Any server-side movement (state flip, newer updatedAt) drops
-  /// the enrichment instead, since only the selected worktree re-fetches.
+  /// A rollup-at-most summary for a provably unchanged proposal keeps the
+  /// enrichment (fresh rollup still wins); any server-side movement drops it.
   nonisolated static func preservingEnrichment(
     of summary: ForgePullRequest?,
     over existing: ForgePullRequest?
@@ -465,10 +463,18 @@ extension SidebarItemFeature {
       existing.state == summary.state,
       summary.state == .open,
       existing.updatedAt == summary.updatedAt,
-      summary.detail == ForgePullRequestDetail()
+      summary.detail == ForgePullRequestDetail(statusCheckRollup: summary.statusCheckRollup)
     else {
       return summary
     }
-    return summary.applying(existing.detail)
+    return summary.applying(
+      ForgePullRequestDetail(
+        mergeable: existing.mergeable,
+        mergeStateStatus: existing.mergeStateStatus,
+        reviewDecision: existing.reviewDecision,
+        statusCheckRollup: summary.statusCheckRollup ?? existing.statusCheckRollup,
+        forgeBlockedReason: existing.forgeBlockedReason
+      )
+    )
   }
 }

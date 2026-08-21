@@ -105,6 +105,99 @@ struct GitLabCLIClientTests {
     #expect(endpoint.contains("order_by=updated_at"))
   }
 
+  @Test func fetchMergeRequestsAttachesHeadPipelinesFromOneGraphQLCall() async throws {
+    let graphQLJSON = """
+      {"data": {"project": {"mergeRequests": {"nodes": [
+        {"iid": "12", "headPipeline": {"status": "FAILED", "path": "/group/sub/proj/-/pipelines/777"}},
+        {"iid": "11", "headPipeline": null}
+      ]}}}}
+      """
+    let recorded = LockIsolated<[[String]]>([])
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          return ShellOutput(stdout: "/usr/local/bin/glab", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, arguments, _, _ in
+        guard executableURL.lastPathComponent == "glab" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
+        recorded.withValue { $0.append(arguments) }
+        if arguments.contains("graphql") {
+          return ShellOutput(stdout: graphQLJSON, stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: mergeRequestListJSON, stderr: "", exitCode: 0)
+      }
+    )
+    let client = GitLabCLIClient.live(shell: shell)
+
+    let results = try await client.fetchMergeRequests("gitlab.com", "group/sub/proj", ["feature", "shipped"])
+
+    let rollup = try #require(results["feature"]?.statusCheckRollup)
+    #expect(rollup.checks.first?.status == "COMPLETED")
+    #expect(rollup.checks.first?.conclusion == "FAILURE")
+    #expect(rollup.checks.first?.detailsUrl == "https://gitlab.com/group/sub/proj/-/pipelines/777")
+    // The merged MR's node has no head pipeline, so its row keeps none.
+    #expect(results["shipped"]?.statusCheckRollup == nil)
+    let graphQLCall = try #require(recorded.value.last)
+    #expect(graphQLCall.contains("graphql"))
+    #expect(graphQLCall.contains("--hostname"))
+    #expect(graphQLCall.contains("gitlab.com"))
+    #expect(graphQLCall.contains(where: { $0.contains("fullPath: \"group/sub/proj\"") }))
+  }
+
+  @Test func fetchMergeRequestsSurvivesAFailedHeadPipelineCall() async throws {
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          return ShellOutput(stdout: "/usr/local/bin/glab", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, arguments, _, _ in
+        guard executableURL.lastPathComponent == "glab" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
+        if arguments.contains("graphql") {
+          throw ShellClientError(command: "glab api graphql", stdout: "", stderr: "boom", exitCode: 1)
+        }
+        return ShellOutput(stdout: mergeRequestListJSON, stderr: "", exitCode: 0)
+      }
+    )
+    let client = GitLabCLIClient.live(shell: shell)
+
+    let results = try await client.fetchMergeRequests("gitlab.com", "group/sub/proj", ["feature"])
+
+    #expect(results["feature"]?.number == 12)
+    #expect(results["feature"]?.statusCheckRollup == nil)
+  }
+
+  @Test func configFileURLPrefersTheExistingCandidate() {
+    let environment = ["HOME": "/Users/dev", "XDG_CONFIG_HOME": "/Users/dev/.xdg"]
+    let applicationSupport = "/Users/dev/Library/Application Support/glab-cli/config.yml"
+    let xdg = "/Users/dev/.xdg/glab-cli/config.yml"
+
+    let macOSDefault = GitLabConfigHosts.configFileURL(environment: environment) {
+      $0.path(percentEncoded: false) == applicationSupport
+    }
+    #expect(macOSDefault?.path(percentEncoded: false) == applicationSupport)
+
+    let xdgInstall = GitLabConfigHosts.configFileURL(environment: environment) {
+      $0.path(percentEncoded: false) == xdg
+    }
+    #expect(xdgInstall?.path(percentEncoded: false) == xdg)
+
+    // Nothing on disk falls back to the macOS default; an explicit override wins unconditionally.
+    let absent = GitLabConfigHosts.configFileURL(environment: environment) { _ in false }
+    #expect(absent?.path(percentEncoded: false) == applicationSupport)
+    let overridden = GitLabConfigHosts.configFileURL(
+      environment: ["HOME": "/Users/dev", "GLAB_CONFIG_DIR": "/tmp/glab"]
+    ) { _ in false }
+    #expect(overridden?.path(percentEncoded: false) == "/tmp/glab/config.yml")
+  }
+
   @Test func mergePassesExplicitAutoMergeAndSquash() async throws {
     let recorded = LockIsolated<[[String]]>([])
     let client = GitLabCLIClient.live(

@@ -432,6 +432,59 @@ struct SidebarItemFeatureTests {
     #expect(store.state.pullRequest?.mergeable == nil)
   }
 
+  @Test func rollupOnlySummaryPreservesEnrichmentAndRefreshesThePipeline() async {
+    var state = makeState(name: "feature")
+    let updatedAt = Date(timeIntervalSince1970: 1_000_000)
+    let staleRollup = ForgePullRequestStatusCheckRollup(
+      checks: [ForgePullRequestStatusCheck(name: "Pipeline", status: "IN_PROGRESS")]
+    )
+    let freshRollup = ForgePullRequestStatusCheckRollup(
+      checks: [ForgePullRequestStatusCheck(name: "Pipeline", status: "COMPLETED", conclusion: "SUCCESS")]
+    )
+    let thinSummary = ForgePullRequest(
+      number: 12,
+      title: "MR",
+      state: .open,
+      additions: nil,
+      deletions: nil,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: updatedAt,
+      mergedAt: nil,
+      url: "https://gitlab.com/group/proj/-/merge_requests/12",
+      headRefName: "feature",
+      baseRefName: "main",
+      commitsCount: nil,
+      authorLogin: "dev",
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
+    )
+    state.pullRequest = thinSummary.applying(
+      ForgePullRequestDetail(mergeable: "MERGEABLE", statusCheckRollup: staleRollup)
+    )
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+
+    // A sweep carrying only the head-pipeline rollup keeps the enrichment and
+    // takes the newer pipeline state.
+    let rollupSummary = thinSummary.applying(ForgePullRequestDetail(statusCheckRollup: freshRollup))
+    await store.send(.pullRequestChanged(rollupSummary, branchAtQueryTime: "feature")) {
+      $0.pullRequest = thinSummary.applying(
+        ForgePullRequestDetail(mergeable: "MERGEABLE", statusCheckRollup: freshRollup)
+      )
+    }
+    #expect(store.state.pullRequest?.mergeable == "MERGEABLE")
+    #expect(store.state.pullRequest?.statusCheckRollup == freshRollup)
+
+    // A rollup-free sweep keeps the cached pipeline alongside the enrichment.
+    await store.send(.pullRequestChanged(thinSummary, branchAtQueryTime: "feature"))
+    #expect(store.state.pullRequest?.statusCheckRollup == freshRollup)
+    #expect(store.state.pullRequest?.mergeable == "MERGEABLE")
+  }
+
   @Test func pullRequestDetailAppliedNoopsWithoutASummaryProposal() async {
     let store = TestStore(initialState: makeState(name: "feature")) {
       SidebarItemFeature()

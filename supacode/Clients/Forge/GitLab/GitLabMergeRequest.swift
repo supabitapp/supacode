@@ -146,17 +146,25 @@ nonisolated enum GitLabConfigHosts {
     return hosts
   }
 
+  /// glab on macOS writes to `~/Library/Application Support/glab-cli` (Go's
+  /// user config dir); older installs and XDG setups used `~/.config`-style
+  /// paths, so probe the candidates and take the first that exists.
   static func configFileURL(
-    environment: [String: String] = ProcessInfo.processInfo.environment
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    fileExists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
   ) -> URL? {
     if let configDirectory = environment["GLAB_CONFIG_DIR"], !configDirectory.isEmpty {
       return URL(fileURLWithPath: configDirectory).appending(path: "config.yml")
     }
-    if let xdgConfigHome = environment["XDG_CONFIG_HOME"], !xdgConfigHome.isEmpty {
-      return URL(fileURLWithPath: xdgConfigHome).appending(path: "glab-cli/config.yml")
-    }
     guard let home = environment["HOME"], !home.isEmpty else { return nil }
-    return URL(fileURLWithPath: home).appending(path: ".config/glab-cli/config.yml")
+    var candidates = [
+      URL(fileURLWithPath: home).appending(path: "Library/Application Support/glab-cli/config.yml")
+    ]
+    if let xdgConfigHome = environment["XDG_CONFIG_HOME"], !xdgConfigHome.isEmpty {
+      candidates.append(URL(fileURLWithPath: xdgConfigHome).appending(path: "glab-cli/config.yml"))
+    }
+    candidates.append(URL(fileURLWithPath: home).appending(path: ".config/glab-cli/config.yml"))
+    return candidates.first(where: fileExists) ?? candidates.first
   }
 }
 
@@ -246,9 +254,15 @@ nonisolated enum GitLabMergeStatusMapping {
 
   private static func rollup(for pipeline: GitLabMergeRequestDetail.Pipeline?) -> ForgePullRequestStatusCheckRollup? {
     guard let pipeline else { return nil }
+    return rollup(status: pipeline.status, detailsUrl: pipeline.webUrl)
+  }
+
+  /// Single-check rollup from a pipeline status; REST and GraphQL spellings
+  /// only differ by case.
+  static func rollup(status pipelineStatus: String?, detailsUrl: String?) -> ForgePullRequestStatusCheckRollup {
     let status: String
     var conclusion: String?
-    switch pipeline.status?.lowercased() {
+    switch pipelineStatus?.lowercased() {
     case "success":
       status = "COMPLETED"
       conclusion = "SUCCESS"
@@ -263,7 +277,7 @@ nonisolated enum GitLabMergeStatusMapping {
     }
     let check = ForgePullRequestStatusCheck(
       name: "Pipeline",
-      detailsUrl: pipeline.webUrl,
+      detailsUrl: detailsUrl,
       status: status,
       conclusion: conclusion
     )

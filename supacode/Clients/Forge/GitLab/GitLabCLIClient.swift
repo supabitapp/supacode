@@ -211,7 +211,91 @@ nonisolated private func fetchMergeRequestsFetcher(
         }
       }
     }
-    return GitLabMergeRequest.pullRequestsByBranch(mergeRequests, branches: branches)
+    var results = GitLabMergeRequest.pullRequestsByBranch(mergeRequests, branches: branches)
+    // One GraphQL call attaches each matched MR's head pipeline so unselected
+    // rows still show CI state; a failure degrades to no badge, never a
+    // failed sweep.
+    let numbers = Set(results.values.map(\.number)).sorted()
+    if !numbers.isEmpty {
+      do {
+        let rollups = try await fetchHeadPipelineRollups(
+          shell: shell,
+          resolver: resolver,
+          host: host,
+          projectPath: projectPath,
+          numbers: numbers
+        )
+        for (branch, pullRequest) in results {
+          guard let rollup = rollups[pullRequest.number] else { continue }
+          results[branch] = pullRequest.applying(ForgePullRequestDetail(statusCheckRollup: rollup))
+        }
+      } catch {
+        gitlabLogger.warning("Head pipeline fetch failed for \(projectPath): \(error)")
+      }
+    }
+    return results
+  }
+}
+
+/// GraphQL is the only per-MR head-pipeline source that costs one request for
+/// the whole sweep; the REST list endpoint carries no pipeline data and
+/// branch-scoped pipeline lists misattribute merge-request and fork pipelines.
+nonisolated private func fetchHeadPipelineRollups(
+  shell: ShellClient,
+  resolver: ForgeCLIExecutableResolver,
+  host: String,
+  projectPath: String,
+  numbers: [Int]
+) async throws -> [Int: ForgePullRequestStatusCheckRollup] {
+  let iidList = numbers.map { "\"\($0)\"" }.joined(separator: ", ")
+  let query =
+    "query { project(fullPath: \"\(projectPath)\") { mergeRequests(iids: [\(iidList)]) "
+    + "{ nodes { iid headPipeline { status path } } } } }"
+  let output = try await runGlab(
+    shell: shell,
+    resolver: resolver,
+    arguments: ["api", "graphql", "--hostname", host, "-f", "query=\(query)"],
+    repoRoot: nil
+  )
+  let response = try GitLabCLIOutput.decode(
+    GitLabHeadPipelines.self,
+    from: output,
+    decoder: GitLabAPI.makeDecoder()
+  )
+  var rollups: [Int: ForgePullRequestStatusCheckRollup] = [:]
+  for node in response.data?.project?.mergeRequests?.nodes ?? [] {
+    guard let iid = Int(node.iid), let pipeline = node.headPipeline else { continue }
+    let detailsUrl = pipeline.path.map { "https://\(host)\($0)" }
+    rollups[iid] = GitLabMergeStatusMapping.rollup(status: pipeline.status, detailsUrl: detailsUrl)
+  }
+  return rollups
+}
+
+/// GraphQL response for the sweep's head-pipeline enrichment; iids come back
+/// as strings.
+nonisolated struct GitLabHeadPipelines: Decodable, Equatable {
+  let data: Payload?
+
+  nonisolated struct Payload: Decodable, Equatable {
+    let project: Project?
+  }
+
+  nonisolated struct Project: Decodable, Equatable {
+    let mergeRequests: MergeRequests?
+  }
+
+  nonisolated struct MergeRequests: Decodable, Equatable {
+    let nodes: [Node]?
+  }
+
+  nonisolated struct Node: Decodable, Equatable {
+    let iid: String
+    let headPipeline: Pipeline?
+  }
+
+  nonisolated struct Pipeline: Decodable, Equatable {
+    let status: String?
+    let path: String?
   }
 }
 
