@@ -54,7 +54,8 @@ nonisolated struct GitLabMergeRequest: Decodable, Equatable {
       commitsCount: nil,
       authorLogin: author?.username,
       statusCheckRollup: nil,
-      mergeQueueEntry: nil
+      mergeQueueEntry: nil,
+      numberSigil: ForgeVocabulary.gitlab.numberSigil
     )
   }
 }
@@ -172,6 +173,8 @@ nonisolated enum GitLabConfigHosts {
 /// endpoint; only the detail-tier fields the app consumes.
 nonisolated struct GitLabMergeRequestDetail: Decodable, Equatable {
   let iid: Int
+  /// Diff head SHA; the merge API requires it on namespaces enforcing SHA checks.
+  let sha: String?
   let detailedMergeStatus: String?
   let hasConflicts: Bool?
   let headPipeline: Pipeline?
@@ -190,6 +193,7 @@ nonisolated struct GitLabMergeRequestDetail: Decodable, Equatable {
 
   private enum CodingKeys: String, CodingKey {
     case iid
+    case sha
     case detailedMergeStatus = "detailed_merge_status"
     case hasConflicts = "has_conflicts"
     case headPipeline = "head_pipeline"

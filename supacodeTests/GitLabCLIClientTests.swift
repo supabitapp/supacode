@@ -198,23 +198,71 @@ struct GitLabCLIClientTests {
     #expect(overridden?.path(percentEncoded: false) == "/tmp/glab/config.yml")
   }
 
-  @Test func mergePassesExplicitAutoMergeAndSquash() async throws {
+  @Test func mergePassesExplicitAutoMergeSquashAndHeadSHA() async throws {
     let recorded = LockIsolated<[[String]]>([])
-    let client = GitLabCLIClient.live(
-      shell: Self.glabShell(stdout: "") { arguments in
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          return ShellOutput(stdout: "/usr/local/bin/glab", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, arguments, _, _ in
+        guard executableURL.lastPathComponent == "glab" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
         recorded.withValue { $0.append(arguments) }
+        if arguments.contains("api") {
+          return ShellOutput(stdout: #"{"iid": 12, "sha": "abc123"}"#, stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
       }
     )
+    let client = GitLabCLIClient.live(shell: shell)
 
     try await client.mergeMergeRequest(
       URL(fileURLWithPath: "/tmp/repo"), "gitlab.com", "group/proj", 12, .squash
     )
 
-    let arguments = try #require(recorded.value.first)
+    let arguments = try #require(recorded.value.last)
     #expect(arguments.contains("merge"))
     #expect(arguments.contains("--auto-merge=false"))
     #expect(arguments.contains("--squash"))
     #expect(arguments.contains("https://gitlab.com/group/proj"))
+    // Namespaces enforcing SHA checks reject sha-less merges.
+    #expect(arguments.contains("--sha"))
+    #expect(arguments.contains("abc123"))
+  }
+
+  @Test func mergeSurvivesAFailedHeadSHARead() async throws {
+    let recorded = LockIsolated<[[String]]>([])
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          return ShellOutput(stdout: "/usr/local/bin/glab", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, arguments, _, _ in
+        guard executableURL.lastPathComponent == "glab" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
+        recorded.withValue { $0.append(arguments) }
+        if arguments.contains("api") {
+          throw ShellClientError(command: "glab api", stdout: "", stderr: "boom", exitCode: 1)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      }
+    )
+    let client = GitLabCLIClient.live(shell: shell)
+
+    try await client.mergeMergeRequest(
+      URL(fileURLWithPath: "/tmp/repo"), "gitlab.com", "group/proj", 12, .merge
+    )
+
+    let arguments = try #require(recorded.value.last)
+    #expect(arguments.contains("merge"))
+    #expect(!arguments.contains("--sha"))
   }
 
   @Test func mergeRejectsRebaseAsUnsupported() async {
@@ -361,6 +409,7 @@ struct GitLabMergeStatusMappingTests {
   ) -> PullRequestMergeReadiness {
     let detail = GitLabMergeRequestDetail(
       iid: 12,
+      sha: nil,
       detailedMergeStatus: detailedMergeStatus,
       hasConflicts: hasConflicts,
       headPipeline: pipelineStatus.map {
@@ -391,7 +440,7 @@ struct GitLabMergeStatusMappingTests {
   }
 
   @Test func mergeableResolvesToMergeable() {
-    #expect(readiness(detailedMergeStatus: "mergeable").canMergeNow)
+    #expect(readiness(detailedMergeStatus: "mergeable").assessment == .mergeable)
   }
 
   @Test func conflictResolvesToMergeConflicts() {
@@ -425,6 +474,7 @@ struct GitLabMergeStatusMappingTests {
   @Test func pipelineMapsToASingleRollupCheck() {
     let detail = GitLabMergeRequestDetail(
       iid: 12,
+      sha: nil,
       detailedMergeStatus: "mergeable",
       hasConflicts: false,
       headPipeline: GitLabMergeRequestDetail.Pipeline(id: 7, status: "running", webUrl: "https://gitlab.com/p/1")

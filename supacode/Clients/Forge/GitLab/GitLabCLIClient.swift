@@ -322,8 +322,45 @@ nonisolated private func mergeMergeRequestFetcher(
       // does not exist.
       throw ForgeClientError.unsupported(operation: "rebase merges")
     }
+    // Namespaces enforcing SHA checks reject sha-less merges outright, so pass
+    // the current head; a failed read falls back to the sha-less call.
+    do {
+      if let sha = try await fetchMergeRequestHeadSHA(
+        shell: shell,
+        resolver: resolver,
+        host: host,
+        projectPath: projectPath,
+        number: number
+      ) {
+        arguments.append(contentsOf: ["--sha", sha])
+      }
+    } catch {
+      gitlabLogger.warning("Head SHA read failed before merging \(projectPath)!\(number): \(error)")
+    }
     _ = try await runGlab(shell: shell, resolver: resolver, arguments: arguments, repoRoot: repoRoot)
   }
+}
+
+nonisolated private func fetchMergeRequestHeadSHA(
+  shell: ShellClient,
+  resolver: ForgeCLIExecutableResolver,
+  host: String,
+  projectPath: String,
+  number: Int
+) async throws -> String? {
+  let encodedPath = GitLabAPI.encodedProjectPath(projectPath)
+  let output = try await runGlab(
+    shell: shell,
+    resolver: resolver,
+    arguments: ["api", "--hostname", host, "projects/\(encodedPath)/merge_requests/\(number)"],
+    repoRoot: nil
+  )
+  let detail = try GitLabCLIOutput.decode(
+    GitLabMergeRequestDetail.self,
+    from: output,
+    decoder: GitLabAPI.makeDecoder()
+  )
+  return detail.sha
 }
 
 nonisolated private func closeMergeRequestFetcher(

@@ -82,7 +82,8 @@ extension ForgePullRequest {
       authorLogin: authorLogin,
       statusCheckRollup: detail.statusCheckRollup,
       mergeQueueEntry: mergeQueueEntry,
-      forgeBlockedReason: detail.forgeBlockedReason
+      forgeBlockedReason: detail.forgeBlockedReason,
+      numberSigil: numberSigil
     )
   }
 }
