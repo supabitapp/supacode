@@ -25,6 +25,9 @@ protocol TabContent: AnyObject {
   func tearDown()
   /// Live, observable chrome for the tab strip; nil renders a bare tab.
   var chrome: (any TabChrome)? { get }
+  /// Live, observable toolbar docked at the top of the content region; nil
+  /// docks nothing.
+  var toolbar: (any TabContentToolbar)? { get }
   /// The current persistable state, including restoration data.
   func snapshot() -> ContentSnapshot
 }
@@ -39,6 +42,8 @@ extension TabContent {
   func tearDown() {}
   // Chrome is opt-in per content kind.
   var chrome: (any TabChrome)? { nil }
+  // A docked toolbar is opt-in per content kind.
+  var toolbar: (any TabContentToolbar)? { nil }
 }
 
 /// Where in the layout a content is being created; a runtime hint for the
@@ -114,8 +119,11 @@ final class TerminalContent: TabContent {
   let kind: ContentKind = .terminal
   /// Instance-owned so badges, progress, and locks survive hibernation.
   let terminalChrome = TerminalTabChrome()
+  /// Instance-owned so the docked find bar tracks this content's surface.
+  private let searchToolbar: TerminalSearchToolbar
 
   var chrome: (any TabChrome)? { terminalChrome }
+  var toolbar: (any TabContentToolbar)? { searchToolbar }
 
   /// Which spawn a `makeSurface` call is; one-shot inheritance (source cwd,
   /// font, split context) applies to the first only, never a re-wake.
@@ -149,6 +157,7 @@ final class TerminalContent: TabContent {
     self.id = id
     self.makeSurface = makeSurface
     self.state = initialState
+    self.searchToolbar = TerminalSearchToolbar(contentID: id)
   }
 
   var renderer: NSView? { surfaceView }
@@ -170,6 +179,7 @@ final class TerminalContent: TabContent {
     guard surfaceView == nil else { return }
     let spawned = makeSurface(geometry, state, hasSpawned ? .rewake : .first)
     surfaceView = spawned.view
+    searchToolbar.surfaceView = spawned.view
     usesZmx = spawned.usesZmx
     hasSpawned = true
   }
@@ -179,6 +189,7 @@ final class TerminalContent: TabContent {
     state = recordedState(from: surfaceView)
     surfaceView.closeSurface()
     self.surfaceView = nil
+    searchToolbar.surfaceView = nil
   }
 
   // Free the Ghostty surface at event time: deferring to the view's dealloc
@@ -186,6 +197,7 @@ final class TerminalContent: TabContent {
   func tearDown() {
     surfaceView?.closeSurface()
     surfaceView = nil
+    searchToolbar.surfaceView = nil
   }
 
   func snapshot() -> ContentSnapshot {

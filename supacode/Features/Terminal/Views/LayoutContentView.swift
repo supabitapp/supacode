@@ -353,6 +353,9 @@ struct PaneStripView: View {
         surfaceState: surfaceState,
         dragModel: dragModel
       )
+      if let contentID = pane.selectedTab?.content.id {
+        PaneContentToolbarView(contentID: contentID, runtime: runtime, epoch: store.renderEpoch)
+      }
       Group {
         if let contentID = pane.selectedTab?.content.id {
           // The epoch read keeps this branch re-evaluating on hibernate/wake;
@@ -394,6 +397,26 @@ struct PaneStripView: View {
           }
         }
       }
+    }
+  }
+}
+
+/// Docks a content's own toolbar above its renderer, resolved from the runtime
+/// like the renderer and chrome. Content-agnostic: it names no toolbar kind, so
+/// a terminal find bar or a browser URL bar renders here without the layout
+/// knowing which. Reads register on the content's observable toolbar, so the
+/// bar appears and disappears without invalidating siblings.
+private struct PaneContentToolbarView: View {
+  let contentID: ContentID
+  let runtime: ContentRuntime
+  /// The runtime is not observable; the reducer bumps this on hibernate, wake,
+  /// and provision so the toolbar re-resolves when the content appears.
+  let epoch: UInt64
+
+  var body: some View {
+    let _ = epoch
+    if let toolbar = runtime.content(for: contentID)?.toolbar?.view {
+      toolbar
     }
   }
 }
