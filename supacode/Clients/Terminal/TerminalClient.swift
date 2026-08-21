@@ -93,7 +93,6 @@ struct TerminalClient {
     case searchSelection(Worktree)
     case navigateSearchNext(Worktree)
     case navigateSearchPrevious(Worktree)
-    case endSearch(Worktree)
     case selectTab(Worktree, tabID: TabID)
     case selectTabAtIndex(Worktree, index: Int)
     /// Cycles to the next or previous tab in the focused pane, wrapping at the ends.

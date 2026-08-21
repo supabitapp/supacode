@@ -24,6 +24,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case toggleSplitZoom, equalizeSplits
   case jumpToLatestUnread
   case togglePullRequestInspector, toggleFilesInspector, toggleNotificationsInspector
+  case startSearch, findNext, findPrevious, useSelectionForFind
 
   // Stable string key for JSON dictionary persistence.
   public var codingKey: CodingKey {
@@ -94,6 +95,10 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .togglePullRequestInspector: "togglePullRequestInspector"
     case .toggleFilesInspector: "toggleFilesInspector"
     case .toggleNotificationsInspector: "toggleNotificationsInspector"
+    case .startSearch: "startSearch"
+    case .findNext: "findNext"
+    case .findPrevious: "findPrevious"
+    case .useSelectionForFind: "useSelectionForFind"
     }
   }
 
@@ -147,6 +152,10 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "togglePullRequestInspector": .togglePullRequestInspector,
     "toggleFilesInspector": .toggleFilesInspector,
     "toggleNotificationsInspector": .toggleNotificationsInspector,
+    "startSearch": .startSearch,
+    "findNext": .findNext,
+    "findPrevious": .findPrevious,
+    "useSelectionForFind": .useSelectionForFind,
   ]
 
   private init?(stableKey: String) {
@@ -219,6 +228,10 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .togglePullRequestInspector: "Toggle Pull Request Inspector"
     case .toggleFilesInspector: "Toggle Files Inspector"
     case .toggleNotificationsInspector: "Toggle Notifications Inspector"
+    case .startSearch: "Find"
+    case .findNext: "Find Next"
+    case .findPrevious: "Find Previous"
+    case .useSelectionForFind: "Use Selection for Find"
     }
   }
 }
@@ -415,7 +428,7 @@ public enum AppShortcutCategory: String, CaseIterable, Sendable {
     case .worktrees: "Worktrees"
     case .worktreeSelection: "Worktree Selection"
     case .layout: "Layout"
-    case .tabSelection: "Tab Selection"
+    case .tabSelection: "Tab"
     case .actions: "Actions"
     }
   }
@@ -578,6 +591,12 @@ public enum AppShortcuts {
   public static let toggleNotificationsInspector = AppShortcut(
     id: .toggleNotificationsInspector, key: "n", modifiers: [.command, .option]
   )
+  // The terminal's search chords are owned by the app: each generates a Ghostty
+  // `unbind` so the surface never drives search, and the Find menu triggers it.
+  public static let startSearch = AppShortcut(id: .startSearch, key: "f", modifiers: .command)
+  public static let findNext = AppShortcut(id: .findNext, key: "g", modifiers: .command)
+  public static let findPrevious = AppShortcut(id: .findPrevious, key: "g", modifiers: [.command, .shift])
+  public static let useSelectionForFind = AppShortcut(id: .useSelectionForFind, key: "e", modifiers: .command)
 
   public static let worktreeSelection: [AppShortcut] = [
     selectWorktree1, selectWorktree2, selectWorktree3, selectWorktree4, selectWorktree5,
@@ -638,18 +657,22 @@ public enum AppShortcuts {
     AppShortcutGroup(
       category: .layout,
       shortcuts: [
-        newTerminalTab, closeTab,
         splitRight, splitLeft, splitDown, splitUp,
         focusSplitLeft, focusSplitRight, focusSplitUp, focusSplitDown,
         toggleSplitZoom, equalizeSplits, toggleWindowMode,
       ]
     ),
-    AppShortcutGroup(category: .tabSelection, shortcuts: tabSelection + [selectPreviousTab, selectNextTab]),
+    AppShortcutGroup(
+      category: .tabSelection,
+      shortcuts: [newTerminalTab, closeTab, renameTab]
+        + tabSelection + [selectPreviousTab, selectNextTab]
+        + [startSearch, findNext, findPrevious, useSelectionForFind]
+    ),
     AppShortcutGroup(
       category: .actions,
       shortcuts: [
         openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository,
-        openPullRequest, copyPath, runScript, stopRunScript, renameTab, jumpToLatestUnread,
+        openPullRequest, copyPath, runScript, stopRunScript, jumpToLatestUnread,
         togglePullRequestInspector, toggleFilesInspector, toggleNotificationsInspector,
       ]
     ),

@@ -138,7 +138,7 @@ extension AppFeature.Action {
       .manageRepositoryScripts,
       .stopScript, .stopRunScripts, .closeTab, .closeSurface,
       .startSearch, .searchSelection, .navigateSearchNext,
-      .navigateSearchPrevious, .endSearch,
+      .navigateSearchPrevious,
       .systemNotificationsPermissionFailed, .deeplinkReceived,
       .deeplink, .commandAckTimedOut, .deeplinkConfirmationTimedOut,
       .deeplinkReferenceOpened, .settingsRelocationDidNotFinish, .settingsStoreUnreadable,

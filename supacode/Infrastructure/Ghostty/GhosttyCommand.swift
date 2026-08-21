@@ -35,9 +35,19 @@ extension GhosttyCommand {
     "new_window", "close_window", "close_all_windows", "toggle_tab_overview",
   ]
 
+  private static let searchActionPrefixes = [
+    "start_search", "end_search", "navigate_search", "search_selection", "toggle_search",
+  ]
+
   /// Whether the command would drive layout topology; the app owns those
   /// commands, and the conduit ignores their surface-emitted actions.
   var isTopologyCommand: Bool {
     Self.topologyActionPrefixes.contains { action == $0 || action.hasPrefix($0 + ":") }
+  }
+
+  /// Whether the command drives terminal search; the app owns Find through its
+  /// own menu and chords, so the Ghostty entry is dropped from the palette.
+  var isSearchCommand: Bool {
+    Self.searchActionPrefixes.contains { action == $0 || action.hasPrefix($0 + ":") }
   }
 }

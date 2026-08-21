@@ -63,6 +63,19 @@ struct GhosttyRuntimeBundledOverridesTests {
     #expect(!GhosttyRuntime.bundledOverridesString.contains("focus-follows-mouse"))
   }
 
+  @Test func appOwnedOverridesUnbindGhosttySearchChords() {
+    // Search is app-owned (the Find menu), so Ghostty's default search chords are
+    // released unconditionally here, not just via customizable `AppShortcuts`, so
+    // disabling or rebinding a Find shortcut can't leave Ghostty driving search.
+    // Escape stays bound so it still cancels a search and reaches TUIs.
+    let overrides = GhosttyRuntime.appOwnedOverridesString
+    #expect(overrides.contains("keybind = super+f=unbind"))
+    #expect(overrides.contains("keybind = super+e=unbind"))
+    #expect(overrides.contains("keybind = super+g=unbind"))
+    #expect(overrides.contains("keybind = super+shift+g=unbind"))
+    #expect(overrides.contains("keybind = super+shift+f=unbind"))
+  }
+
   @Test func configResolutionMergeLoadsBothTiers() {
     let plan = GhosttyRuntime.ConfigResolution.plan(mode: .mergeAfterDefault, supacodeUserConfigExists: true)
     #expect(plan.loadUserDefaultFiles)

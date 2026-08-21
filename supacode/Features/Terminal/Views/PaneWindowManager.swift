@@ -650,13 +650,6 @@ private struct WindowedPaneRootView: View {
         ) {
           performOnSelectedSurface(of: pane) { $0.navigateSearch(.previous) }
         }
-        .focusedSceneAction(
-          \.endSearchAction,
-          enabled: pane.selectedTab != nil,
-          token: pane.selectedTab?.content.id
-        ) {
-          performOnSelectedSurface(of: pane) { $0.performBindingAction("end_search") }
-        }
       } else {
         // The reconcile closes this window on the same layout change.
         Color.clear

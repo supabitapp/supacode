@@ -404,9 +404,6 @@ struct WorktreeDetailView: View {
       .focusedSceneAction(\.navigateSearchPreviousAction, enabled: hasActiveWorktree) {
         store.send(.navigateSearchPrevious)
       }
-      .focusedSceneAction(\.endSearchAction, enabled: hasActiveWorktree) {
-        store.send(.endSearch)
-      }
       .focusedSceneAction(\.runScriptAction, enabled: hasActiveWorktree) {
         store.send(.runScript)
       }

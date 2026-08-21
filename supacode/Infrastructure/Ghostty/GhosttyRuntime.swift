@@ -653,10 +653,19 @@ final class GhosttyRuntime {
   /// load last. Keeping Ghostty's close predicate enabled lets
   /// `confirmCloseSurface` decide whether Supacode prompts. Forcing
   /// `focus-follows-mouse` off hands hover-focus to Supacode's `hoverFocusMode`,
-  /// so the layout is the single authority and `.never` truly disables it.
+  /// so the layout is the single authority and `.never` truly disables it. Search
+  /// is owned app-side (the Find menu), so Ghostty's default search chords are
+  /// unbound unconditionally here, not just via the customizable `AppShortcuts`,
+  /// so disabling or rebinding a Find shortcut can't leave Ghostty driving it.
+  /// Escape is left bound so it still cancels a search and reaches full-screen TUIs.
   internal static let appOwnedOverridesString = """
     confirm-close-surface = true
     focus-follows-mouse = false
+    keybind = super+f=unbind
+    keybind = super+e=unbind
+    keybind = super+g=unbind
+    keybind = super+shift+g=unbind
+    keybind = super+shift+f=unbind
     """
 
   /// Reports Supacode in `TERM_PROGRAM` so programs detect the real host

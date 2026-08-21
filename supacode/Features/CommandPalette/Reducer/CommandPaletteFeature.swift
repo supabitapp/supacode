@@ -1058,9 +1058,9 @@ private func ghosttyCommandItems(_ commands: [GhosttyCommand]) -> [CommandPalett
   var items: [CommandPaletteItem] = []
   items.reserveCapacity(commands.count)
   for command in commands {
-    // Topology entries are replaced by the app's own layout commands; their
-    // surface-emitted actions are ignored by the conduit anyway.
-    guard !command.isTopologyCommand else { continue }
+    // Topology and search entries are owned by the app's own menus and chords;
+    // their surface-emitted actions are ignored, so drop the Ghostty entries.
+    guard !command.isTopologyCommand, !command.isSearchCommand else { continue }
     let subtitle = command.description.trimmingCharacters(in: .whitespacesAndNewlines)
     items.append(
       CommandPaletteItem(

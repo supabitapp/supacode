@@ -4,7 +4,6 @@ import SupacodeSettingsShared
 import SwiftUI
 
 struct TerminalCommands: Commands {
-  let ghosttyShortcuts: GhosttyShortcutManager
   @Shared(.settingsFile) private var settingsFile
   @FocusedValue(\.newTerminalAction) private var newTerminalAction
   @FocusedValue(\.renameTabAction) private var renameTabAction
@@ -17,7 +16,6 @@ struct TerminalCommands: Commands {
   @FocusedValue(\.searchSelectionAction) private var searchSelectionAction
   @FocusedValue(\.navigateSearchNextAction) private var navigateSearchNextAction
   @FocusedValue(\.navigateSearchPreviousAction) private var navigateSearchPreviousAction
-  @FocusedValue(\.endSearchAction) private var endSearchAction
 
   var body: some Commands {
     let overrides = settingsFile.global.shortcutOverrides
@@ -80,39 +78,35 @@ struct TerminalCommands: Commands {
       .help("Toggle Window Mode (\(toggleWindowMode?.display ?? "none"))")
     }
     CommandGroup(after: .textEditing) {
-      Button("Find...") {
-        startSearchAction?()
+      Menu {
+        Button("Find...") {
+          startSearchAction?()
+        }
+        .appKeyboardShortcut(AppShortcuts.startSearch.effective(from: overrides))
+        .disabled(startSearchAction?.isEnabled != true)
+
+        Button("Find Next") {
+          navigateSearchNextAction?()
+        }
+        .appKeyboardShortcut(AppShortcuts.findNext.effective(from: overrides))
+        .disabled(navigateSearchNextAction?.isEnabled != true)
+
+        Button("Find Previous") {
+          navigateSearchPreviousAction?()
+        }
+        .appKeyboardShortcut(AppShortcuts.findPrevious.effective(from: overrides))
+        .disabled(navigateSearchPreviousAction?.isEnabled != true)
+
+        Divider()
+
+        Button("Use Selection for Find") {
+          searchSelectionAction?()
+        }
+        .appKeyboardShortcut(AppShortcuts.useSelectionForFind.effective(from: overrides))
+        .disabled(searchSelectionAction?.isEnabled != true)
+      } label: {
+        Label("Find", systemImage: "text.page.badge.magnifyingglass")
       }
-      .ghosttyKeyboardShortcut("start_search", in: ghosttyShortcuts)
-      .disabled(startSearchAction?.isEnabled != true)
-
-      Button("Find Next") {
-        navigateSearchNextAction?()
-      }
-      .ghosttyKeyboardShortcut("navigate_search:next", in: ghosttyShortcuts)
-      .disabled(navigateSearchNextAction?.isEnabled != true)
-
-      Button("Find Previous") {
-        navigateSearchPreviousAction?()
-      }
-      .ghosttyKeyboardShortcut("navigate_search:previous", in: ghosttyShortcuts)
-      .disabled(navigateSearchPreviousAction?.isEnabled != true)
-
-      Divider()
-
-      Button("Hide Find Bar") {
-        endSearchAction?()
-      }
-      .ghosttyKeyboardShortcut("end_search", in: ghosttyShortcuts)
-      .disabled(endSearchAction?.isEnabled != true)
-
-      Divider()
-
-      Button("Use Selection for Find") {
-        searchSelectionAction?()
-      }
-      .ghosttyKeyboardShortcut("search_selection", in: ghosttyShortcuts)
-      .disabled(searchSelectionAction?.isEnabled != true)
     }
   }
 }
@@ -310,16 +304,5 @@ extension FocusedValues {
   var navigateSearchPreviousAction: FocusedAction<Void>? {
     get { self[NavigateSearchPreviousActionKey.self] }
     set { self[NavigateSearchPreviousActionKey.self] = newValue }
-  }
-}
-
-private struct EndSearchActionKey: FocusedValueKey {
-  typealias Value = FocusedAction<Void>
-}
-
-extension FocusedValues {
-  var endSearchAction: FocusedAction<Void>? {
-    get { self[EndSearchActionKey.self] }
-    set { self[EndSearchActionKey.self] = newValue }
   }
 }

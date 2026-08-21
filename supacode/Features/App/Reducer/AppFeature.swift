@@ -339,7 +339,6 @@ struct AppFeature {
     case searchSelection
     case navigateSearchNext
     case navigateSearchPrevious
-    case endSearch
     case systemNotificationsPermissionFailed(errorMessage: String?)
     case deeplinkReceived(URL, source: ActionSource = .urlScheme, responseFD: Int32? = nil)
     case deeplink(
@@ -1317,14 +1316,6 @@ struct AppFeature {
         }
         return .run { _ in
           await terminalClient.send(.navigateSearchPrevious(worktree))
-        }
-
-      case .endSearch:
-        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
-          return .none
-        }
-        return .run { _ in
-          await terminalClient.send(.endSearch(worktree))
         }
 
       case .settings(.repositorySettings(.delegate(.settingsChanged(let rootURL, let host)))):

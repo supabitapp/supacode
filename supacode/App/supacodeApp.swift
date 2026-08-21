@@ -652,7 +652,7 @@ struct SupacodeApp: App {
       WorktreeCommands(store: store)
       SidebarCommands()
       Group {
-        TerminalCommands(ghosttyShortcuts: ghosttyShortcuts)
+        TerminalCommands()
         TerminalTabSelectionCommands(store: store)
       }
       WindowCommands()
