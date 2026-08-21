@@ -1726,7 +1726,8 @@ struct CommandPaletteFeatureTests {
       isGitRepository: false
     )
     var state = RepositoriesFeature.State(reconciledRepositories: [folderRepo])
-    // A folder's custom name / color live on the sidebar section.
+    // Only a legacy section value is set here; with no per-row title it still
+    // surfaces as the folder's name and tint.
     state.$sidebar.withLock { sidebar in
       var section = sidebar.sections[folderRepo.id] ?? .init()
       section.title = "Design Docs"
@@ -1742,6 +1743,35 @@ struct CommandPaletteFeatureTests {
     #expect(item?.worktreeStyle?.titleTint == .teal)
     #expect(item?.worktreeStyle?.repoTint == nil)
     #expect(item?.worktreeStyle?.icon == .folder)
+  }
+
+  @Test func worktreeSwitcherItems_folderRowTitleWinsOverStaleSection() {
+    let folderURL = URL(fileURLWithPath: "/tmp/flip-folder")
+    let folderID = Repository.folderWorktreeID(for: folderURL)
+    let folderRepo = Repository(
+      id: RepositoryID(folderURL.path(percentEncoded: false)),
+      rootURL: folderURL,
+      name: "flip-folder",
+      worktrees: IdentifiedArray(uniqueElements: [
+        Worktree(
+          id: folderID, name: "flip-folder", detail: "", workingDirectory: folderURL, repositoryRootURL: folderURL)
+      ]),
+      isGitRepository: false
+    )
+    var state = RepositoriesFeature.State(reconciledRepositories: [folderRepo])
+    // The loaded folder row reads the per-row title, so it must win over a
+    // stale section value left behind by a git-to-folder kind flip.
+    state.$sidebar.withLock { sidebar in
+      var section = sidebar.sections[folderRepo.id] ?? .init()
+      section.title = "Stale Section"
+      sidebar.sections[folderRepo.id] = section
+    }
+    state.sidebarItems[id: folderID]?.customTitle = "Live Row"
+
+    let item = CommandPaletteFeature.worktreeSwitcherItems(from: state).first
+    // Guard that this stays on the folder branch, where the precedence lives.
+    #expect(item?.worktreeStyle?.icon == .folder)
+    #expect(item?.title == "Live Row")
   }
 
   @Test func worktreeSwitcherItems_iconMissingWinsOverPullRequest() {

@@ -1211,7 +1211,7 @@ extension SidebarState.Section {
 extension SidebarState {
   /// The user-set title for a repository, wherever it lives: the section for
   /// git repositories, the synthetic folder-worktree item for folder (non-git)
-  /// repositories — the row title the sidebar itself renders for a folder
+  /// repositories. That is the row title the sidebar itself renders for a folder
   /// (`SidebarFolderRow`), with the section as a fallback for a remote folder
   /// whose row hasn't loaded yet.
   func customTitle(for repository: Repository) -> String? {
@@ -1232,8 +1232,8 @@ extension SidebarState {
 
   /// Title for a repository that never entered the roster (load failure /
   /// environment blocked), where git-vs-folder can't be known. The section
-  /// wins, with the synthetic folder item as fallback — never the reverse: for
-  /// a git repository the item keyed by the repo root is its *main worktree*
+  /// wins, with the synthetic folder item as fallback, never the reverse: for
+  /// a git repository the item keyed by the repo root is its main worktree
   /// row, whose title is not the repository's.
   func customTitleForUnloadedRepository(_ repositoryID: Repository.ID) -> String? {
     let section = sections[repositoryID]

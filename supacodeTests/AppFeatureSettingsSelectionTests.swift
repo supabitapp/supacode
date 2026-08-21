@@ -112,7 +112,7 @@ struct AppFeatureSettingsSelectionTests {
   }
 
   /// Saving a customization never fires `repositoriesChanged`, so the
-  /// summaries must be re-sent from the save itself — with the new title,
+  /// summaries must be re-sent from the save itself, with the new title,
   /// since the save's sidebar write lands after AppFeature's handler runs.
   @Test func customizationSaveRefreshesSummariesWithNewTitle() async {
     let repository = Repository(
@@ -255,6 +255,81 @@ struct AppFeatureSettingsSelectionTests {
         )
       }
       $0.repositories.reconcileSidebarForTesting()
+    }
+    await store.receive(\.settings.repositoriesChanged) {
+      $0.settings.repositorySummaries = [
+        SettingsRepositorySummary(
+          id: repository.id.rawValue,
+          name: "Files",
+          isGitRepository: false
+        )
+      ]
+    }
+  }
+
+  /// The customization sheet's save reaches the same re-send through a
+  /// different action shape than `setWorktreeAppearance`; pin the folder arm so
+  /// a reorder of the delegate's associated values can't silently mis-gate it.
+  @Test func folderCustomizationSaveRefreshesSummariesWithNewTitle() async {
+    let repository = Repository(
+      id: "/tmp/notes",
+      rootURL: URL(fileURLWithPath: "/tmp/notes"),
+      name: "notes",
+      worktrees: [],
+      isGitRepository: false
+    )
+    var repositoriesState = RepositoriesFeature.State(reconciledRepositories: [repository])
+    repositoriesState.worktreeCustomization = WorktreeCustomizationFeature.State(
+      worktreeID: WorktreeID(repository.id.rawValue),
+      repositoryID: repository.id,
+      defaultName: repository.name,
+      title: "",
+      color: nil
+    )
+    repositoriesState.applyPostReduceCacheRecomputes()
+    var settingsState = SettingsFeature.State()
+    settingsState.repositorySummaries = [
+      SettingsRepositorySummary(
+        id: repository.id.rawValue,
+        name: repository.name,
+        isGitRepository: false
+      )
+    ]
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: settingsState
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(
+      .repositories(
+        .worktreeCustomization(
+          .presented(
+            .delegate(
+              .save(
+                worktreeID: WorktreeID(repository.id.rawValue),
+                repositoryID: repository.id,
+                title: "Files",
+                color: nil
+              )
+            )
+          )
+        )
+      )
+    ) {
+      $0.repositories.$sidebar.withLock { sidebar in
+        sidebar.setCustomization(
+          title: "Files",
+          color: nil,
+          worktree: WorktreeID(repository.id.rawValue),
+          in: repository.id
+        )
+      }
+      $0.repositories.reconcileSidebarForTesting()
+      $0.repositories.worktreeCustomization = nil
     }
     await store.receive(\.settings.repositoriesChanged) {
       $0.settings.repositorySummaries = [

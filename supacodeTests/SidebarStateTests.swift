@@ -704,4 +704,11 @@ struct SidebarStateTests {
     #expect(state.customTitle(for: repository(id: repoA.rawValue, isGitRepository: true)) == nil)
     #expect(state.customTitle(for: repository(id: repoA.rawValue, isGitRepository: false)) == nil)
   }
+
+  @Test func customColorIsNilWhenNothingCustomized() {
+    let state = SidebarState()
+
+    #expect(state.customColor(for: repository(id: repoA.rawValue, isGitRepository: true)) == nil)
+    #expect(state.customColor(for: repository(id: repoA.rawValue, isGitRepository: false)) == nil)
+  }
 }
