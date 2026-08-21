@@ -20,6 +20,42 @@ struct SidebarPersistenceKeyTests {
     #expect(groupActive == true)
   }
 
+  @Test func sectionSortDefaultsToManual() {
+    // Alphabetical is a view overlay on top of curated drag order. Defaulting
+    // it on would silently reshuffle every existing sidebar on upgrade.
+    @Shared(.sidebarSectionSort) var sectionSort
+    #expect(sectionSort == .manual)
+  }
+
+  @Test func sectionSortRawValuesAreStablePersistenceTokens() {
+    #expect(SidebarSectionSort.manual.rawValue == "manual")
+    #expect(SidebarSectionSort.alphabetical.rawValue == "alphabetical")
+  }
+
+  @Test func sectionSortPersistsRawValue() {
+    withDependencies {
+      $0.defaultAppStorage = .inMemory
+    } operation: {
+      @Shared(.sidebarSectionSort) var sectionSort
+      $sectionSort.withLock { $0 = .alphabetical }
+      @Dependency(\.defaultAppStorage) var store
+      #expect(store.string(forKey: "sidebarSectionSort") == "alphabetical")
+    }
+  }
+
+  @Test func sectionSortUnknownRawValueFallsBackToManual() {
+    // A forward mode written by a newer build (the enum's "add a case" contract)
+    // must decode to `.manual` on an older build, never crash or wedge the list.
+    withDependencies {
+      $0.defaultAppStorage = .inMemory
+    } operation: {
+      @Dependency(\.defaultAppStorage) var store
+      store.set("byActivity", forKey: "sidebarSectionSort")
+      @Shared(.sidebarSectionSort) var sectionSort
+      #expect(sectionSort == .manual)
+    }
+  }
+
   @Test func corruptBlobFallsBackToEmptyAndStashesItAside() {
     // A garbage UserDefaults value must decode-fail into the empty default (never
     // crash or wedge the sidebar), and the bytes must be preserved for recovery.

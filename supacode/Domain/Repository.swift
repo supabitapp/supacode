@@ -144,6 +144,21 @@ nonisolated struct Repository: Identifiable, Hashable, Sendable {
       : WorktreeID(repositoryID.rawValue)
   }
 
+  /// Case-insensitive sidebar-title order with `id` as the deterministic
+  /// final tie-break. Used when View → Sort is `.alphabetical`.
+  static func sidebarNameOrdersBefore(
+    _ lhsName: String,
+    id lhsID: Repository.ID,
+    _ rhsName: String,
+    id rhsID: Repository.ID
+  ) -> Bool {
+    switch lhsName.localizedCaseInsensitiveCompare(rhsName) {
+    case .orderedAscending: return true
+    case .orderedDescending: return false
+    case .orderedSame: return lhsID.rawValue < rhsID.rawValue
+    }
+  }
+
   /// Shared trim + fallback for the sidebar header and the highlight-row tag.
   /// Trims `custom`; falls back to `fallback` when the trimmed value is empty.
   static func sidebarDisplayName(custom: String?, fallback: String) -> String {

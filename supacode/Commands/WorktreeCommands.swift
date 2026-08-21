@@ -81,11 +81,13 @@ private struct WorktreeMainMenu: Commands {
       Button("Open Pull Request", systemImage: "arrow.up.forward") {
         if let url = snapshot.selectedPullRequestURL {
           NSWorkspace.shared.open(url)
+        } else {
+          store.send(.repositories(.openSelectedWorktreePullRequest))
         }
       }
       .appKeyboardShortcut(openPR)
-      .help("Open Pull Request (\(openPR?.display ?? "none"))")
-      .disabled(snapshot.selectedPullRequestURL == nil || !snapshot.githubIntegrationEnabled)
+      .help("Open Pull Request, re-checking for a new one (\(openPR?.display ?? "none"))")
+      .disabled(!snapshot.hasSelectedGitWorktree || !snapshot.githubIntegrationEnabled)
       Divider()
       Button("Refresh Worktrees", systemImage: "arrow.clockwise") {
         store.send(.refreshWorktreesRequested)

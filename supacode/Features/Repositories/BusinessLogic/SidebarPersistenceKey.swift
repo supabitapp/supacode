@@ -4,7 +4,7 @@ import Sharing
 import SupacodeSettingsShared
 
 /// Stable identity for the sidebar `SharedKey`. Mirrors
-/// `LayoutsKeyID` — a dummy struct so `SharedKey.id` can
+/// `LayoutsKeyID`, a dummy struct so `SharedKey.id` can
 /// discriminate this key from every other `SharedKey` in the app.
 nonisolated struct SidebarKeyID: Hashable, Sendable {}
 
@@ -93,5 +93,16 @@ nonisolated extension SharedReaderKey where Self == AppStorageKey<Bool>.Default 
   /// into a single Active section at the top of the sidebar.
   static var sidebarGroupActiveRows: Self {
     Self[.appStorage("sidebarGroupActiveRows"), default: true]
+  }
+}
+
+nonisolated extension SharedReaderKey
+where Self == AppStorageKey<SidebarSectionSort>.Default {
+  /// View-menu section sort. Raw values are the persistence tokens
+  /// (`manual`, `alphabetical`); add a case rather than a new boolean.
+  /// Defaults to `.manual` so an existing drag order is not rewritten
+  /// on upgrade.
+  static var sidebarSectionSort: Self {
+    Self[.appStorage("sidebarSectionSort"), default: .default]
   }
 }
