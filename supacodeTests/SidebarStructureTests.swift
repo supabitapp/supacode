@@ -611,6 +611,23 @@ struct SidebarStructureTests {
     #expect(repositorySectionIDs(in: sorted) == [zebra.id, alpha.id])
   }
 
+  @Test func sortByNameIgnoresStaleSectionTitleForFolderRow() {
+    // A folder that was once a customized git repo keeps its section title, but
+    // the folder row renders the worktree-item title. Sorting must follow the
+    // visible row, not the stale section title.
+    let folder = makeFolderRepository(path: "/tmp/mmm-folder")
+    let git = makeRepository(path: "/tmp/bbb")
+    var state = makeState(repositories: [folder, git])
+    state.$sidebar.withLock { sidebar in
+      sidebar.sections[folder.id, default: .init()].title = "aaa-stale"
+    }
+
+    let sorted = state.computeSidebarStructure(
+      groupPinned: false, groupActive: false, sectionSort: .alphabetical)
+    // "aaa-stale" would sort the folder first; its rendered name "mmm-folder" does not.
+    #expect(repositorySectionIDs(in: sorted) == [git.id, folder.id])
+  }
+
   @Test func sortByNameIsCaseInsensitiveAndStableOnTies() {
     let bravo = makeRepository(path: "/tmp/Bravo")
     let alphaLower = makeRepository(path: "/tmp/alpha")

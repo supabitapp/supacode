@@ -706,7 +706,7 @@ extension RepositoriesFeature.State {
   func computeSidebarStructure(
     groupPinned: Bool,
     groupActive: Bool,
-    sectionSort: SidebarSectionSort = .manual
+    sectionSort: SidebarSectionSort = .default
   ) -> SidebarStructure {
     if !isInitialLoadComplete, repositories.isEmpty {
       return SidebarStructure(
@@ -832,18 +832,15 @@ extension RepositoriesFeature.State {
     // `orderedRepositoryIDs()` (local roots and host-keyed remote ids honoring
     // the persisted sidebar order). Remote repos are no longer pinned below the
     // local ones: the user can interleave local and remote rows by drag.
-    // `reorderableRepositoryIDs` always mirrors that persisted order 1:1 (even
-    // ids with no rendered section, e.g. a still-loading root or a hoisted
-    // folder) so the offset-based `.repositoriesMoved` move maps cleanly back.
-    // Display order may sort independently of `sectionSort`; the persisted
-    // key order is not rewritten.
+    // `reorderableRepositoryIDs` mirrors that persisted order 1:1 (even ids with
+    // no rendered section, e.g. a still-loading root or a hoisted folder) so the
+    // offset-based `.repositoriesMoved` move maps cleanly back, regardless of the
+    // display order `sectionSort` draws. Drag is disabled in the view while
+    // sorted, so the persisted key order is never rewritten.
     let persistedRepositoryIDs = orderedRepositoryIDs()
     let displayRepositoryIDs = sectionSort.ordered(persistedRepositoryIDs) { id in
       repositorySidebarSortName(for: id, localRootsByID: localRootsByID)
     }
-    // Move mapping always uses persisted order, even when the list is drawn
-    // A–Z. Drag is disabled in the view while sorted, so these ids are unused
-    // then; keep them aligned with `.repositoriesMoved` for the off-sort path.
     reorderableRepositoryIDs = persistedRepositoryIDs
     for repositoryID in displayRepositoryIDs {
       let repository = repositories[id: repositoryID]
@@ -910,25 +907,31 @@ extension RepositoriesFeature.State {
     )
   }
 
-  /// Sidebar title used when section sort is `.alphabetical`. Matches the
-  /// header: custom section title, else a folder-row title, else the folder
-  /// name / last path component.
+  /// Sidebar title used when section sort is `.alphabetical`, matching each
+  /// section's rendered header: a git section shows the section title, a folder
+  /// row shows its worktree-item title, and a failed / blocked row shows the
+  /// section title, else the folder-item title, else the last path component.
   func repositorySidebarSortName(
     for repositoryID: Repository.ID,
     localRootsByID: [Repository.ID: URL]
   ) -> String {
     let sectionEntry = sidebar.sections[repositoryID]
     let folderItem = sectionEntry?.folderWorktreeItem(for: repositoryID)
-    let customTitle = sectionEntry?.title ?? folderItem?.title
     if let repository = repositories[id: repositoryID] {
+      // A folder row renders from its synthetic worktree item, so a section
+      // title left over from a prior git-repo customization must not leak in.
+      let customTitle = repository.isGitRepository ? sectionEntry?.title : folderItem?.title
       return Repository.sidebarDisplayName(custom: customTitle, fallback: repository.name)
     }
+    let customTitle = sectionEntry?.title ?? folderItem?.title
     if let rootURL = localRootsByID[repositoryID] {
       return Repository.sidebarDisplayName(
         custom: customTitle,
         fallback: Repository.name(for: rootURL)
       )
     }
+    // Unreachable for a rendered section: the build loop's guards drop any id
+    // absent from both maps, so this only orders a slot that is then discarded.
     return Repository.sidebarDisplayName(custom: customTitle, fallback: repositoryID.rawValue)
   }
 
