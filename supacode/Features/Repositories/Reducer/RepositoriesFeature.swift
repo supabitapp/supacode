@@ -583,7 +583,7 @@ struct RepositoriesFeature {
     case pullRequestOpenFetchLoaded(
       worktreeID: Worktree.ID,
       branch: String,
-      pullRequest: GithubPullRequest?
+      pullRequest: ForgePullRequest?
     )
     case pullRequestOpenFetchFailed(worktreeID: Worktree.ID, hasRemote: Bool)
     case showToast(StatusToast)
@@ -2553,6 +2553,13 @@ struct RepositoriesFeature {
           state.queuedPullRequestRefreshByRepositoryID.removeValue(forKey: repositoryID)
           state.pendingPullRequestRefreshByRepositoryID.removeValue(forKey: repositoryID)
         }
+        // A late open-fetch result would re-cache a chip or open a URL for the
+        // torn-down forge; cancel the fetches scoped to its repositories.
+        for worktreeID in Array(state.inFlightPullRequestOpenFetchWorktreeIDs)
+        where state.repositoryID(containing: worktreeID).map(teardownRepositoryIDs.contains) == true {
+          teardownEffects.append(.cancel(id: CancelID.pullRequestOpenFetch(worktreeID)))
+          state.inFlightPullRequestOpenFetchWorktreeIDs.remove(worktreeID)
+        }
         for row in state.sidebarItems
         where teardownRepositoryIDs.contains(row.repositoryID) && row.pullRequest != nil {
           teardownEffects.append(
@@ -2728,18 +2735,23 @@ struct RepositoriesFeature {
         }
         // Gate on availability, not the settings toggle, so a fetch can't hang on an unusable integration.
         guard state.githubIntegrationAvailability == .available else {
-          return .send(.showToast(.info("GitHub integration is unavailable.")))
+          return .send(.showToast(.info("Git forge integration is unavailable.")))
         }
         guard state.inFlightPullRequestOpenFetchWorktreeIDs.insert(worktreeID).inserted else {
           return .none
         }
         let repositoryRootURL = repository.rootURL
+        let repositoryHost = repository.host
         let branch = worktree.name
-        let forge = forge
+        let forgeRegistry = forgeRegistry
         return .merge(
           .send(.showToast(.inProgress("Checking for pull request…"))),
           .run { send in
-            guard let project = await forge.resolveProject(repositoryRootURL) else {
+            guard
+              let forgeID = await forgeRegistry.resolveForgeID(repositoryRootURL, repositoryHost),
+              let forge = forgeRegistry.client(forgeID),
+              let project = await forge.resolveProject(repositoryRootURL)
+            else {
               repositoriesLogger.error(
                 "Open-PR fetch: no forge remote for \(repositoryRootURL.path(percentEncoded: false))."
               )
@@ -2791,7 +2803,7 @@ struct RepositoriesFeature {
         let message =
           hasRemote
           ? "Couldn't check for pull requests."
-          : "No GitHub remote found for this repository."
+          : "No supported git forge found for this repository."
         return .send(.showToast(.info(message)))
 
       case .pullRequestAction(let worktreeID, let action):

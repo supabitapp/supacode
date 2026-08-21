@@ -9020,7 +9020,7 @@ struct RepositoriesFeatureTests {
     state.reconcileSidebarForTesting()
     state.selection = .worktree(featureWorktree.id)
     state.githubIntegrationAvailability = .available
-    let pullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name)
+    let pullRequest = makePullRequest(state: .open, headRefName: featureWorktree.name)
     state.sidebarItems[id: featureWorktree.id]?.pullRequest = pullRequest
 
     let opened = LockIsolated<[URL]>([])
@@ -9051,7 +9051,7 @@ struct RepositoriesFeatureTests {
     state.reconcileSidebarForTesting()
     state.selection = .worktree(featureWorktree.id)
     state.githubIntegrationAvailability = .available
-    let pullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name)
+    let pullRequest = makePullRequest(state: .open, headRefName: featureWorktree.name)
 
     let opened = LockIsolated<[URL]>([])
     let clock = TestClock()
@@ -9148,7 +9148,7 @@ struct RepositoriesFeatureTests {
     await store.receive(\.pullRequestOpenFetchFailed)
     await store.receive(\.showToast)
 
-    #expect(store.state.statusToast == .info("No GitHub remote found for this repository."))
+    #expect(store.state.statusToast == .info("No supported git forge found for this repository."))
     #expect(store.state.inFlightPullRequestOpenFetchWorktreeIDs.isEmpty)
 
     await clock.advance(by: .seconds(3))
@@ -9217,7 +9217,7 @@ struct RepositoriesFeatureTests {
     await store.send(.openSelectedWorktreePullRequest)
     await store.receive(\.showToast)
 
-    #expect(store.state.statusToast == .info("GitHub integration is unavailable."))
+    #expect(store.state.statusToast == .info("Git forge integration is unavailable."))
     #expect(store.state.inFlightPullRequestOpenFetchWorktreeIDs.isEmpty)
 
     await clock.advance(by: .seconds(3))
@@ -9326,7 +9326,7 @@ struct RepositoriesFeatureTests {
     state.selection = .worktree(featureWorktree.id)
     state.githubIntegrationAvailability = .available
     state.inFlightPullRequestOpenFetchWorktreeIDs = [featureWorktree.id]
-    let pullRequest = makePullRequest(state: "OPEN", headRefName: "old-name")
+    let pullRequest = makePullRequest(state: .open, headRefName: "old-name")
 
     let opened = LockIsolated<[URL]>([])
     let store = TestStore(initialState: state) {

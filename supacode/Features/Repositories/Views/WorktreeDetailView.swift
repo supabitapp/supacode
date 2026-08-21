@@ -43,12 +43,10 @@ struct WorktreeDetailView: View {
       selectedWorktree: selectedWorktree,
       selectedWorktreeSummaries: selectedWorktreeSummaries
     )
-    let hasActiveWorktree =
-      selectedWorktree != nil
-      && loadingInfo == nil
-      && !shouldShowMultiSelectionSummary(
-        repositories: repositories, selectedWorktreeSummaries: selectedWorktreeSummaries)
-      && selectedWorktree?.isMissing != true
+    let hasActiveWorktree = hasActiveWorktree(
+      repositories: repositories, loadingInfo: loadingInfo,
+      selectedWorktree: selectedWorktree, selectedWorktreeSummaries: selectedWorktreeSummaries
+    )
     // `toolbarNotificationGroupsCache` is observed inside `ToolbarNotificationsButtonHost`
     // instead; reading it here would re-render the body on every notification.
     let repositoriesStore = store.scope(state: \.repositories, action: \.repositories)
@@ -251,6 +249,19 @@ struct WorktreeDetailView: View {
       return false
     }
     return !repositories.isInitialLoadComplete
+  }
+
+  private func hasActiveWorktree(
+    repositories: RepositoriesFeature.State,
+    loadingInfo: WorktreeLoadingInfo?,
+    selectedWorktree: Worktree?,
+    selectedWorktreeSummaries: [MultiSelectedWorktreeSummary]
+  ) -> Bool {
+    selectedWorktree != nil
+      && loadingInfo == nil
+      && !shouldShowMultiSelectionSummary(
+        repositories: repositories, selectedWorktreeSummaries: selectedWorktreeSummaries)
+      && selectedWorktree?.isMissing != true
   }
 
   @ViewBuilder
