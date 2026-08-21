@@ -76,7 +76,7 @@ struct SidebarCommands: Commands {
           Toggle("Group Pinned Rows", isOn: Binding($groupPinnedRows))
           Toggle("Group Active Rows", isOn: Binding($groupActiveRows))
         }
-        Picker("Sort", selection: Binding($sectionSort)) {
+        Picker("Sort Sidebar Sections", selection: Binding($sectionSort)) {
           ForEach(SidebarSectionSort.allCases) { mode in
             Text(mode.menuTitle).tag(mode)
           }

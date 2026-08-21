@@ -78,11 +78,12 @@ struct SidebarListView: View {
       .onChange(of: nestWorktreesByBranch, initial: false) { _, _ in
         store.send(.sidebarNestByBranchChanged)
       }
-      .onChange(of: sectionSort, initial: true) { _, _ in
+      .onChange(of: sectionSort, initial: true) { oldValue, newValue in
         // `initial: true` so a change made while the sidebar column is
         // collapsed still lands on the next appear (the View menu writes
-        // `@Shared` even when this view is unmounted).
-        store.send(.sidebarSectionSortChanged)
+        // `@Shared` even when this view is unmounted). Animate a real toggle;
+        // the initial appear (oldValue == newValue) resyncs without motion.
+        store.send(.sidebarSectionSortChanged, animation: oldValue == newValue ? nil : .default)
       }
       .dropDestination(for: URL.self) { urls, _ in
         let fileURLs = urls.filter(\.isFileURL)
