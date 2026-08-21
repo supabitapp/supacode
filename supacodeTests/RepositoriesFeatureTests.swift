@@ -1757,6 +1757,413 @@ struct RepositoriesFeatureTests {
     #expect(store.state.alert == nil)
   }
 
+  @Test(.dependencies) func createWorktreeWithSupaignoreFiltersCopyAndSkipsWtCopy() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      $0.global.promptForWorktreeCreation = false
+      $0.global.copyIgnoredOnWorktreeCreate = true
+      $0.global.copyUntrackedOnWorktreeCreate = true
+    }
+    let plan = WorktreeCopyPlan.survivors(
+      ignoredCandidates: ["a.o"], untrackedCandidates: [".env", "config"], excluded: [])
+    let wtFlags = LockIsolated<(ignored: Bool, untracked: Bool)?>(nil)
+    let copiedPlan = LockIsolated<WorktreeCopyPlan?>(nil)
+    let rawCountCalled = LockIsolated(false)
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      // When supaignore is active the counts must come from the plan, never the
+      // raw ignored/untracked probes.
+      $0.gitClient.ignoredFileCount = { _ in
+        rawCountCalled.setValue(true)
+        return 99
+      }
+      $0.gitClient.untrackedFileCount = { _ in
+        rawCountCalled.setValue(true)
+        return 99
+      }
+      $0.gitClient.resolveSupaignore = { _, _, _, _ in .resolved(EffectiveSupaignorePatterns("node_modules/\n")!) }
+      $0.gitClient.worktreeCopyPlan = { _, _, _, _ in plan }
+      $0.gitClient.copyWorktreeArtifacts = { copiedPlanValue, _, _ in
+        copiedPlan.withValue { $0 = copiedPlanValue }
+        return WorktreeArtifactCopier.Outcome(copied: 1, failed: 0, firstErrorDescription: nil)
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, copyIgnored, copyUntracked, _, _ in
+        wtFlags.withValue { $0 = (copyIgnored, copyUntracked) }
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.createRandomWorktreeInRepository(repository.id))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.finish()
+
+    // `wt` copies nothing; Supacode copies the exact survivor plan itself.
+    #expect(wtFlags.value?.ignored == false)
+    #expect(wtFlags.value?.untracked == false)
+    #expect(copiedPlan.value == plan)
+    #expect(rawCountCalled.value == false)
+    #expect(store.state.alert == nil)
+  }
+
+  @Test(.dependencies) func createWorktreeWithoutSupaignoreDelegatesCopyToWt() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      $0.global.promptForWorktreeCreation = false
+      $0.global.copyUntrackedOnWorktreeCreate = true
+    }
+    let wtFlags = LockIsolated<(ignored: Bool, untracked: Bool)?>(nil)
+    let copyCalled = LockIsolated(false)
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.ignoredFileCount = { _ in 0 }
+      $0.gitClient.untrackedFileCount = { _ in 1 }
+      // `resolveSupaignore` defaults to nil (no filter), so the copy delegates
+      // to `wt` exactly as before.
+      $0.gitClient.copyWorktreeArtifacts = { _, _, _ in
+        copyCalled.withValue { $0 = true }
+        return WorktreeArtifactCopier.Outcome(copied: 0, failed: 0, firstErrorDescription: nil)
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, copyIgnored, copyUntracked, _, _ in
+        wtFlags.withValue { $0 = (copyIgnored, copyUntracked) }
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.createRandomWorktreeInRepository(repository.id))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.finish()
+
+    #expect(wtFlags.value?.ignored == false)
+    #expect(wtFlags.value?.untracked == true)
+    #expect(copyCalled.value == false)
+  }
+
+  @Test(.dependencies) func supaignoreCopyFailureSurfacesNonFatalAdvisory() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      $0.global.promptForWorktreeCreation = false
+      $0.global.copyUntrackedOnWorktreeCreate = true
+    }
+    let plan = WorktreeCopyPlan.survivors(
+      ignoredCandidates: [], untrackedCandidates: [".env", "config"], excluded: [])
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.resolveSupaignore = { _, _, _, _ in .resolved(EffectiveSupaignorePatterns("node_modules/\n")!) }
+      $0.gitClient.worktreeCopyPlan = { _, _, _, _ in plan }
+      $0.gitClient.copyWorktreeArtifacts = { _, _, _ in
+        WorktreeArtifactCopier.Outcome(copied: 0, failed: 2, firstErrorDescription: "boom")
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.createRandomWorktreeInRepository(repository.id))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.receive(\.presentAlert)
+    await store.finish()
+
+    // The worktree still lands; the copy failure is only an advisory.
+    #expect(store.state.repositories[id: repository.id]?.worktrees[id: createdWorktree.id] != nil)
+    #expect(store.state.alert?.title == TextState("Worktree created, some files not copied"))
+  }
+
+  @Test(.dependencies) func supaignorePlanFailureCopiesNothingAndAdvises() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      $0.global.promptForWorktreeCreation = false
+      $0.global.copyUntrackedOnWorktreeCreate = true
+    }
+    let wtFlags = LockIsolated<(ignored: Bool, untracked: Bool)?>(nil)
+    let copyCalled = LockIsolated(false)
+    struct PlanError: LocalizedError { var errorDescription: String? { "planboom" } }
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.resolveSupaignore = { _, _, _, _ in .resolved(EffectiveSupaignorePatterns("node_modules/\n")!) }
+      $0.gitClient.worktreeCopyPlan = { _, _, _, _ in throw PlanError() }
+      $0.gitClient.copyWorktreeArtifacts = { _, _, _ in
+        copyCalled.withValue { $0 = true }
+        return WorktreeArtifactCopier.Outcome(copied: 0, failed: 0, firstErrorDescription: nil)
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, copyIgnored, copyUntracked, _, _ in
+        wtFlags.withValue { $0 = (copyIgnored, copyUntracked) }
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.createRandomWorktreeInRepository(repository.id))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.receive(\.presentAlert)
+    await store.finish()
+
+    // Never fall back to wt's unfiltered copy, and never run the copier.
+    #expect(wtFlags.value?.ignored == false)
+    #expect(wtFlags.value?.untracked == false)
+    #expect(copyCalled.value == false)
+    #expect(store.state.repositories[id: repository.id]?.worktrees[id: createdWorktree.id] != nil)
+    #expect(store.state.alert?.title == TextState("Worktree created, some files not copied"))
+    #expect(store.state.alert?.message == TextState("The filtered file copy was skipped: planboom"))
+  }
+
+  @Test(.dependencies) func supaignoreResolutionFailureFailsSafe() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      $0.global.promptForWorktreeCreation = false
+      $0.global.copyUntrackedOnWorktreeCreate = true
+    }
+    let wtFlags = LockIsolated<(ignored: Bool, untracked: Bool)?>(nil)
+    let planCalled = LockIsolated(false)
+    let copyCalled = LockIsolated(false)
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      // A read failure must NOT fall back to wt's unfiltered copy.
+      $0.gitClient.resolveSupaignore = { _, _, _, _ in .failed(reason: "permission denied") }
+      $0.gitClient.worktreeCopyPlan = { _, _, _, _ in
+        planCalled.withValue { $0 = true }
+        return .survivors(ignoredCandidates: [], untrackedCandidates: [], excluded: [])
+      }
+      $0.gitClient.copyWorktreeArtifacts = { _, _, _ in
+        copyCalled.withValue { $0 = true }
+        return WorktreeArtifactCopier.Outcome(copied: 0, failed: 0, firstErrorDescription: nil)
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, copyIgnored, copyUntracked, _, _ in
+        wtFlags.withValue { $0 = (copyIgnored, copyUntracked) }
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.createRandomWorktreeInRepository(repository.id))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.receive(\.presentAlert)
+    await store.finish()
+
+    #expect(wtFlags.value?.ignored == false)
+    #expect(wtFlags.value?.untracked == false)
+    #expect(planCalled.value == false)
+    #expect(copyCalled.value == false)
+    #expect(store.state.repositories[id: repository.id]?.worktrees[id: createdWorktree.id] != nil)
+    #expect(store.state.alert?.title == TextState("Worktree created, some files not copied"))
+    #expect(
+      store.state.alert?.message
+        == TextState("The filtered file copy was skipped: permission denied"))
+  }
+
+  @Test(.dependencies) func supaignoreResolvedButEmptyPlanCopiesNothingWithoutWarning() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      $0.global.promptForWorktreeCreation = false
+      $0.global.copyUntrackedOnWorktreeCreate = true
+    }
+    let wtFlags = LockIsolated<(ignored: Bool, untracked: Bool)?>(nil)
+    let copyCalled = LockIsolated(false)
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.resolveSupaignore = { _, _, _, _ in .resolved(EffectiveSupaignorePatterns("*\n")!) }
+      // Everything filtered out: a valid resolution with an empty survivor set.
+      $0.gitClient.worktreeCopyPlan = { _, _, _, _ in
+        .survivors(ignoredCandidates: [], untrackedCandidates: [], excluded: [])
+      }
+      $0.gitClient.copyWorktreeArtifacts = { _, _, _ in
+        copyCalled.withValue { $0 = true }
+        return WorktreeArtifactCopier.Outcome(copied: 0, failed: 0, firstErrorDescription: nil)
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, copyIgnored, copyUntracked, _, _ in
+        wtFlags.withValue { $0 = (copyIgnored, copyUntracked) }
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.createRandomWorktreeInRepository(repository.id))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.finish()
+
+    #expect(wtFlags.value?.ignored == false)
+    #expect(wtFlags.value?.untracked == false)
+    #expect(copyCalled.value == false)
+    #expect(store.state.alert == nil)
+  }
+
+  @Test(.dependencies) func supaignoreCopyAndUpstreamFailuresCoalesceIntoOneAlert() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock {
+      $0.global.promptForWorktreeCreation = false
+      $0.global.copyUntrackedOnWorktreeCreate = true
+    }
+    struct UpstreamError: LocalizedError { var errorDescription: String? { "upstreamboom" } }
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.upstreamBranchExists = { _, _ in true }
+      $0.gitClient.setUpstreamBranch = { _, _, _ in throw UpstreamError() }
+      $0.gitClient.resolveSupaignore = { _, _, _, _ in .resolved(EffectiveSupaignorePatterns("node_modules/\n")!) }
+      $0.gitClient.worktreeCopyPlan = { _, _, _, _ in
+        .survivors(ignoredCandidates: [], untrackedCandidates: [".env"], excluded: [])
+      }
+      $0.gitClient.copyWorktreeArtifacts = { _, _, _ in
+        WorktreeArtifactCopier.Outcome(copied: 0, failed: 1, firstErrorDescription: "copyboom")
+      }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .createRandomWorktreeInRepository(repository.id, upstream: .branch("origin/feature-x")))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.receive(\.presentAlert)
+    await store.finish()
+
+    // The "with warnings" title is only produced when BOTH messages are present,
+    // so this proves the copy + upstream advisories coalesced into one alert
+    // rather than clobbering each other.
+    #expect(store.state.alert?.title == TextState("Worktree created with warnings"))
+    #expect(
+      store.state.alert?.message
+        == TextState("1 file(s) could not be copied. copyboom\n\nupstreamboom"))
+  }
+
+  @Test(.dependencies) func upstreamFailureWithoutSupaignoreAdvises() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    let createdWorktree = makeWorktree(
+      id: "/tmp/repo/swift-otter", name: "swift-otter", repoRoot: repoRoot)
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.promptForWorktreeCreation = false }
+    struct UpstreamError: LocalizedError { var errorDescription: String? { "upstreamboom" } }
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in [] }
+      $0.gitClient.isBareRepository = { _ in false }
+      $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
+      $0.gitClient.upstreamBranchExists = { _, _ in true }
+      $0.gitClient.setUpstreamBranch = { _, _, _ in throw UpstreamError() }
+      $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
+        AsyncThrowingStream { continuation in
+          continuation.yield(.finished(createdWorktree))
+          continuation.finish()
+        }
+      }
+      $0.gitClient.worktrees = { _ in [createdWorktree, mainWorktree] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .createRandomWorktreeInRepository(repository.id, upstream: .branch("origin/feature-x")))
+    await store.receive(\.createRandomWorktreeSucceeded)
+    await store.receive(\.presentAlert)
+    await store.finish()
+
+    #expect(store.state.alert?.title == TextState("Worktree created, upstream not updated"))
+    #expect(store.state.alert?.message == TextState("upstreamboom"))
+  }
+
   @Test(.dependencies) func createWorktreeFetchesRemoteWhenEnabled() async {
     let repoRoot = "/tmp/repo"
     let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
@@ -8273,6 +8680,378 @@ struct RepositoriesFeatureTests {
     state.selection = .archivedWorktrees
     state.dropStaleFailedRepositorySelection()
     #expect(state.selection == .archivedWorktrees)
+  }
+
+  // MARK: - Open pull request (re-fetching when none is known)
+
+  @Test func openSelectedWorktreePullRequestOpensKnownPullRequestWithoutRefetching() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    state.selection = .worktree(featureWorktree.id)
+    state.githubIntegrationAvailability = .available
+    let pullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name)
+    state.sidebarItems[id: featureWorktree.id]?.pullRequest = pullRequest
+
+    let opened = LockIsolated<[URL]>([])
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.urlOpener.open = { url in opened.withValue { $0.append(url) } }
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in
+        Issue.record("A known pull request must open without re-fetching.")
+        return [:]
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.openSelectedWorktreePullRequest)
+    await store.finish()
+
+    #expect(opened.value == [URL(string: pullRequest.url)!])
+    #expect(store.state.statusToast == nil)
+  }
+
+  @Test func openSelectedWorktreePullRequestFetchesAndOpensWhenAgentOpenedOne() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    state.selection = .worktree(featureWorktree.id)
+    state.githubIntegrationAvailability = .available
+    let pullRequest = makePullRequest(state: "OPEN", headRefName: featureWorktree.name)
+
+    let opened = LockIsolated<[URL]>([])
+    let clock = TestClock()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.urlOpener.open = { url in opened.withValue { $0.append(url) } }
+      $0.githubCLI.resolveRemoteInfo = { _ in
+        GithubRemoteInfo(host: "github.com", owner: "owner", repo: "project")
+      }
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in
+        [featureWorktree.name: pullRequest]
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.openSelectedWorktreePullRequest)
+    await store.receive(\.pullRequestOpenFetchLoaded)
+    await store.skipReceivedActions()
+
+    #expect(store.state.sidebarItems[id: featureWorktree.id]?.pullRequest == pullRequest)
+    #expect(opened.value == [URL(string: pullRequest.url)!])
+    #expect(store.state.inFlightPullRequestOpenFetchWorktreeIDs.isEmpty)
+    #expect(store.state.statusToast == nil)
+
+    await store.finish()
+  }
+
+  @Test func openSelectedWorktreePullRequestReportsNoPullRequestWhenNoneFound() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    state.selection = .worktree(featureWorktree.id)
+    state.githubIntegrationAvailability = .available
+
+    let opened = LockIsolated<[URL]>([])
+    let clock = TestClock()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.urlOpener.open = { url in opened.withValue { $0.append(url) } }
+      $0.githubCLI.resolveRemoteInfo = { _ in
+        GithubRemoteInfo(host: "github.com", owner: "owner", repo: "project")
+      }
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in [:] }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.openSelectedWorktreePullRequest)
+    await store.receive(\.pullRequestOpenFetchLoaded)
+    await store.receive(\.showToast)
+
+    #expect(store.state.statusToast == .info("No pull request found for this worktree."))
+    #expect(store.state.sidebarItems[id: featureWorktree.id]?.pullRequest == nil)
+    #expect(store.state.inFlightPullRequestOpenFetchWorktreeIDs.isEmpty)
+    #expect(opened.value.isEmpty)
+
+    await clock.advance(by: .seconds(3))
+    await store.receive(\.dismissToast)
+    await store.finish()
+  }
+
+  @Test func openSelectedWorktreePullRequestReportsFailureWhenFetchFails() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    state.selection = .worktree(featureWorktree.id)
+    state.githubIntegrationAvailability = .available
+
+    let clock = TestClock()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      // No remote info resolvable: the fetch can't run, so this is a failure, not "no PR".
+      $0.githubCLI.resolveRemoteInfo = { _ in nil }
+      $0.gitClient.remoteInfo = { _ in nil }
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in
+        Issue.record("batchPullRequests must not run when the remote can't be resolved.")
+        return [:]
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.openSelectedWorktreePullRequest)
+    await store.receive(\.pullRequestOpenFetchFailed)
+    await store.receive(\.showToast)
+
+    #expect(store.state.statusToast == .info("No GitHub remote found for this repository."))
+    #expect(store.state.inFlightPullRequestOpenFetchWorktreeIDs.isEmpty)
+
+    await clock.advance(by: .seconds(3))
+    await store.receive(\.dismissToast)
+    await store.finish()
+  }
+
+  @Test func openSelectedWorktreePullRequestReportsFailureWhenTheQueryThrows() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    state.selection = .worktree(featureWorktree.id)
+    state.githubIntegrationAvailability = .available
+
+    struct QueryError: Error {}
+    let clock = TestClock()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.githubCLI.resolveRemoteInfo = { _ in
+        GithubRemoteInfo(host: "github.com", owner: "owner", repo: "project")
+      }
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in throw QueryError() }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.openSelectedWorktreePullRequest)
+    await store.receive(\.pullRequestOpenFetchFailed)
+    await store.receive(\.showToast)
+
+    // A resolvable remote plus a thrown query is a transient failure, distinct from "no remote".
+    #expect(store.state.statusToast == .info("Couldn't check for pull requests."))
+    #expect(store.state.inFlightPullRequestOpenFetchWorktreeIDs.isEmpty)
+
+    await clock.advance(by: .seconds(3))
+    await store.receive(\.dismissToast)
+    await store.finish()
+  }
+
+  @Test func openSelectedWorktreePullRequestReportsUnavailableIntegration() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    state.selection = .worktree(featureWorktree.id)
+    state.githubIntegrationAvailability = .unavailable
+
+    let clock = TestClock()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in
+        Issue.record("No query should run while GitHub integration is unavailable.")
+        return [:]
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.openSelectedWorktreePullRequest)
+    await store.receive(\.showToast)
+
+    #expect(store.state.statusToast == .info("GitHub integration is unavailable."))
+    #expect(store.state.inFlightPullRequestOpenFetchWorktreeIDs.isEmpty)
+
+    await clock.advance(by: .seconds(3))
+    await store.receive(\.dismissToast)
+    await store.finish()
+  }
+
+  @Test func openSelectedWorktreePullRequestIsANoOpWithoutASelectedWorktree() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    state.selection = .archivedWorktrees
+    state.githubIntegrationAvailability = .available
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in
+        Issue.record("No query should run when no worktree is selected.")
+        return [:]
+      }
+    }
+
+    await store.send(.openSelectedWorktreePullRequest)
+    await store.finish()
+
+    #expect(store.state.statusToast == nil)
+    #expect(store.state.inFlightPullRequestOpenFetchWorktreeIDs.isEmpty)
+  }
+
+  @Test func openSelectedWorktreePullRequestDedupsConcurrentPresses() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    state.selection = .worktree(featureWorktree.id)
+    state.githubIntegrationAvailability = .available
+    // A fetch is already in flight for this worktree.
+    state.inFlightPullRequestOpenFetchWorktreeIDs = [featureWorktree.id]
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in
+        Issue.record("A second press while a fetch is in flight must not re-query.")
+        return [:]
+      }
+    }
+
+    await store.send(.openSelectedWorktreePullRequest)
+    await store.finish()
+
+    #expect(store.state.statusToast == nil)
+  }
+
+  @Test func openSelectedWorktreePullRequestSkipsRemoteWorktree() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let repository = Repository(
+      id: RepositoryID(repoRoot),
+      rootURL: URL(fileURLWithPath: repoRoot),
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [mainWorktree, featureWorktree]),
+      host: RemoteHost(alias: "devbox")
+    )
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    state.selection = .worktree(featureWorktree.id)
+    state.githubIntegrationAvailability = .available
+
+    let clock = TestClock()
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in
+        Issue.record("A remote repository has no local checkout for `gh` to query.")
+        return [:]
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.openSelectedWorktreePullRequest)
+    await store.receive(\.showToast)
+
+    #expect(store.state.statusToast == .info("Pull requests aren't available for remote repositories."))
+    #expect(store.state.inFlightPullRequestOpenFetchWorktreeIDs.isEmpty)
+
+    await clock.advance(by: .seconds(3))
+    await store.receive(\.dismissToast)
+    await store.finish()
+  }
+
+  @Test func openSelectedWorktreePullRequestDiscardsAResultForARenamedWorktree() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(id: "\(repoRoot)/feature", name: "feature", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    state.selection = .worktree(featureWorktree.id)
+    state.githubIntegrationAvailability = .available
+    state.inFlightPullRequestOpenFetchWorktreeIDs = [featureWorktree.id]
+    let pullRequest = makePullRequest(state: "OPEN", headRefName: "old-name")
+
+    let opened = LockIsolated<[URL]>([])
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.urlOpener.open = { url in opened.withValue { $0.append(url) } }
+    }
+    store.exhaustivity = .off
+
+    // The lookup was for a branch the worktree no longer carries (it is now "feature"),
+    // so the result must not open or cache an obsolete pull request.
+    await store.send(
+      .pullRequestOpenFetchLoaded(
+        worktreeID: featureWorktree.id,
+        branch: "old-name",
+        pullRequest: pullRequest
+      )
+    )
+    await store.skipReceivedActions()
+
+    #expect(opened.value.isEmpty)
+    #expect(store.state.sidebarItems[id: featureWorktree.id]?.pullRequest == nil)
+    #expect(store.state.inFlightPullRequestOpenFetchWorktreeIDs.isEmpty)
+    #expect(store.state.statusToast == nil)
+    await store.finish()
+  }
+
+  @Test func openSelectedWorktreePullRequestIsANoOpForAFolder() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree])
+    var state = makeState(repositories: [repository])
+    state.reconcileSidebarForTesting()
+    let folderID = WorktreeID("\(repoRoot)/notes")
+    state.sidebarItems[id: folderID] = makeSidebarItem(id: "\(repoRoot)/notes", name: "notes", kind: .folder)
+    state.selection = .worktree(folderID)
+    state.githubIntegrationAvailability = .available
+
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in
+        Issue.record("A folder has no branch or pull request to look up.")
+        return [:]
+      }
+    }
+
+    await store.send(.openSelectedWorktreePullRequest)
+    await store.finish()
+
+    #expect(store.state.statusToast == nil)
+    #expect(store.state.inFlightPullRequestOpenFetchWorktreeIDs.isEmpty)
   }
 
   private func makeWorktree(

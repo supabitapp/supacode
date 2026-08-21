@@ -22,6 +22,9 @@ public nonisolated struct ShellClient: Sendable {
   public var runStream: @Sendable (URL, [String], URL?) -> AsyncThrowingStream<ShellStreamEvent, Error>
   public var runLoginStreamImpl: @Sendable (URL, [String], URL?, Bool) -> AsyncThrowingStream<ShellStreamEvent, Error>
   public var runLoginProcessImpl: @Sendable (URL, [String], URL?, Bool) -> StreamingShellProcess
+  /// Runs a process capturing stdout as raw bytes, without the line-normalization
+  /// and boundary trim `run` applies, so significant edge whitespace survives.
+  public var runDataImpl: @Sendable (URL, [String], URL?) async throws -> Data
 
   public init(
     run: @escaping @Sendable (URL, [String], URL?) async throws -> ShellOutput,
@@ -29,10 +32,18 @@ public nonisolated struct ShellClient: Sendable {
     runStream: (@Sendable (URL, [String], URL?) -> AsyncThrowingStream<ShellStreamEvent, Error>)? = nil,
     runLoginStreamImpl:
       (@Sendable (URL, [String], URL?, Bool) -> AsyncThrowingStream<ShellStreamEvent, Error>)? = nil,
-    runLoginProcessImpl: (@Sendable (URL, [String], URL?, Bool) -> StreamingShellProcess)? = nil
+    runLoginProcessImpl: (@Sendable (URL, [String], URL?, Bool) -> StreamingShellProcess)? = nil,
+    runDataImpl: (@Sendable (URL, [String], URL?) async throws -> Data)? = nil
   ) {
     self.run = run
     self.runLoginImpl = runLoginImpl
+    // Default: reuse `run` and re-encode its (already normalized) stdout. Only the
+    // live client needs true byte preservation; mocks that don't exercise it are
+    // unaffected.
+    self.runDataImpl =
+      runDataImpl ?? { executableURL, arguments, currentDirectoryURL in
+        Data((try await run(executableURL, arguments, currentDirectoryURL)).stdout.utf8)
+      }
     self.runStream =
       runStream
       ?? { executableURL, arguments, currentDirectoryURL in
@@ -102,6 +113,15 @@ public nonisolated struct ShellClient: Sendable {
   ) -> StreamingShellProcess {
     runLoginProcessImpl(executableURL, arguments, currentDirectoryURL, log)
   }
+
+  /// Raw stdout bytes of a one-shot command, without `run`'s trim / normalization.
+  public func runData(
+    _ executableURL: URL,
+    _ arguments: [String],
+    _ currentDirectoryURL: URL?
+  ) async throws -> Data {
+    try await runDataImpl(executableURL, arguments, currentDirectoryURL)
+  }
 }
 
 extension ShellClient: DependencyKey {
@@ -147,6 +167,13 @@ extension ShellClient: DependencyKey {
         arguments: arguments,
         currentDirectoryURL: currentDirectoryURL,
         log: log
+      )
+    },
+    runDataImpl: { executableURL, arguments, currentDirectoryURL in
+      try await runProcessRawData(
+        executableURL: executableURL,
+        arguments: arguments,
+        currentDirectoryURL: currentDirectoryURL
       )
     }
   )
@@ -205,6 +232,55 @@ nonisolated private func runProcessStream(
     currentDirectoryURL: currentDirectoryURL
   ).events
 }
+
+/// Runs a process capturing stdout as raw bytes (no line-normalization or
+/// boundary trim), so significant edge whitespace survives. Both pipes drain
+/// off-thread to EOF so neither fills its buffer and deadlocks the child.
+nonisolated private func runProcessRawData(
+  executableURL: URL,
+  arguments: [String],
+  currentDirectoryURL: URL?
+) async throws -> Data {
+  let process = Process()
+  process.executableURL = executableURL
+  process.arguments = arguments
+  process.currentDirectoryURL = currentDirectoryURL
+  let outputPipe = Pipe()
+  let errorPipe = Pipe()
+  process.standardInput = FileHandle.nullDevice
+  process.standardOutput = outputPipe
+  process.standardError = errorPipe
+  let command = ([executableURL.path(percentEncoded: false)] + arguments).joined(separator: " ")
+  let (exitEvents, exitContinuation) = AsyncStream<Int32>.makeStream()
+  process.terminationHandler = { finished in
+    exitContinuation.yield(finished.terminationStatus)
+    exitContinuation.finish()
+  }
+  try process.run()
+  // Drain concurrently with the exit wait; the deadline is a stall backstop, not
+  // an expected path (a blob read closes the pipe on exit).
+  async let stdoutData = ShellClient.readToEndOrDeadline(
+    from: outputPipe.fileHandleForReading, deadlineSeconds: rawDataReadDeadlineSeconds)
+  async let stderrData = ShellClient.readToEndOrDeadline(
+    from: errorPipe.fileHandleForReading, deadlineSeconds: rawDataReadDeadlineSeconds)
+  var exitCode: Int32 = EXIT_FAILURE
+  for await status in exitEvents {
+    exitCode = status
+  }
+  let stdout = await stdoutData
+  let stderr = await stderrData
+  guard exitCode == 0 else {
+    throw ShellClientError(
+      command: command,
+      stdout: String(bytes: stdout, encoding: .utf8) ?? "",
+      stderr: String(bytes: stderr, encoding: .utf8) ?? "",
+      exitCode: exitCode
+    )
+  }
+  return stdout
+}
+
+private nonisolated let rawDataReadDeadlineSeconds: UInt64 = 30
 
 /// Wrap `executableURL` in a login shell and run it as a terminable process.
 nonisolated private func runLoginProcessHandle(

@@ -51,7 +51,7 @@ public struct RepositorySettingsView: View {
           Text("Copy ignored files to new worktrees")
           Text("Copies gitignored files from the main worktree.")
         }
-        .disabled(store.isBareRepository)
+        .disabled(store.isBareRepository || store.host != nil)
         Picker(selection: settings.copyUntrackedOnWorktreeCreate) {
           Text("Global \(Text(store.globalCopyUntrackedOnWorktreeCreate ? "Yes" : "No").foregroundStyle(.secondary))")
             .tag(Bool?.none)
@@ -61,9 +61,13 @@ public struct RepositorySettingsView: View {
           Text("Copy untracked files to new worktrees")
           Text("Copies untracked files from the main worktree.")
         }
-        .disabled(store.isBareRepository)
+        .disabled(store.isBareRepository || store.host != nil)
         if store.isBareRepository {
           Text("Copy flags are ignored for bare repositories.")
+            .appFont(.footnote)
+            .foregroundStyle(.tertiary)
+        } else if store.host != nil {
+          Text("Copying is available for local repositories only.")
             .appFont(.footnote)
             .foregroundStyle(.tertiary)
         }

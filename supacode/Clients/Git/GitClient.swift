@@ -20,6 +20,8 @@ enum GitOperation: String {
   case symbolicHeadRef = "symbolic_head_ref"
   case ignoredFileCount = "ignored_file_count"
   case untrackedFileCount = "untracked_file_count"
+  case supaignoreLookup = "supaignore_lookup"
+  case worktreeCopyPlan = "worktree_copy_plan"
   case fileStatus = "file_status"
   case stageFile = "stage_file"
   case unstageFile = "unstage_file"
@@ -635,6 +637,109 @@ struct GitClient {
       arguments: ["-C", path, "ls-files", "--others", "--exclude-standard"]
     )
     return parseFileListCount(output)
+  }
+
+  /// The `supaignore` blob committed at `baseRef`, read byte-preservingly from the
+  /// object store so a pattern's edge whitespace survives. `nil` when the ref has
+  /// no such blob (a directory named `supaignore` counts as none); throws on a
+  /// genuine lookup failure so the caller fails safe.
+  nonisolated func committedSupaignore(for repoRoot: URL, baseRef: String) async throws -> String? {
+    let path = repoRoot.path(percentEncoded: false)
+    let reference = baseRef.isEmpty ? "HEAD" : baseRef
+    let objectSpec = "\(reference):\(SupaignoreMerge.fileName)"
+    do {
+      // Only a committed blob is a supaignore file. A committed directory named
+      // `supaignore` makes `git show` emit a tree listing we would misread as
+      // patterns, so gate on the object type first.
+      let objectType = try await runGit(
+        operation: .supaignoreLookup,
+        arguments: ["-C", path, "cat-file", "-t", objectSpec],
+        localePinned: true
+      ).trimmingCharacters(in: .whitespacesAndNewlines)
+      guard objectType == "blob" else { return nil }
+      let data = try await runGitData(
+        operation: .supaignoreLookup,
+        arguments: ["-C", path, "show", objectSpec],
+        localePinned: true
+      )
+      // Decode without trimming so a pattern's leading / trailing whitespace is
+      // kept; a non-UTF-8 blob can't be read as patterns, so fail safe.
+      guard let output = String(bytes: data, encoding: .utf8) else {
+        throw GitClientError.commandFailed(
+          command: "git show \(objectSpec)", message: "supaignore is not valid UTF-8")
+      }
+      return output.isEmpty ? nil : output
+    } catch {
+      // Classify on git's stderr alone, not the full description, so a repo path
+      // that happens to contain the phrase can't mask a real error.
+      let stderr: String
+      if let gitError = error as? GitClientError, case .commandFailed(_, let message) = gitError {
+        stderr = message
+      } else {
+        stderr = "\(error)"
+      }
+      // Match git's full absent-file phrasing; any other failure throws (fails safe).
+      guard stderr.contains("does not exist in") || stderr.contains("exists on disk, but not in")
+      else {
+        gitLogger.error("supaignore lookup failed at \(reference) in \(path): \(stderr)")
+        throw error
+      }
+      return nil
+    }
+  }
+
+  /// The ignored / untracked files that survive `supaignore` filtering.
+  /// `supaignoreExclusions` omits `--exclude-standard`, so only the merged
+  /// `supaignore` patterns apply, never the repo's own `.gitignore`.
+  nonisolated func worktreeCopyPlan(
+    for repoRoot: URL,
+    copyIgnored: Bool,
+    copyUntracked: Bool,
+    excludePatterns: String
+  ) async throws -> WorktreeCopyPlan {
+    let path = repoRoot.path(percentEncoded: false)
+    let ignoredCandidates =
+      copyIgnored
+      ? try await nulSeparatedPaths(
+        arguments: ["-C", path, "ls-files", "-z", "--others", "-i", "--exclude-standard"])
+      : []
+    let untrackedCandidates =
+      copyUntracked
+      ? try await nulSeparatedPaths(
+        arguments: ["-C", path, "ls-files", "-z", "--others", "--exclude-standard"])
+      : []
+    let excluded = try await supaignoreExclusions(repoPath: path, patterns: excludePatterns)
+    return WorktreeCopyPlan.survivors(
+      ignoredCandidates: ignoredCandidates,
+      untrackedCandidates: untrackedCandidates,
+      excluded: Set(excluded)
+    )
+  }
+
+  /// The non-tracked files matching `patterns` under exact gitignore semantics,
+  /// isolated from the repo's own excludes by omitting `--exclude-standard`.
+  nonisolated private func supaignoreExclusions(
+    repoPath: String,
+    patterns: String
+  ) async throws -> [String] {
+    let tempURL = FileManager.default.temporaryDirectory
+      .appending(path: "supaignore-\(UUID().uuidString)")
+    try patterns.write(to: tempURL, atomically: true, encoding: .utf8)
+    defer { try? FileManager.default.removeItem(at: tempURL) }
+    return try await nulSeparatedPaths(
+      arguments: [
+        "-C", repoPath, "ls-files", "-z", "--others", "-i",
+        "--exclude-from=\(tempURL.path(percentEncoded: false))",
+      ]
+    )
+  }
+
+  // `ShellClient` decodes stdout as UTF-8 and trims its boundary whitespace, so
+  // a filename with leading whitespace or invalid UTF-8 bytes can be mutated or
+  // dropped here (rare; matches `fileStatus`'s `-z` handling).
+  nonisolated private func nulSeparatedPaths(arguments: [String]) async throws -> [String] {
+    let output = try await runGit(operation: .worktreeCopyPlan, arguments: arguments)
+    return output.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)
   }
 
   nonisolated func createWorktree(
@@ -1287,6 +1392,23 @@ struct GitClient {
     let command = ([env.path(percentEncoded: false)] + invocation).joined(separator: " ")
     do {
       return try await shell.run(env, invocation, nil).stdout
+    } catch {
+      throw wrapShellError(error, operation: operation, command: command)
+    }
+  }
+
+  // Byte-preserving variant of `runGit`: returns raw stdout so significant edge
+  // whitespace survives `ShellClient`'s normalization. Errors classify the same.
+  nonisolated private func runGitData(
+    operation: GitOperation,
+    arguments: [String],
+    localePinned: Bool = false
+  ) async throws -> Data {
+    let env = URL(fileURLWithPath: "/usr/bin/env")
+    let invocation = (localePinned ? ["LC_ALL=C", "LANG=C"] : []) + ["git"] + arguments
+    let command = ([env.path(percentEncoded: false)] + invocation).joined(separator: " ")
+    do {
+      return try await shell.runData(env, invocation, nil)
     } catch {
       throw wrapShellError(error, operation: operation, command: command)
     }
