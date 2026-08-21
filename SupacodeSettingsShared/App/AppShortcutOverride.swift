@@ -82,7 +82,7 @@ extension AppShortcutOverride {
     if modifiers.contains(.shift) { parts.append("⇧") }
     if modifiers.contains(.option) { parts.append("⌥") }
     if modifiers.contains(.control) { parts.append("⌃") }
-    parts.append(displayCharacter(for: keyCode, modifiers: modifiers))
+    parts.append(displayCharacter(for: keyCode))
     return parts
   }
 }
@@ -119,16 +119,36 @@ extension AppShortcutOverride {
       else {
         continue
       }
-      // Carbon modifier flags: cmdKey=0x100, shiftKey=0x200, optionKey=0x800, controlKey=0x1000.
-      var flags: ModifierFlags = []
-      if modifierFlags & 0x100 != 0 { flags.insert(.command) }
-      if modifierFlags & 0x200 != 0 { flags.insert(.shift) }
-      if modifierFlags & 0x800 != 0 { flags.insert(.option) }
-      if modifierFlags & 0x1000 != 0 { flags.insert(.control) }
+      let flags = Self.modifierFlags(fromSymbolicHotkeyMask: modifierFlags)
       let override = AppShortcutOverride(keyCode: UInt16(keyCode), modifiers: flags)
       result.insert(override.displayString)
     }
     return result
+  }
+
+  // AppleSymbolicHotKeys stores the modifier field as an NSEvent mask
+  // (command = 1 << 20, etc.), not Carbon bits.
+  public static func modifierFlags(fromSymbolicHotkeyMask mask: Int) -> ModifierFlags {
+    var flags: ModifierFlags = []
+    if mask & Int(NSEvent.ModifierFlags.command.rawValue) != 0 { flags.insert(.command) }
+    if mask & Int(NSEvent.ModifierFlags.shift.rawValue) != 0 { flags.insert(.shift) }
+    if mask & Int(NSEvent.ModifierFlags.option.rawValue) != 0 { flags.insert(.option) }
+    if mask & Int(NSEvent.ModifierFlags.control.rawValue) != 0 { flags.insert(.control) }
+    return flags
+  }
+}
+
+// MARK: - Carbon hotkey registration.
+
+extension AppShortcutOverride {
+  // Carbon modifier mask for `RegisterEventHotKey` (cmdKey, shiftKey, etc.).
+  public var carbonModifierFlags: UInt32 {
+    var mask: UInt32 = 0
+    if modifiers.contains(.command) { mask |= UInt32(cmdKey) }
+    if modifiers.contains(.shift) { mask |= UInt32(shiftKey) }
+    if modifiers.contains(.option) { mask |= UInt32(optionKey) }
+    if modifiers.contains(.control) { mask |= UInt32(controlKey) }
+    return mask
   }
 }
 
@@ -378,7 +398,7 @@ extension AppShortcutOverride {
     }
   }
 
-  public static func displayCharacter(for code: UInt16, modifiers: ModifierFlags = []) -> String {
+  public static func displayCharacter(for code: UInt16) -> String {
     switch Int(code) {
     case kVK_LeftArrow: return "←"
     case kVK_RightArrow: return "→"
@@ -390,10 +410,8 @@ extension AppShortcutOverride {
     case kVK_Tab: return "⇥"
     case kVK_Space: return "Space"
     default:
-      let modifierState = displayModifierState(for: modifiers)
-      if let character = currentLayoutCharacter(for: code, modifierState: modifierState) {
-        return character.uppercased()
-      }
+      // Show the key's base legend (its unmodified cap character). Applying shift
+      // or option would print a dead key or alternate glyph, not the shortcut key.
       return layoutCharacter(for: code)?.uppercased() ?? String(format: "0x%02x", code)
     }
   }
@@ -416,14 +434,5 @@ extension AppShortcutOverride {
       }
       return KeyEquivalent(char)
     }
-  }
-
-  // Only shift and option affect the printed character; command and control
-  // do not alter UCKeyTranslate output.
-  private static func displayModifierState(for modifiers: ModifierFlags) -> UInt32 {
-    var state: UInt32 = 0
-    if modifiers.contains(.shift) { state |= 0x02 }
-    if modifiers.contains(.option) { state |= 0x08 }
-    return state
   }
 }

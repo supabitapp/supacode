@@ -18,6 +18,39 @@ struct AppShortcutOverrideTests {
     #expect(decoded == override)
   }
 
+  @Test func carbonModifierFlagsMapsEachModifier() {
+    #expect(AppShortcutOverride(keyCode: 0, modifiers: []).carbonModifierFlags == 0)
+    #expect(AppShortcutOverride(keyCode: 0, modifiers: .command).carbonModifierFlags == UInt32(cmdKey))
+    #expect(AppShortcutOverride(keyCode: 0, modifiers: .shift).carbonModifierFlags == UInt32(shiftKey))
+    #expect(AppShortcutOverride(keyCode: 0, modifiers: .option).carbonModifierFlags == UInt32(optionKey))
+    #expect(AppShortcutOverride(keyCode: 0, modifiers: .control).carbonModifierFlags == UInt32(controlKey))
+  }
+
+  @Test func carbonModifierFlagsCombinesAllCombinations() {
+    let all: [AppShortcutOverride.ModifierFlags] = [.command, .shift, .option, .control]
+    for raw in 0..<16 {
+      var modifiers: AppShortcutOverride.ModifierFlags = []
+      var expected: UInt32 = 0
+      let carbon = [UInt32(cmdKey), UInt32(shiftKey), UInt32(optionKey), UInt32(controlKey)]
+      for bit in 0..<4 where raw & (1 << bit) != 0 {
+        modifiers.insert(all[bit])
+        expected |= carbon[bit]
+      }
+      #expect(AppShortcutOverride(keyCode: 0, modifiers: modifiers).carbonModifierFlags == expected)
+    }
+  }
+
+  @Test func symbolicHotkeyMaskDecodesNSEventModifiers() {
+    // Real AppleSymbolicHotKeys mask values across single and combined modifiers.
+    #expect(AppShortcutOverride.modifierFlags(fromSymbolicHotkeyMask: 0) == [])
+    #expect(AppShortcutOverride.modifierFlags(fromSymbolicHotkeyMask: 262144) == .control)
+    #expect(AppShortcutOverride.modifierFlags(fromSymbolicHotkeyMask: 524288) == .option)
+    #expect(AppShortcutOverride.modifierFlags(fromSymbolicHotkeyMask: 131072) == .shift)
+    #expect(AppShortcutOverride.modifierFlags(fromSymbolicHotkeyMask: 1_048_576) == .command)
+    #expect(AppShortcutOverride.modifierFlags(fromSymbolicHotkeyMask: 786432) == [.control, .option])
+    #expect(AppShortcutOverride.modifierFlags(fromSymbolicHotkeyMask: 1_179_648) == [.command, .shift])
+  }
+
   @Test func ghosttyKeybindUsesLayoutCharacter() {
     let code = UInt16(kVK_ANSI_LeftBracket)
     let override = AppShortcutOverride(keyCode: code, modifiers: [.command])
@@ -267,8 +300,17 @@ struct AppShortcutOverrideTests {
   @Test func displayStringAllModifiers() {
     let code = UInt16(kVK_ANSI_A)
     let override = AppShortcutOverride(keyCode: code, modifiers: [.command, .shift, .option, .control])
-    let char = AppShortcutOverride.displayCharacter(for: code, modifiers: [.shift, .option])
+    let char = AppShortcutOverride.displayCharacter(for: code)
     #expect(override.displayString == "⌘⇧⌥⌃\(char)")
+  }
+
+  // The key legend is the base cap character, not the option-transformed dead key
+  // (⌥N is "⌥N", never "⌥˜").
+  @Test func displayStringUsesBaseLegendIgnoringOption() {
+    let code = UInt16(kVK_ANSI_N)
+    let base = AppShortcutOverride.layoutCharacter(for: code)!.uppercased()
+    let override = AppShortcutOverride(keyCode: code, modifiers: [.command, .option])
+    #expect(override.displayString == "⌘⌥\(base)")
   }
 
   @Test func ghosttyKeybindAllModifiers() {

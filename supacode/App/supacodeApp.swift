@@ -44,9 +44,13 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
     }
   }
   var terminalManager: WorktreeTerminalManager?
+  var globalHotkeyMonitor: GlobalHotkeyMonitor?
   private var bufferedDeeplinkURLs: [URL] = []
 
   func applicationWillTerminate(_ notification: Notification) {
+    // Release the global Carbon registration explicitly rather than leaning on
+    // deinit timing.
+    globalHotkeyMonitor?.tearDown()
     // Drop the queued debounce timers; a flush already on the writer's serial
     // queue still completes, but the terminal write below runs on that same queue
     // and is therefore ordered strictly after it, never regressed by a late flush.
@@ -123,6 +127,7 @@ struct SupacodeApp: App {
   @State private var terminalManager: WorktreeTerminalManager
   @State private var worktreeInfoWatcher: WorktreeInfoWatcherManager
   @State private var commandKeyObserver: CommandKeyObserver
+  @State private var globalHotkeyMonitor: GlobalHotkeyMonitor
   @State private var openActionIcons = OpenActionIconStore()
   @State private var store: StoreOf<AppFeature>
 
@@ -167,15 +172,19 @@ struct SupacodeApp: App {
     // environment; the app shell is the only place both exist.
     terminalManager.paneWindows.ghosttyShortcuts = shortcuts
     terminalManager.paneWindows.commandKeyObserver = keyObserver
+    let hotkeyMonitor = GlobalHotkeyMonitor()
+    _globalHotkeyMonitor = State(initialValue: hotkeyMonitor)
     let appStore = Self.makeStore(
       initialSettings: initialSettings,
       runtime: runtime,
       terminalManager: terminalManager,
-      worktreeInfoWatcher: worktreeInfoWatcher
+      worktreeInfoWatcher: worktreeInfoWatcher,
+      globalHotkeyMonitor: hotkeyMonitor
     )
     _store = State(initialValue: appStore)
     appDelegate.appStore = appStore
     appDelegate.terminalManager = terminalManager
+    appDelegate.globalHotkeyMonitor = hotkeyMonitor
     terminalManager.appStore = appStore
     // Surface a partial-relocation failure once the store exists so the alert
     // presents on first window. The data is preserved regardless.
@@ -223,12 +232,16 @@ struct SupacodeApp: App {
     initialSettings: GlobalSettings,
     runtime: GhosttyRuntime,
     terminalManager: WorktreeTerminalManager,
-    worktreeInfoWatcher: WorktreeInfoWatcherManager
+    worktreeInfoWatcher: WorktreeInfoWatcherManager,
+    globalHotkeyMonitor: GlobalHotkeyMonitor
   ) -> StoreOf<AppFeature> {
     Store(initialState: AppFeature.State(settings: SettingsFeature.State(settings: initialSettings))) {
       AppFeature()
         .logActions()
     } withDependencies: { values in
+      // Inject the app-owned monitor so the reducer's register/unregister
+      // intent reaches the single Carbon instance created at launch.
+      values.appLifecycleClient.updateGlobalHotkey = { globalHotkeyMonitor.apply($0) }
       values[LayoutContentFactory.self] = Self.makeContentFactory(
         runtime: runtime,
         terminalManager: terminalManager
@@ -626,6 +639,7 @@ struct SupacodeApp: App {
           .environment(commandKeyObserver)
           .environment(openActionIcons)
           .appChromeTextSize(store.settings.chromeTextSize)
+          .background { GlobalHotkeyInstaller(monitor: globalHotkeyMonitor) }
       }
       .openSettingsOnSelection(store: store)
       .openDeeplinkReferenceOnRequest(store: store)

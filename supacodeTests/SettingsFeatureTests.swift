@@ -229,6 +229,87 @@ struct SettingsFeatureTests {
     await store.skipReceivedActions()
   }
 
+  @Test(.dependencies) func settingGlobalToggleHotkeyPersistsChanges() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    let chord = AppShortcutOverride(keyCode: 49, modifiers: [.command, .shift])
+    await store.send(.setGlobalToggleHotkey(chord)) {
+      $0.globalToggleVisibilityHotkey = chord
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.globalToggleVisibilityHotkey == chord)
+  }
+
+  @Test(.dependencies) func clearingGlobalToggleHotkeyPersistsNil() async {
+    let chord = AppShortcutOverride(keyCode: 49, modifiers: [.command, .shift])
+    var initial = GlobalSettings.default
+    initial.globalToggleVisibilityHotkey = chord
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initial }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initial)) {
+      SettingsFeature()
+    }
+
+    await store.send(.setGlobalToggleHotkey(nil)) {
+      $0.globalToggleVisibilityHotkey = nil
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.globalToggleVisibilityHotkey == nil)
+  }
+
+  @Test(.dependencies) func settingUnchangedGlobalToggleHotkeyIsNoOp() async {
+    let chord = AppShortcutOverride(keyCode: 49, modifiers: [.command, .shift])
+    var initial = GlobalSettings.default
+    initial.globalToggleVisibilityHotkey = chord
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initial }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initial)) {
+      SettingsFeature()
+    }
+
+    // No state mutation and no persist effect when the chord is unchanged.
+    await store.send(.setGlobalToggleHotkey(chord))
+  }
+
+  @Test(.dependencies) func settingDisabledGlobalToggleHotkeyStoresNil() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    // A disabled override is unbound; it must collapse to nil, not a phantom chord.
+    await store.send(.setGlobalToggleHotkey(.disabled))
+    #expect(store.state.globalToggleVisibilityHotkey == nil)
+  }
+
+  @Test(.dependencies) func recordingGlobalToggleHotkeyClearsFailureFlag() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    await store.send(.setGlobalHotkeyRegistrationFailed(true)) {
+      $0.globalHotkeyRegistrationFailed = true
+    }
+    let chord = AppShortcutOverride(keyCode: 49, modifiers: [.command, .shift])
+    await store.send(.setGlobalToggleHotkey(chord)) {
+      $0.globalToggleVisibilityHotkey = chord
+      $0.globalHotkeyRegistrationFailed = false
+    }
+    await store.receive(\.delegate.settingsChanged)
+  }
+
   @Test(.dependencies) func confirmCloseSurfacePersistsChanges() async {
     var initialSettings = GlobalSettings.default
     initialSettings.confirmCloseSurface = true

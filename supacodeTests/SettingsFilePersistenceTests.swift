@@ -282,6 +282,37 @@ struct SettingsFilePersistenceTests {
     #expect(decoded.ghosttyUserConfigMode == .mergeAfterDefault)
   }
 
+  @Test func globalToggleVisibilityHotkeyPersistsThroughRoundTrip() throws {
+    var settings = GlobalSettings.default
+    settings.globalToggleVisibilityHotkey = AppShortcutOverride(keyCode: 49, modifiers: [.command, .shift])
+    let data = try JSONEncoder().encode(settings)
+    let decoded = try JSONDecoder().decode(GlobalSettings.self, from: data)
+    #expect(decoded.globalToggleVisibilityHotkey == settings.globalToggleVisibilityHotkey)
+  }
+
+  // Files written before the key existed decode to nil (unbound), never a throw.
+  @Test func globalToggleVisibilityHotkeyDefaultsToNilWhenKeyMissing() throws {
+    let data = try JSONEncoder().encode(GlobalSettings.default)
+    var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    object.removeValue(forKey: "globalToggleVisibilityHotkey")
+    let stripped = try JSONSerialization.data(withJSONObject: object)
+    let decoded = try JSONDecoder().decode(GlobalSettings.self, from: stripped)
+    #expect(decoded.globalToggleVisibilityHotkey == nil)
+  }
+
+  // A corrupt hotkey value falls back to nil instead of resetting the whole file.
+  @Test func globalToggleVisibilityHotkeyFallsBackWhenCorrupt() throws {
+    var global = GlobalSettings.default
+    global.appearanceMode = .light
+    let data = try JSONEncoder().encode(global)
+    var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    object["globalToggleVisibilityHotkey"] = "not-an-object"
+    let corrupted = try JSONSerialization.data(withJSONObject: object)
+    let decoded = try JSONDecoder().decode(GlobalSettings.self, from: corrupted)
+    #expect(decoded.globalToggleVisibilityHotkey == nil)
+    #expect(decoded.appearanceMode == .light)
+  }
+
   @Test(.dependencies) func invalidJSONResetsToDefaults() throws {
     let storage = MutableTestStorage(initialData: Data("{".utf8))
 

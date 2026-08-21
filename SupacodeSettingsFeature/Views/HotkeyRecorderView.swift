@@ -10,18 +10,31 @@ struct Keycap: View {
   var body: some View {
     Text(symbol)
       .appFont(.body, weight: .medium, monospaced: true)
-      .padding(.horizontal, 6)
+      .lineLimit(1)
+      .padding(.horizontal, 8)
       .frame(minWidth: 28, minHeight: 28)
+      // Size the cap to its content so a wide label like "Space" fits.
+      .fixedSize()
       .background(.quaternary, in: .rect(cornerRadius: 6))
   }
 }
 
 // Popover content for recording a hotkey, Raycast-style.
-struct HotkeyRecorderPopover: View {
+public struct HotkeyRecorderPopover: View {
   let onRecorded: (AppShortcutOverride) -> Void
   let onCancelled: () -> Void
   // Returns the display name of the conflicting shortcut, or nil if no conflict.
   let conflictChecker: (AppShortcutOverride) -> String?
+
+  public init(
+    onRecorded: @escaping (AppShortcutOverride) -> Void,
+    onCancelled: @escaping () -> Void,
+    conflictChecker: @escaping (AppShortcutOverride) -> String?
+  ) {
+    self.onRecorded = onRecorded
+    self.onCancelled = onCancelled
+    self.conflictChecker = conflictChecker
+  }
 
   private enum Result {
     case recorded(AppShortcutOverride)
@@ -33,7 +46,7 @@ struct HotkeyRecorderPopover: View {
   @State private var shakeOffset: CGFloat = 0
   @State private var dismissTask: Task<Void, Never>?
 
-  var body: some View {
+  public var body: some View {
     VStack(spacing: 8) {
       switch result {
       case .recorded(let override):

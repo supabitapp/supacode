@@ -50,6 +50,7 @@ public struct AppearanceSettingsView: View {
           Text("Visibility")
           Text("Show Supacode in the Dock, the menu bar, or both.")
         }
+        GlobalHotkeySettingRow(store: store)
       }
       Section {
         Picker(selection: $store.confirmCloseTab) {
@@ -141,5 +142,82 @@ public struct AppearanceSettingsView: View {
     .padding(.leading, -8)
     .padding(.trailing, -6)
     .navigationTitle("General")
+  }
+}
+
+// System-wide show/hide hotkey, sharing the recorder UX with the shortcut table.
+private struct GlobalHotkeySettingRow: View {
+  @Bindable var store: StoreOf<SettingsFeature>
+  @State private var isRecording = false
+
+  var body: some View {
+    LabeledContent {
+      HStack(spacing: 6) {
+        if let hotkey = store.globalToggleVisibilityHotkey {
+          Button {
+            isRecording = true
+          } label: {
+            Text(hotkey.displayString)
+              .foregroundStyle(.primary)
+          }
+          .buttonStyle(.plain)
+          .help("Change the shortcut.")
+          Button {
+            store.send(.setGlobalToggleHotkey(nil))
+          } label: {
+            Image(systemName: "xmark")
+              .imageScale(.small)
+              .fontWeight(.semibold)
+              .padding(2)
+              .accessibilityLabel("Remove shortcut")
+          }
+          .buttonStyle(.bordered)
+          .buttonBorderShape(.circle)
+          .controlSize(.small)
+          // Inset so the circle aligns with the disclosure controls in the rows below.
+          .padding(.trailing, 3.5)
+          .help("Remove the shortcut.")
+        } else {
+          Button("Record") {
+            isRecording = true
+          }
+          .help("Record a system-wide hotkey to toggle Supacode.")
+        }
+      }
+      .popover(isPresented: $isRecording) {
+        HotkeyRecorderPopover(
+          onRecorded: { store.send(.setGlobalToggleHotkey($0)) },
+          onCancelled: { isRecording = false },
+          conflictChecker: conflictName(for:)
+        )
+      }
+      .contextMenu {
+        Button("Record Shortcut…") { isRecording = true }
+        if store.globalToggleVisibilityHotkey != nil {
+          Divider()
+          Button("Remove Shortcut") { store.send(.setGlobalToggleHotkey(nil)) }
+        }
+      }
+    } label: {
+      Text("Global hotkey")
+      if store.globalHotkeyRegistrationFailed {
+        Text("That hotkey is unavailable. Another app may already use it.")
+          .foregroundStyle(.red)
+      } else {
+        Text("Toggle Supacode from anywhere.")
+      }
+    }
+  }
+
+  // A global chord captured system-wide would also shadow a matching in-app
+  // shortcut, so reject both system-reserved chords and effective app shortcuts.
+  private func conflictName(for override: AppShortcutOverride) -> String? {
+    let display = override.displayString
+    if AppShortcutOverride.allReservedDisplayStrings().contains(display) { return "the system" }
+    for shortcut in AppShortcuts.all {
+      guard let effective = shortcut.effective(from: store.shortcutOverrides) else { continue }
+      if effective.display == display { return shortcut.displayName }
+    }
+    return nil
   }
 }

@@ -1,3 +1,4 @@
+import SupacodeSettingsFeature
 import SupacodeSettingsShared
 import SwiftUI
 

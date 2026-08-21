@@ -167,6 +167,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var automaticRepositoryRefreshEnabled: Bool
   /// Whether hovering a split pane focuses it (focus follows mouse). Off by default.
   public var hoverFocusMode: HoverFocusMode
+  /// System-wide chord that toggles the app; nil (the default) leaves it unbound.
+  public var globalToggleVisibilityHotkey: AppShortcutOverride?
 
   public static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -252,7 +254,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminalHibernationEnabled: Bool = true,
     chromeTextSize: ChromeTextSize = .default,
     automaticRepositoryRefreshEnabled: Bool = true,
-    hoverFocusMode: HoverFocusMode = .never
+    hoverFocusMode: HoverFocusMode = .never,
+    globalToggleVisibilityHotkey: AppShortcutOverride? = nil
   ) {
     self.appearanceMode = appearanceMode
     self.defaultEditorID = defaultEditorID
@@ -296,6 +299,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.chromeTextSize = chromeTextSize
     self.automaticRepositoryRefreshEnabled = automaticRepositoryRefreshEnabled
     self.hoverFocusMode = hoverFocusMode
+    self.globalToggleVisibilityHotkey = globalToggleVisibilityHotkey
   }
 
   /// Keys for reading renamed settings fields that no longer
@@ -512,6 +516,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
       ((try? container.decodeIfPresent(String.self, forKey: .hoverFocusMode)) ?? nil)
       .flatMap(HoverFocusMode.init(rawValue:))
       ?? Self.default.hoverFocusMode
+    // A malformed value falls back to unbound instead of throwing, which would
+    // reset the whole file to defaults.
+    globalToggleVisibilityHotkey =
+      ((try? container.decodeIfPresent(AppShortcutOverride.self, forKey: .globalToggleVisibilityHotkey)) ?? nil)
+      ?? Self.default.globalToggleVisibilityHotkey
   }
 }
 
