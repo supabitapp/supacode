@@ -78,25 +78,177 @@ final class GitLabSettingsViewModel {
   }
 }
 
-/// One CLI status row: title, secondary detail, and a tinted leading glyph.
-private struct ForgeStatusLabel: View {
-  let title: String
-  let detail: String
-  let systemImage: String
-  let tint: Color
+/// One status detail line under a forge row's subtitle; `tint` nil renders secondary.
+private struct ForgeStatusLine: View {
+  let text: Text
+  var tint: Color?
 
   var body: some View {
-    Label {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(title)
-        Text(detail)
-          .foregroundStyle(.secondary)
-          .appFont(.callout)
+    text
+      .appFont(.subheadline)
+      .foregroundStyle(tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
+  }
+}
+
+/// One supported (or unsupported) feature in a forge row's grid.
+private struct ForgeFeature: Identifiable {
+  let name: String
+  let isSupported: Bool
+
+  var id: String { name }
+}
+
+extension ForgeCapabilities {
+  fileprivate var features: [ForgeFeature] {
+    [
+      ForgeFeature(name: "Sidebar \(vocabulary.abbreviation) icons", isSupported: true),
+      ForgeFeature(name: "Inspector details", isSupported: true),
+      ForgeFeature(name: "Command palette actions", isSupported: true),
+      ForgeFeature(name: "Auto-archive merged worktrees", isSupported: true),
+      ForgeFeature(name: "Squash merges", isSupported: mergeStrategies.contains(.squash)),
+      ForgeFeature(name: "Rebase merges", isSupported: mergeStrategies.contains(.rebase)),
+      ForgeFeature(name: "Mark ready for review", isSupported: canMarkReady),
+      ForgeFeature(name: "Re-run failed \(vocabulary.ciNoun.lowercased())", isSupported: canRerunChecks),
+      ForgeFeature(name: "Copy failure logs", isSupported: canCopyCIFailureLogs),
+    ]
+  }
+}
+
+private struct ForgeFeatureCell: View {
+  let feature: ForgeFeature
+
+  var body: some View {
+    HStack(spacing: 4) {
+      Image(systemName: feature.isSupported ? "checkmark" : "minus")
+        .foregroundStyle(feature.isSupported ? AnyShapeStyle(.green) : AnyShapeStyle(.tertiary))
+        .frame(width: 12)
+        .accessibilityLabel(feature.isSupported ? "Supported" : "Not supported")
+      Text(feature.name)
+        .foregroundStyle(feature.isSupported ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+    }
+    .appFont(.caption)
+  }
+}
+
+private struct ForgeFeatureGrid: View {
+  let capabilities: ForgeCapabilities
+
+  private static let columns = [
+    GridItem(.flexible(), alignment: .leading),
+    GridItem(.flexible(), alignment: .leading),
+  ]
+
+  var body: some View {
+    LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 4) {
+      ForEach(capabilities.features) { feature in
+        ForgeFeatureCell(feature: feature)
       }
-    } icon: {
-      Image(systemName: systemImage)
-        .foregroundStyle(tint)
+    }
+    .padding(.top, 4)
+  }
+}
+
+/// One forge row: service icon, title, status detail, and the enable switch.
+private struct ForgeRow<Detail: View>: View {
+  let title: String
+  let assetName: String
+  let capabilities: ForgeCapabilities
+  var isBeta = false
+  @Binding var isEnabled: Bool
+  @ViewBuilder var detail: Detail
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 10) {
+      Image(assetName)
+        .resizable()
+        .aspectRatio(contentMode: .fit)
+        .frame(width: 18, height: 18)
+        .foregroundStyle(.primary)
+        // Image has no native baseline; nudge so its visual center sits near the title baseline.
+        .alignmentGuide(.firstTextBaseline) { dimension in dimension[.bottom] - 5 }
         .accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: 6) {
+          Text(title)
+          isBeta ? BetaBadge() : nil
+        }
+        detail
+        ForgeFeatureGrid(capabilities: capabilities)
+      }
+      Spacer()
+      Toggle(title, isOn: $isEnabled)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .help("Enable or disable the \(title) integration.")
+    }
+  }
+}
+
+private struct GithubForgeStatusView: View {
+  let state: GithubSettingsViewModel.State
+
+  var body: some View {
+    switch state {
+    case .loading:
+      ForgeStatusLine(text: Text("Checking GitHub CLI…"))
+    case .unavailable:
+      HStack(spacing: 6) {
+        ForgeStatusLine(text: Text("GitHub CLI not found"), tint: .red)
+        Divider()
+        ForgeStatusLine(text: Text("[Install `gh` \u{2197}](https://cli.github.com)"))
+      }
+    case .outdated:
+      HStack(spacing: 6) {
+        ForgeStatusLine(text: Text("GitHub CLI outdated"), tint: .orange)
+        Divider()
+        ForgeStatusLine(text: Text("[Update \u{2197}](https://cli.github.com)"))
+      }
+    case .notAuthenticated:
+      ForgeStatusLine(
+        text: Text("Not authenticated. Run `gh auth login` in a terminal to authenticate."),
+        tint: .orange
+      )
+    case .authenticated(let username, let host):
+      HStack(spacing: 6) {
+        ForgeStatusLine(text: Text("Signed in as \(Text(username).bold())"))
+        Divider()
+        ForgeStatusLine(text: Text(host).bold())
+      }
+    case .error(let message):
+      ForgeStatusLine(text: Text(message), tint: .red)
+    }
+  }
+}
+
+private struct GitLabForgeStatusView: View {
+  let state: GitLabSettingsViewModel.State
+
+  var body: some View {
+    switch state {
+    case .loading:
+      ForgeStatusLine(text: Text("Checking GitLab CLI…"))
+    case .unavailable:
+      HStack(spacing: 6) {
+        ForgeStatusLine(text: Text("GitLab CLI not found"), tint: .red)
+        Divider()
+        ForgeStatusLine(text: Text("[Install `glab` \u{2197}](https://gitlab.com/gitlab-org/cli)"))
+      }
+    case .notAuthenticated:
+      ForgeStatusLine(
+        text: Text("Not authenticated. Run `glab auth login --hostname <host>` in a terminal to authenticate."),
+        tint: .orange
+      )
+    case .authenticated(let hosts):
+      HStack(spacing: 6) {
+        if let first = hosts.first {
+          ForgeStatusLine(text: Text("Signed in on \(Text(first).bold())"))
+        }
+        ForEach(hosts.dropFirst(), id: \.self) { host in
+          Divider()
+          ForgeStatusLine(text: Text(host).bold())
+        }
+      }
     }
   }
 }
@@ -108,112 +260,6 @@ struct ForgesSettingsView: View {
 
   var body: some View {
     Form {
-      Section("GitHub") {
-        Toggle(isOn: $store.githubIntegrationEnabled) {
-          Text("Enable GitHub Integration")
-          Text("Pull request checks and merge actions in the command palette.")
-        }
-        switch viewModel.state {
-        case .loading:
-          LabeledContent("Checking GitHub CLI…") {
-            ProgressView().controlSize(.small)
-          }
-
-        case .unavailable:
-          ForgeStatusLabel(
-            title: "GitHub CLI not found",
-            detail: "Install `gh` to enable pull request checks.",
-            systemImage: "xmark.circle",
-            tint: .red
-          )
-
-        case .notAuthenticated:
-          ForgeStatusLabel(
-            title: "Not authenticated",
-            detail: "Run `gh auth login` in a terminal to authenticate.",
-            systemImage: "exclamationmark.triangle",
-            tint: .orange
-          )
-
-        case .outdated:
-          ForgeStatusLabel(
-            title: "GitHub CLI outdated",
-            detail: "Update to the latest version for full support.",
-            systemImage: "exclamationmark.triangle",
-            tint: .orange
-          )
-
-        case .authenticated(let username, let host):
-          LabeledContent("Signed in as") {
-            Text(username)
-          }
-          LabeledContent("Host") {
-            Text(host)
-          }
-
-        case .error(let message):
-          ForgeStatusLabel(
-            title: "Error checking status",
-            detail: message,
-            systemImage: "exclamationmark.triangle",
-            tint: .red
-          )
-        }
-
-        switch viewModel.state {
-        case .unavailable:
-          Button("Get GitHub CLI") {
-            NSWorkspace.shared.open(URL(string: "https://cli.github.com")!)
-          }
-        case .outdated:
-          Button("Update GitHub CLI") {
-            NSWorkspace.shared.open(URL(string: "https://cli.github.com")!)
-          }
-        case .loading, .notAuthenticated, .authenticated, .error:
-          EmptyView()
-        }
-      }
-      Section("GitLab") {
-        Toggle(isOn: $store.gitlabIntegrationEnabled) {
-          Text("Enable GitLab Integration")
-          Text("Merge request data and actions for repositories on GitLab.")
-        }
-        switch gitlabViewModel.state {
-        case .loading:
-          LabeledContent("Checking GitLab CLI…") {
-            ProgressView().controlSize(.small)
-          }
-
-        case .unavailable:
-          ForgeStatusLabel(
-            title: "GitLab CLI not found",
-            detail: "Install `glab` to enable merge request data.",
-            systemImage: "xmark.circle",
-            tint: .red
-          )
-
-        case .notAuthenticated:
-          ForgeStatusLabel(
-            title: "Not authenticated",
-            detail: "Run `glab auth login --hostname <host>` in a terminal to authenticate.",
-            systemImage: "exclamationmark.triangle",
-            tint: .orange
-          )
-
-        case .authenticated(let hosts):
-          ForEach(hosts, id: \.self) { host in
-            LabeledContent("Signed in") {
-              Text(host)
-            }
-          }
-        }
-
-        if gitlabViewModel.state == .unavailable {
-          Button("Get GitLab CLI") {
-            NSWorkspace.shared.open(URL(string: "https://gitlab.com/gitlab-org/cli")!)
-          }
-        }
-      }
       Section {
         Picker(selection: $store.pullRequestMergeStrategy) {
           ForEach(ForgeCapabilities.github.mergeStrategies, id: \.self) { strategy in
@@ -232,10 +278,27 @@ struct ForgesSettingsView: View {
           Text("When a pull request is merged")
           Text("Archive or delete a worktree when its pull request is merged.")
         }
-      } header: {
-        Text("Pull Requests")
       } footer: {
         Text("Worktree merge actions only affect pre-existing local worktrees.")
+      }
+      Section {
+        ForgeRow(
+          title: "GitHub",
+          assetName: "github-mark",
+          capabilities: .github,
+          isEnabled: $store.githubIntegrationEnabled
+        ) {
+          GithubForgeStatusView(state: viewModel.state)
+        }
+        ForgeRow(
+          title: "GitLab",
+          assetName: "gitlab-mark",
+          capabilities: .gitlab,
+          isBeta: true,
+          isEnabled: $store.gitlabIntegrationEnabled
+        ) {
+          GitLabForgeStatusView(state: gitlabViewModel.state)
+        }
       }
     }
     .formStyle(.grouped)

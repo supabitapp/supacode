@@ -147,7 +147,7 @@ private struct SettingsSidebarView: View {
       Label("Developer", systemImage: "hammer")
         .appFont(.body)
         .tag(SettingsSection.developer)
-      Label("Git Forges", systemImage: "arrow.triangle.branch")
+      Label("Git Forges", systemImage: "externaldrive.badge.timemachine")
         .appFont(.body)
         .tag(SettingsSection.forges)
       Label("Shortcuts", systemImage: "keyboard")

@@ -1,12 +1,18 @@
 import SupacodeSettingsShared
 import SwiftUI
 
-/// Small system-styled tag marking a setting as Beta.
+/// Compact tinted "Beta" pill, matching the File Explorer card's.
 public struct BetaBadge: View {
   public init() {}
 
   public var body: some View {
-    CapsuleBadge("Beta")
+    Text("Beta")
+      .appFont(.caption2, weight: .semibold)
+      .foregroundStyle(.indigo)
+      .padding(.horizontal, 6)
+      .padding(.vertical, 2)
+      .background(.indigo.opacity(0.15), in: .capsule)
+      .accessibilityLabel("Beta")
   }
 }
 
