@@ -441,6 +441,24 @@ struct WorktreeDetailView: View {
     store.send(.repositories(.pullRequestAction(worktreeID, action)))
   }
 
+  /// Toolbar back/forward host. Reads the worktree-history enablement in its own
+  /// View body so the chevrons invalidate only this leaf when history changes.
+  /// `repositoriesStore` is optional so previews can mount it without a `Store`.
+  fileprivate struct WorktreeHistoryToolbarButtonsHost: View {
+    let repositoriesStore: StoreOf<RepositoriesFeature>?
+
+    var body: some View {
+      if let repositoriesStore {
+        WorktreeHistoryToolbarButtons(
+          canGoBack: repositoriesStore.canNavigateWorktreeHistoryBackward,
+          canGoForward: repositoriesStore.canNavigateWorktreeHistoryForward,
+          onBack: { repositoriesStore.send(.worktreeHistoryBack) },
+          onForward: { repositoriesStore.send(.worktreeHistoryForward) }
+        )
+      }
+    }
+  }
+
   /// Toolbar notification bell host. Reads `toolbarNotificationGroupsCache`
   /// itself so notification churn invalidates only this leaf. `repositoriesStore`
   /// is optional so previews can mount the host without booting a `Store`.
@@ -616,6 +634,11 @@ struct WorktreeDetailView: View {
     let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
 
     var body: some ToolbarContent {
+      // Leading in every detail state so history stays reachable while a worktree loads.
+      ToolbarItem(placement: .navigation) {
+        WorktreeHistoryToolbarButtonsHost(repositoriesStore: repositoriesStore)
+      }
+
       if showsToolbarPlaceholder {
         ToolbarPlaceholderContent(scheme: scheme, includesStatusSkeleton: !showsLoadingWorktree)
         if showsLoadingWorktree {

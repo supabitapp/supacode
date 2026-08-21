@@ -2,6 +2,39 @@ import Sharing
 import SupacodeSettingsShared
 import SwiftUI
 
+/// Leading toolbar back/forward pair that steps through worktree selection
+/// history, mirroring the ⌘⌃←/→ commands. Enablement and actions are injected
+/// so the view stays store-agnostic.
+struct WorktreeHistoryToolbarButtons: View {
+  let canGoBack: Bool
+  let canGoForward: Bool
+  let onBack: () -> Void
+  let onForward: () -> Void
+  @Shared(.settingsFile) private var settingsFile
+
+  var body: some View {
+    let overrides = settingsFile.global.shortcutOverrides
+    let backShortcut = WorktreeDetailView.resolveShortcutDisplay(
+      for: AppShortcuts.worktreeHistoryBack, overrides: overrides)
+    let forwardShortcut = WorktreeDetailView.resolveShortcutDisplay(
+      for: AppShortcuts.worktreeHistoryForward, overrides: overrides)
+    ControlGroup {
+      Button(action: onBack) {
+        Label("Back", systemImage: "chevron.backward")
+      }
+      .help("Back in Worktree History (\(backShortcut))")
+      .disabled(!canGoBack)
+
+      Button(action: onForward) {
+        Label("Forward", systemImage: "chevron.forward")
+      }
+      .help("Forward in Worktree History (\(forwardShortcut))")
+      .disabled(!canGoForward)
+    }
+    .controlGroupStyle(.navigation)
+  }
+}
+
 /// Trailing toolbar toggle for git / pull-request status, reusing the sidebar's
 /// icon + check-status badge. Always tappable: it toggles the git inspector pane.
 struct WorktreeGitStatusButton: View {
