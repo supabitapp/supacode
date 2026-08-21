@@ -862,13 +862,29 @@ struct CommandPaletteFeatureTests {
     let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
     var state = RepositoriesFeature.State(reconciledRepositories: [repository])
     state.selection = .worktree(worktree.id)
+    let failingCheck = ForgePullRequestStatusCheck(status: "COMPLETED", conclusion: "FAILURE", state: nil)
+    state.setWorktreeInfoForTesting(
+      id: worktree.id,
+      pullRequest: makePullRequest(mergeable: "MERGEABLE", checks: [failingCheck])
+    )
+
+    let items = CommandPaletteFeature.commandPaletteItems(from: state)
+    #expect(!items.contains(where: { $0.title == "Merge PR" }))
+  }
+
+  @Test func commandPaletteShowsMergeActionWhileMergeabilityIsChecking() {
+    let rootPath = "/tmp/repo"
+    let worktree = makeWorktree(id: "\(rootPath)/wt-checking", name: "checking", repoRoot: rootPath)
+    let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [worktree])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.selection = .worktree(worktree.id)
     state.setWorktreeInfoForTesting(
       id: worktree.id,
       pullRequest: makePullRequest(mergeable: "UNKNOWN", mergeStateStatus: "BLOCKED")
     )
 
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
-    #expect(!items.contains(where: { $0.title == "Merge PR" }))
+    #expect(items.contains(where: { $0.title == "Merge PR" }))
   }
 
   @Test func recencyBreaksFuzzyTiesWithinGroup() {

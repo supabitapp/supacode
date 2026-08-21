@@ -14,7 +14,6 @@ struct PullRequestMergeReadinessTests {
     let readiness = PullRequestMergeReadiness(pullRequest: pullRequest)
 
     #expect(readiness.blockingReason == .mergeConflicts)
-    #expect(!readiness.canMergeNow)
     #expect(readiness.label == "Merge conflicts")
     #expect(readiness.isConflicting)
   }
@@ -57,7 +56,7 @@ struct PullRequestMergeReadinessTests {
     let readiness = PullRequestMergeReadiness(pullRequest: pullRequest)
 
     #expect(readiness.blockingReason == nil)
-    #expect(readiness.canMergeNow)
+    #expect(readiness.assessment == .mergeable)
     #expect(readiness.label == "Mergeable")
   }
 
@@ -71,7 +70,6 @@ struct PullRequestMergeReadinessTests {
 
     #expect(readiness.assessment == .checking)
     #expect(readiness.blockingReason == nil)
-    #expect(!readiness.canMergeNow)
     #expect(readiness.label == "Checking")
   }
 
@@ -84,7 +82,6 @@ struct PullRequestMergeReadinessTests {
     let readiness = PullRequestMergeReadiness(pullRequest: pullRequest)
 
     #expect(readiness.assessment == .checking)
-    #expect(!readiness.canMergeNow)
   }
 }
 

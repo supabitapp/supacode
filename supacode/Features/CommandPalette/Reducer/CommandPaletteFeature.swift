@@ -568,7 +568,9 @@ private func pullRequestItems(
   let checks = pullRequest.statusCheckRollup?.checks ?? []
   let breakdown = PullRequestCheckBreakdown(checks: checks)
   let hasFailingChecks = breakdown.failed > 0
-  let canMerge = isOpen && !isDraft && mergeReadiness.canMergeNow
+  // Permissive on purpose: merge stays offered while mergeability is still
+  // computing; only a confirmed block hides it.
+  let canMerge = isOpen && !isDraft && mergeReadiness.blockingReason == nil
 
   func makeReadyItem() -> CommandPaletteItem? {
     guard isOpen && isDraft && capabilities.canMarkReady else { return nil }

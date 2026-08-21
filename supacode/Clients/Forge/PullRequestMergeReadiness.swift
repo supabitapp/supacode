@@ -51,11 +51,6 @@ nonisolated struct PullRequestMergeReadiness: Equatable, Hashable {
     self.assessment = .checking
   }
 
-  /// Only a confirmed-mergeable pull request may be merged.
-  var canMergeNow: Bool {
-    assessment == .mergeable
-  }
-
   var blockingReason: PullRequestMergeBlockingReason? {
     guard case .blocked(let reason) = assessment else { return nil }
     return reason

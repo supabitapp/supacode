@@ -10,7 +10,7 @@ struct WorktreeStatusInspectorContainer: View {
   let isCheckingPullRequest: Bool
   let pullRequest: ForgePullRequest?
   let repositoriesStore: StoreOf<RepositoriesFeature>
-  let vocabulary: ForgeVocabulary
+  let capabilities: ForgeCapabilities
   let terminalManager: WorktreeTerminalManager
   let fileOpenActions: [OpenWorktreeAction]
   let resolvedOpenAction: OpenWorktreeAction?
@@ -30,7 +30,7 @@ struct WorktreeStatusInspectorContainer: View {
           pullRequest: pullRequest,
           isFolder: isFolder,
           isCheckingPullRequest: isCheckingPullRequest,
-          vocabulary: vocabulary,
+          capabilities: capabilities,
           onPullRequestAction: onPullRequestAction
         )
       case .files:
@@ -86,7 +86,7 @@ struct WorktreeGitInspectorView: View {
   let pullRequest: ForgePullRequest?
   let isFolder: Bool
   let isCheckingPullRequest: Bool
-  let vocabulary: ForgeVocabulary
+  let capabilities: ForgeCapabilities
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
 
   var body: some View {
@@ -94,7 +94,7 @@ struct WorktreeGitInspectorView: View {
       if !isFolder, let pullRequest {
         GitInspectorContent(
           pullRequest: pullRequest,
-          vocabulary: vocabulary,
+          capabilities: capabilities,
           onPullRequestAction: onPullRequestAction
         )
       } else {
@@ -105,7 +105,7 @@ struct WorktreeGitInspectorView: View {
     // under it for the native top blur; the empty/checking states reserve no bar.
     .safeAreaBar(edge: .top) {
       if !isFolder, let pullRequest {
-        GitInspectorHeader(pullRequest: pullRequest, vocabulary: vocabulary)
+        GitInspectorHeader(pullRequest: pullRequest, vocabulary: capabilities.vocabulary)
       }
     }
     // Empty states as a background so they fill the whole pane (past the safe
@@ -115,7 +115,7 @@ struct WorktreeGitInspectorView: View {
         isFolder: isFolder,
         hasPullRequest: pullRequest != nil,
         isCheckingPullRequest: isCheckingPullRequest,
-        vocabulary: vocabulary
+        vocabulary: capabilities.vocabulary
       )
     }
   }
@@ -185,7 +185,7 @@ private struct GitInspectorHeader: View {
 
 private struct GitInspectorContent: View {
   let pullRequest: ForgePullRequest
-  let vocabulary: ForgeVocabulary
+  let capabilities: ForgeCapabilities
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
 
   var body: some View {
@@ -198,7 +198,7 @@ private struct GitInspectorContent: View {
       state: pullRequest.state,
       number: pullRequest.number,
       isQueued: mergeQueueStatus != nil,
-      numberSigil: vocabulary.numberSigil
+      numberSigil: pullRequest.numberSigil
     )
 
     Form {
@@ -223,15 +223,10 @@ private struct GitInspectorContent: View {
         }
       } header: {
         VStack(alignment: .leading, spacing: 6) {
-          HStack {
-            if let badge {
-              PullRequestBadgeView(
-                text: pullRequest.isDraft ? "DRAFT" : badge.text,
-                color: badge.color)
-            }
-            Spacer()
-            Text(verbatim: "#\(pullRequest.number)")
-              .foregroundStyle(.secondary)
+          if let badge {
+            PullRequestBadgeView(
+              text: pullRequest.isDraft ? "DRAFT" : badge.text,
+              color: badge.color)
           }
           Text(pullRequest.title)
             .appFont(.headline)
@@ -257,6 +252,7 @@ private struct GitInspectorContent: View {
       PullRequestActionsSection(
         pullRequest: pullRequest,
         breakdown: breakdown,
+        capabilities: capabilities,
         onPullRequestAction: onPullRequestAction
       )
 
@@ -309,12 +305,16 @@ private struct GitInspectorContent: View {
 private struct PullRequestActionsSection: View {
   let pullRequest: ForgePullRequest
   let breakdown: PullRequestCheckBreakdown
+  let capabilities: ForgeCapabilities
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
 
   var body: some View {
+    let vocabulary = capabilities.vocabulary
     let isOpen = pullRequest.state == .open
     let isDraft = pullRequest.isDraft
-    let canMerge = isOpen && !isDraft && PullRequestMergeReadiness(pullRequest: pullRequest).canMergeNow
+    // Permissive on purpose: merge stays offered while mergeability is still
+    // computing; only a confirmed block hides it.
+    let canMerge = isOpen && !isDraft && PullRequestMergeReadiness(pullRequest: pullRequest).blockingReason == nil
     let hasFailingChecks = breakdown.failed > 0
     let checks = pullRequest.statusCheckRollup?.checks ?? []
     let hasFailingCheckWithDetails = checks.contains { $0.checkState == .failure && $0.detailsUrl != nil }
@@ -322,11 +322,13 @@ private struct PullRequestActionsSection: View {
     if isOpen {
       Section("Actions") {
         if canMerge {
-          PullRequestActionRow(title: "Merge Pull Request", icon: .asset(SidebarPullRequestIcon.merged.assetName)) {
+          PullRequestActionRow(
+            title: "Merge \(vocabulary.noun)", icon: .asset(SidebarPullRequestIcon.merged.assetName)
+          ) {
             onPullRequestAction(.merge)
           }
         }
-        if isDraft {
+        if isDraft, capabilities.canMarkReady {
           PullRequestActionRow(title: "Mark Ready for Review", icon: .asset(SidebarPullRequestIcon.open.assetName)) {
             onPullRequestAction(.markReadyForReview)
           }
@@ -337,11 +339,15 @@ private struct PullRequestActionsSection: View {
               onPullRequestAction(.copyFailingJobURL)
             }
           }
-          PullRequestActionRow(title: "Copy CI Failure Logs", icon: .symbol("doc.on.clipboard")) {
-            onPullRequestAction(.copyCiFailureLogs)
+          if capabilities.canCopyCIFailureLogs {
+            PullRequestActionRow(title: "Copy CI Failure Logs", icon: .symbol("doc.on.clipboard")) {
+              onPullRequestAction(.copyCiFailureLogs)
+            }
           }
-          PullRequestActionRow(title: "Re-run Failed Jobs", icon: .symbol("arrow.clockwise")) {
-            onPullRequestAction(.rerunFailedJobs)
+          if capabilities.canRerunChecks {
+            PullRequestActionRow(title: "Re-run Failed Jobs", icon: .symbol("arrow.clockwise")) {
+              onPullRequestAction(.rerunFailedJobs)
+            }
           }
           if hasFailingCheckWithDetails {
             PullRequestActionRow(title: "Open Failing Check Details", icon: .symbol("arrow.up.right.square")) {
@@ -350,7 +356,7 @@ private struct PullRequestActionsSection: View {
           }
         }
         PullRequestActionRow(
-          title: "Close Pull Request",
+          title: "Close \(vocabulary.noun)",
           icon: .asset(SidebarPullRequestIcon.closed.assetName),
           isDestructive: true
         ) {
