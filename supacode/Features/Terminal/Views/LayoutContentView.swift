@@ -368,6 +368,13 @@ struct PaneStripView: View {
                     .allowsHitTesting(false)
                 }
               }
+              .overlay(alignment: .topTrailing) {
+                if let surface = runtime.renderer(for: contentID) as? GhosttySurfaceView,
+                  surface.bridge.state.searchNeedle != nil
+                {
+                  GhosttySurfaceSearchOverlay(surfaceView: surface)
+                }
+              }
           } else {
             EmptyTerminalPaneView(message: "This terminal is unavailable.")
           }
