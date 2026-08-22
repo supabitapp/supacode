@@ -58,11 +58,6 @@ public struct SettingsFeature {
     public var muteNotificationsForActiveSurface: Bool
     public var moveNotifiedWorktreeToTop: Bool
     public var notificationRetentionLimit: NotificationRetentionLimit
-    // Inspector-owned notification view prefs; the Settings window doesn't edit
-    // them, it only carries them through so a settings write can't reset them.
-    public var notificationScope: NotificationScope
-    public var notificationsGroupedByWorktree: Bool
-    public var notificationsUnreadOnly: Bool
     public var analyticsEnabled: Bool
     public var crashReportsEnabled: Bool
     public var githubIntegrationEnabled: Bool
@@ -155,9 +150,6 @@ public struct SettingsFeature {
       muteNotificationsForActiveSurface = settings.muteNotificationsForActiveSurface
       moveNotifiedWorktreeToTop = settings.moveNotifiedWorktreeToTop
       notificationRetentionLimit = settings.notificationRetentionLimit
-      notificationScope = settings.notificationScope
-      notificationsGroupedByWorktree = settings.notificationsGroupedByWorktree
-      notificationsUnreadOnly = settings.notificationsUnreadOnly
       analyticsEnabled = settings.analyticsEnabled
       crashReportsEnabled = settings.crashReportsEnabled
       githubIntegrationEnabled = settings.githubIntegrationEnabled
@@ -193,58 +185,6 @@ public struct SettingsFeature {
         SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath) ?? ""
     }
 
-    var globalSettings: GlobalSettings {
-      GlobalSettings(
-        appearanceMode: appearanceMode,
-        defaultEditorID: defaultEditorID,
-        updateChannel: updateChannel,
-        updatesAutomaticallyCheckForUpdates: updatesAutomaticallyCheckForUpdates,
-        updatesAutomaticallyDownloadUpdates: updatesAutomaticallyDownloadUpdates,
-        inAppNotificationsEnabled: inAppNotificationsEnabled,
-        notificationSound: notificationSound,
-        systemNotificationsEnabled: systemNotificationsEnabled,
-        muteNotificationsForActiveSurface: muteNotificationsForActiveSurface,
-        moveNotifiedWorktreeToTop: moveNotifiedWorktreeToTop,
-        notificationRetentionLimit: notificationRetentionLimit,
-        notificationScope: notificationScope,
-        notificationsGroupedByWorktree: notificationsGroupedByWorktree,
-        notificationsUnreadOnly: notificationsUnreadOnly,
-        analyticsEnabled: analyticsEnabled,
-        crashReportsEnabled: crashReportsEnabled,
-        githubIntegrationEnabled: githubIntegrationEnabled,
-        forgeEnabledByID: gitlabIntegrationEnabled ? [:] : ["gitlab": false],
-        deleteBranchOnDeleteWorktree: deleteBranchOnDeleteWorktree,
-        mergedWorktreeAction: mergedWorktreeAction,
-        promptForWorktreeCreation: promptForWorktreeCreation,
-        fetchOriginBeforeWorktreeCreation: fetchOriginBeforeWorktreeCreation,
-        copyIgnoredOnWorktreeCreate: copyIgnoredOnWorktreeCreate,
-        copyUntrackedOnWorktreeCreate: copyUntrackedOnWorktreeCreate,
-        pullRequestMergeStrategy: pullRequestMergeStrategy,
-        terminalThemeSyncEnabled: terminalThemeSyncEnabled,
-        ghosttyUserConfigMode: ghosttyUserConfigMode,
-        automatedActionPolicy: automatedActionPolicy,
-        defaultWorktreeBaseDirectoryPath: SupacodePaths.normalizedWorktreeBaseDirectoryPath(
-          defaultWorktreeBaseDirectoryPath
-        ),
-        autoDeleteArchivedWorktreesAfterDays: autoDeleteArchivedWorktreesAfterDays,
-        shortcutOverrides: shortcutOverrides,
-        globalScripts: globalScripts,
-        openFileScript: openFileScript,
-        richAgentNotificationsEnabled: richAgentNotificationsEnabled,
-        agentPresenceBadgesEnabled: agentPresenceBadgesEnabled,
-        confirmQuitMode: confirmQuitMode,
-        confirmCloseSurface: confirmCloseSurface,
-        confirmCloseTab: confirmCloseTab,
-        terminateSessionsOnQuit: terminateSessionsOnQuit,
-        remoteSessionPersistenceEnabled: remoteSessionPersistenceEnabled,
-        appVisibility: appVisibility,
-        terminalHibernationEnabled: terminalHibernationEnabled,
-        chromeTextSize: chromeTextSize,
-        automaticRepositoryRefreshEnabled: automaticRepositoryRefreshEnabled,
-        hoverFocusMode: hoverFocusMode,
-        globalToggleVisibilityHotkey: globalToggleVisibilityHotkey
-      )
-    }
   }
 
   public enum Action: BindableAction {
@@ -356,13 +296,13 @@ public struct SettingsFeature {
       case .settingsLoaded(let settings):
         let normalizedWorktreeBaseDirPath =
           SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath)
-        let normalizedSettings: GlobalSettings
-        if normalizedWorktreeBaseDirPath == settings.defaultWorktreeBaseDirectoryPath {
-          normalizedSettings = settings
-        } else {
-          var updatedSettings = settings
-          updatedSettings.defaultWorktreeBaseDirectoryPath = normalizedWorktreeBaseDirPath
-          normalizedSettings = persistGlobalSettings(updatedSettings)
+        var normalizedSettings = settings
+        normalizedSettings.defaultWorktreeBaseDirectoryPath = normalizedWorktreeBaseDirPath
+        if normalizedWorktreeBaseDirPath != settings.defaultWorktreeBaseDirectoryPath {
+          // Write only the field being canonicalized so a load never clobbers a
+          // concurrent write to the rest of the on-disk settings.
+          @Shared(.settingsFile) var settingsFile
+          $settingsFile.withLock { $0.global.defaultWorktreeBaseDirectoryPath = normalizedWorktreeBaseDirPath }
         }
         state.appearanceMode = normalizedSettings.appearanceMode
         state.defaultEditorID = normalizedSettings.defaultEditorID
@@ -375,9 +315,6 @@ public struct SettingsFeature {
         state.muteNotificationsForActiveSurface = normalizedSettings.muteNotificationsForActiveSurface
         state.moveNotifiedWorktreeToTop = normalizedSettings.moveNotifiedWorktreeToTop
         state.notificationRetentionLimit = normalizedSettings.notificationRetentionLimit
-        state.notificationScope = normalizedSettings.notificationScope
-        state.notificationsGroupedByWorktree = normalizedSettings.notificationsGroupedByWorktree
-        state.notificationsUnreadOnly = normalizedSettings.notificationsUnreadOnly
         state.analyticsEnabled = normalizedSettings.analyticsEnabled
         state.crashReportsEnabled = normalizedSettings.crashReportsEnabled
         state.githubIntegrationEnabled = normalizedSettings.githubIntegrationEnabled
@@ -410,7 +347,7 @@ public struct SettingsFeature {
         state.hoverFocusMode = normalizedSettings.hoverFocusMode
         state.globalToggleVisibilityHotkey = normalizedSettings.globalToggleVisibilityHotkey
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
-        state.syncGlobalDefaults(from: normalizedSettings)
+        state.syncGlobalDefaults()
         synchronizeRepositorySelection(for: &state)
         return .send(.delegate(.settingsChanged(normalizedSettings)))
 
@@ -420,19 +357,19 @@ public struct SettingsFeature {
         // notifications on, the banner plays the macOS default instead. `.never`
         // has nothing to audition.
         let shouldPreview = !state.systemNotificationsEnabled && sound != .never
-        state.syncGlobalDefaults(from: state.globalSettings)
+        state.syncGlobalDefaults()
         return .merge(
           persist(state),
           shouldPreview ? .run { _ in await notificationSoundClient.play(sound) } : .none
         )
 
       case .binding:
-        state.syncGlobalDefaults(from: state.globalSettings)
+        state.syncGlobalDefaults()
         return persist(state)
 
       case .setSystemNotificationsEnabled(let isEnabled):
         state.systemNotificationsEnabled = isEnabled
-        state.syncGlobalDefaults(from: state.globalSettings)
+        state.syncGlobalDefaults()
         return persist(state)
 
       case .setAppVisibility(let visibility):
@@ -440,7 +377,7 @@ public struct SettingsFeature {
         // persisting each echo would loop scene -> persist -> scene.
         guard state.appVisibility != visibility else { return .none }
         state.appVisibility = visibility
-        state.syncGlobalDefaults(from: state.globalSettings)
+        state.syncGlobalDefaults()
         return persist(state)
 
       case .setGlobalToggleHotkey(let override):
@@ -452,7 +389,7 @@ public struct SettingsFeature {
         // A fresh chord clears the stale registration-failure warning; the
         // pending registration decides whether it comes back.
         state.globalHotkeyRegistrationFailed = false
-        state.syncGlobalDefaults(from: state.globalSettings)
+        state.syncGlobalDefaults()
         return persist(state)
 
       case .setGlobalHotkeyRegistrationFailed(let failed):
@@ -461,7 +398,7 @@ public struct SettingsFeature {
 
       case .setAutomatedActionPolicy(let policy):
         state.automatedActionPolicy = policy
-        state.syncGlobalDefaults(from: state.globalSettings)
+        state.syncGlobalDefaults()
         return persist(state)
 
       case .showNotificationPermissionAlert(let errorMessage):
@@ -851,20 +788,17 @@ public struct SettingsFeature {
   }
 
   private func persist(_ state: State) -> Effect<Action> {
-    let settings = persistGlobalSettings(state.globalSettings)
+    // Merge only the fields this feature owns onto the live on-disk settings, so
+    // an unowned field survives verbatim instead of being reset by a full rebuild.
+    @Shared(.settingsFile) var settingsFile
+    let settings = $settingsFile.withLock { file -> GlobalSettings in
+      state.applyOwnedFields(to: &file.global)
+      return file.global
+    }
     if settings.analyticsEnabled {
       analyticsClient.capture("settings_changed", nil)
     }
     return .send(.delegate(.settingsChanged(settings)))
-  }
-
-  @discardableResult
-  private func persistGlobalSettings(_ settings: GlobalSettings) -> GlobalSettings {
-    @Shared(.settingsFile) var settingsFile
-    $settingsFile.withLock {
-      $0.global = settings
-    }
-    return settings
   }
 
   /// Re-read the state after a successful write. An unreadable follow-up is
@@ -972,7 +906,7 @@ public struct SettingsFeature {
       // sync so the scripts page picks the right render path.
       state.repositorySettings?.isGitRepository = summary.isGitRepository
     }
-    state.syncGlobalDefaults(from: state.globalSettings)
+    state.syncGlobalDefaults()
   }
 }
 
@@ -987,17 +921,64 @@ private nonisolated struct AgentIntegrationCancelID: Hashable, Sendable {
 private nonisolated struct RefreshAgentIntegrationStatesID: Hashable, Sendable {}
 
 extension SettingsFeature.State {
-  mutating func syncGlobalDefaults(from settings: GlobalSettings) {
-    repositorySettings?.globalDefaultWorktreeBaseDirectoryPath =
-      settings.defaultWorktreeBaseDirectoryPath
-    repositorySettings?.globalCopyIgnoredOnWorktreeCreate =
-      settings.copyIgnoredOnWorktreeCreate
-    repositorySettings?.globalCopyUntrackedOnWorktreeCreate =
-      settings.copyUntrackedOnWorktreeCreate
-    repositorySettings?.globalPullRequestMergeStrategy =
-      settings.pullRequestMergeStrategy
-    repositorySettings?.globalMergedWorktreeAction =
-      settings.mergedWorktreeAction
+  mutating func syncGlobalDefaults() {
+    guard var repositorySettings else { return }
+    repositorySettings.globalDefaultWorktreeBaseDirectoryPath =
+      SupacodePaths.normalizedWorktreeBaseDirectoryPath(defaultWorktreeBaseDirectoryPath)
+    repositorySettings.globalCopyIgnoredOnWorktreeCreate = copyIgnoredOnWorktreeCreate
+    repositorySettings.globalCopyUntrackedOnWorktreeCreate = copyUntrackedOnWorktreeCreate
+    repositorySettings.globalPullRequestMergeStrategy = pullRequestMergeStrategy
+    repositorySettings.globalMergedWorktreeAction = mergedWorktreeAction
+    self.repositorySettings = repositorySettings
   }
 
+  /// Writes the fields this feature owns onto `settings`, leaving the rest
+  /// untouched. The single source of truth for what Settings persists: a field
+  /// absent here rides through verbatim instead of resetting to its default.
+  func applyOwnedFields(to settings: inout GlobalSettings) {
+    settings.appearanceMode = appearanceMode
+    settings.defaultEditorID = defaultEditorID
+    settings.updateChannel = updateChannel
+    settings.updatesAutomaticallyCheckForUpdates = updatesAutomaticallyCheckForUpdates
+    settings.updatesAutomaticallyDownloadUpdates = updatesAutomaticallyDownloadUpdates
+    settings.inAppNotificationsEnabled = inAppNotificationsEnabled
+    settings.notificationSound = notificationSound
+    settings.systemNotificationsEnabled = systemNotificationsEnabled
+    settings.muteNotificationsForActiveSurface = muteNotificationsForActiveSurface
+    settings.moveNotifiedWorktreeToTop = moveNotifiedWorktreeToTop
+    settings.notificationRetentionLimit = notificationRetentionLimit
+    settings.analyticsEnabled = analyticsEnabled
+    settings.crashReportsEnabled = crashReportsEnabled
+    settings.githubIntegrationEnabled = githubIntegrationEnabled
+    settings.forgeEnabledByID = gitlabIntegrationEnabled ? [:] : ["gitlab": false]
+    settings.deleteBranchOnDeleteWorktree = deleteBranchOnDeleteWorktree
+    settings.mergedWorktreeAction = mergedWorktreeAction
+    settings.promptForWorktreeCreation = promptForWorktreeCreation
+    settings.fetchOriginBeforeWorktreeCreation = fetchOriginBeforeWorktreeCreation
+    settings.copyIgnoredOnWorktreeCreate = copyIgnoredOnWorktreeCreate
+    settings.copyUntrackedOnWorktreeCreate = copyUntrackedOnWorktreeCreate
+    settings.pullRequestMergeStrategy = pullRequestMergeStrategy
+    settings.terminalThemeSyncEnabled = terminalThemeSyncEnabled
+    settings.ghosttyUserConfigMode = ghosttyUserConfigMode
+    settings.automatedActionPolicy = automatedActionPolicy
+    settings.defaultWorktreeBaseDirectoryPath =
+      SupacodePaths.normalizedWorktreeBaseDirectoryPath(defaultWorktreeBaseDirectoryPath)
+    settings.autoDeleteArchivedWorktreesAfterDays = autoDeleteArchivedWorktreesAfterDays
+    settings.shortcutOverrides = shortcutOverrides
+    settings.globalScripts = globalScripts
+    settings.openFileScript = openFileScript
+    settings.richAgentNotificationsEnabled = richAgentNotificationsEnabled
+    settings.agentPresenceBadgesEnabled = agentPresenceBadgesEnabled
+    settings.confirmQuitMode = confirmQuitMode
+    settings.confirmCloseSurface = confirmCloseSurface
+    settings.confirmCloseTab = confirmCloseTab
+    settings.terminateSessionsOnQuit = terminateSessionsOnQuit
+    settings.remoteSessionPersistenceEnabled = remoteSessionPersistenceEnabled
+    settings.appVisibility = appVisibility
+    settings.terminalHibernationEnabled = terminalHibernationEnabled
+    settings.chromeTextSize = chromeTextSize
+    settings.automaticRepositoryRefreshEnabled = automaticRepositoryRefreshEnabled
+    settings.hoverFocusMode = hoverFocusMode
+    settings.globalToggleVisibilityHotkey = globalToggleVisibilityHotkey
+  }
 }

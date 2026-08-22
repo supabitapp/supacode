@@ -164,9 +164,8 @@ struct SettingsFeatureTests {
   }
 
   @Test(.dependencies) func unrelatedSettingsChangeKeepsChromeTextSize() async {
-    // `persist` assigns `$0.global` wholesale, so a field missing from this
-    // feature's state would be written back as its default on every unrelated
-    // change.
+    // `persist` merges owned fields onto the live settings; chromeTextSize is
+    // owned, so it must round-trip rather than reset to its default.
     var initialSettings = GlobalSettings.default
     initialSettings.chromeTextSize = .large
     @Shared(.settingsFile) var settingsFile
@@ -204,6 +203,107 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.notificationScope == .currentWorktree)
     #expect(settingsFile.global.notificationsGroupedByWorktree)
     #expect(settingsFile.global.notificationsUnreadOnly)
+  }
+
+  @Test(.dependencies) func unrelatedBindingChangePreservesEveryOtherField() async {
+    // Completeness guard for `applyOwnedFields`: disk starts at `.default` and
+    // state at fully non-default values, so a field dropped from the owned list
+    // (or cross-wired to another same-typed field) reads back the default and
+    // surfaces as a diff. The path and forge map use round-trippable values.
+    let hotkey = AppShortcutOverride(keyCode: 49, modifiers: [.command, .shift])
+    let normalizedPath = FileManager.default.homeDirectoryForCurrentUser
+      .appending(path: "worktrees", directoryHint: .isDirectory)
+      .standardizedFileURL
+      .path(percentEncoded: false)
+    var loaded = GlobalSettings.default
+    loaded.appearanceMode = .light
+    loaded.defaultEditorID = "com.example.editor"
+    loaded.updateChannel = .tip
+    loaded.updatesAutomaticallyCheckForUpdates = false
+    loaded.updatesAutomaticallyDownloadUpdates = true
+    loaded.inAppNotificationsEnabled = false
+    loaded.notificationSound = .glass
+    loaded.systemNotificationsEnabled = true
+    loaded.muteNotificationsForActiveSurface = false
+    loaded.moveNotifiedWorktreeToTop = true
+    loaded.notificationRetentionLimit = .fiveHundred
+    loaded.notificationScope = .currentWorktree
+    loaded.notificationsGroupedByWorktree = true
+    loaded.notificationsUnreadOnly = true
+    loaded.analyticsEnabled = false
+    loaded.crashReportsEnabled = false
+    loaded.githubIntegrationEnabled = false
+    loaded.forgeEnabledByID = ["gitlab": false]
+    loaded.deleteBranchOnDeleteWorktree = false
+    loaded.mergedWorktreeAction = .archive
+    loaded.promptForWorktreeCreation = false
+    loaded.fetchOriginBeforeWorktreeCreation = false
+    loaded.defaultWorktreeBaseDirectoryPath = normalizedPath
+    loaded.copyIgnoredOnWorktreeCreate = true
+    loaded.copyUntrackedOnWorktreeCreate = true
+    loaded.pullRequestMergeStrategy = .squash
+    loaded.terminalThemeSyncEnabled = false
+    loaded.ghosttyUserConfigMode = .exclusive
+    loaded.automatedActionPolicy = .always
+    loaded.autoDeleteArchivedWorktreesAfterDays = .sevenDays
+    loaded.shortcutOverrides = [.newWorktree: hotkey]
+    loaded.globalScripts = [ScriptDefinition(kind: .custom, name: "Lint", command: "make lint")]
+    loaded.openFileScript = "open \"$SUPACODE_FILE_PATH\""
+    loaded.richAgentNotificationsEnabled = false
+    loaded.agentPresenceBadgesEnabled = false
+    loaded.confirmQuitMode = .always
+    loaded.confirmCloseSurface = false
+    loaded.confirmCloseTab = .never
+    loaded.terminateSessionsOnQuit = true
+    loaded.remoteSessionPersistenceEnabled = false
+    loaded.appVisibility = .menuBar
+    loaded.terminalHibernationEnabled = false
+    loaded.chromeTextSize = .extraLarge
+    loaded.automaticRepositoryRefreshEnabled = false
+    loaded.hoverFocusMode = .terminals
+    loaded.globalToggleVisibilityHotkey = hotkey
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: loaded)) {
+      SettingsFeature()
+    }
+
+    // The merge writes every owned field from state; the unowned inspector prefs
+    // are left at the on-disk default.
+    var expected = loaded
+    expected.automaticRepositoryRefreshEnabled = true
+    expected.notificationScope = GlobalSettings.default.notificationScope
+    expected.notificationsGroupedByWorktree = GlobalSettings.default.notificationsGroupedByWorktree
+    expected.notificationsUnreadOnly = GlobalSettings.default.notificationsUnreadOnly
+
+    await store.send(.binding(.set(\.automaticRepositoryRefreshEnabled, true))) {
+      $0.automaticRepositoryRefreshEnabled = true
+    }
+    await store.receive(\.delegate.settingsChanged, expected)
+
+    expectNoDifference(settingsFile.global, expected)
+  }
+
+  @Test(.dependencies) func settingsEditDoesNotClobberConcurrentInspectorPrefWrites() async {
+    // The inspector writes the notification prefs straight to the shared file.
+    // Because the feature no longer owns them, a Settings edit merges onto the live
+    // value and leaves an inspector change made after load intact.
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: .default)) {
+      SettingsFeature()
+    }
+
+    $settingsFile.withLock { $0.global.notificationScope = .currentWorktree }
+
+    await store.send(.binding(.set(\.terminalHibernationEnabled, false))) {
+      $0.terminalHibernationEnabled = false
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.terminalHibernationEnabled == false)
+    #expect(settingsFile.global.notificationScope == .currentWorktree)
   }
 
   @Test(.dependencies) func togglingAutomaticRepositoryRefreshPersistsChanges() async {
@@ -528,6 +628,35 @@ struct SettingsFeatureTests {
 
     #expect(settingsFile.global.defaultWorktreeBaseDirectoryPath == expectedPath)
     #expect(settingsFile.remoteRepositoryRoots == [remote.id.rawValue])
+  }
+
+  @Test(.dependencies) func settingsLoadedNormalizationDoesNotClobberConcurrentInspectorWrite() async {
+    // Load canonicalizes the persisted path by writing only that field, so an
+    // inspector pref that reached disk after the settings were read is not rolled
+    // back by the loaded snapshot's older value.
+    var loaded = GlobalSettings.default
+    loaded.defaultWorktreeBaseDirectoryPath = " ~/worktrees "
+    let expectedPath = FileManager.default.homeDirectoryForCurrentUser
+      .appending(path: "worktrees", directoryHint: .isDirectory)
+      .standardizedFileURL
+      .path(percentEncoded: false)
+    @Shared(.settingsFile) var settingsFile
+    // Disk carries a newer inspector scope that the loaded snapshot lacks.
+    $settingsFile.withLock {
+      $0.global = loaded
+      $0.global.notificationScope = .currentWorktree
+    }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.settingsLoaded(loaded))
+    await store.receive(\.delegate.settingsChanged)
+
+    #expect(settingsFile.global.defaultWorktreeBaseDirectoryPath == expectedPath)
+    #expect(settingsFile.global.notificationScope == .currentWorktree)
   }
 
   @Test(.dependencies) func selectionBuildsRepositorySettingsFromRepositorySummary() async {
