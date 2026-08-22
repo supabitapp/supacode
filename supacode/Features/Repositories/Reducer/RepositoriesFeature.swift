@@ -280,6 +280,9 @@ struct RepositoriesFeature {
     /// mutation across all worktrees). Recomputed via
     /// `recomputeToolbarNotificationGroupsIfChanged()`.
     var toolbarNotificationGroupsCache: [ToolbarNotificationRepositoryGroup] = []
+    /// Notifications flattened into one reverse-chron list, rebuilt with the
+    /// groups cache. The scope filter stays a view predicate, never cached.
+    var toolbarNotificationItemsCache: [FlatNotificationItem] = []
     /// Cached menu bar sections. The `MenuBarExtra` scene reads this instead of
     /// `sidebarItems`, which would subscribe the status menu to every per-row
     /// notification and agent tick. Recomputed via

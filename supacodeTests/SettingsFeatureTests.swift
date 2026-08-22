@@ -183,6 +183,29 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.chromeTextSize == .large)
   }
 
+  @Test(.dependencies) func unrelatedSettingsChangeKeepsNotificationInspectorPrefs() async {
+    // The inspector owns scope / grouping / unread-only; the Settings window only
+    // carries them through, so an unrelated change here must not reset them.
+    var initialSettings = GlobalSettings.default
+    initialSettings.notificationScope = .currentWorktree
+    initialSettings.notificationsGroupedByWorktree = true
+    initialSettings.notificationsUnreadOnly = true
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.binding(.set(\.terminalHibernationEnabled, false))) {
+      $0.terminalHibernationEnabled = false
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.notificationScope == .currentWorktree)
+    #expect(settingsFile.global.notificationsGroupedByWorktree)
+    #expect(settingsFile.global.notificationsUnreadOnly)
+  }
+
   @Test(.dependencies) func togglingAutomaticRepositoryRefreshPersistsChanges() async {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global = .default }

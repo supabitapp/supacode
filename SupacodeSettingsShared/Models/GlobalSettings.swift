@@ -57,6 +57,14 @@ public nonisolated enum NotificationRetentionLimit: Int, Codable, CaseIterable, 
   }
 }
 
+/// Which worktrees the notification inspector lists. Persisted across sessions.
+public nonisolated enum NotificationScope: String, Codable, CaseIterable, Sendable {
+  case all
+  case currentWorktree
+
+  public static let defaultValue: NotificationScope = .all
+}
+
 /// How Supacode combines the user's own Ghostty config with the optional
 /// Supacode-specific config at `~/.supacode/ghostty.config`.
 public nonisolated enum GhosttyUserConfigMode: String, Codable, CaseIterable, Sendable {
@@ -111,6 +119,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var muteNotificationsForActiveSurface: Bool
   public var moveNotifiedWorktreeToTop: Bool
   public var notificationRetentionLimit: NotificationRetentionLimit
+  public var notificationScope: NotificationScope
+  /// Whether the notification inspector groups its list into worktree sections.
+  public var notificationsGroupedByWorktree: Bool
+  /// Whether the notification inspector hides read notifications.
+  public var notificationsUnreadOnly: Bool
   public var analyticsEnabled: Bool
   public var crashReportsEnabled: Bool
   public var githubIntegrationEnabled: Bool
@@ -182,6 +195,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     muteNotificationsForActiveSurface: true,
     moveNotifiedWorktreeToTop: false,
     notificationRetentionLimit: .defaultValue,
+    notificationScope: .defaultValue,
+    notificationsGroupedByWorktree: false,
+    notificationsUnreadOnly: false,
     analyticsEnabled: true,
     crashReportsEnabled: true,
     githubIntegrationEnabled: true,
@@ -224,6 +240,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     muteNotificationsForActiveSurface: Bool = true,
     moveNotifiedWorktreeToTop: Bool,
     notificationRetentionLimit: NotificationRetentionLimit = .defaultValue,
+    notificationScope: NotificationScope = .defaultValue,
+    notificationsGroupedByWorktree: Bool = false,
+    notificationsUnreadOnly: Bool = false,
     analyticsEnabled: Bool,
     crashReportsEnabled: Bool,
     githubIntegrationEnabled: Bool,
@@ -268,6 +287,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.muteNotificationsForActiveSurface = muteNotificationsForActiveSurface
     self.moveNotifiedWorktreeToTop = moveNotifiedWorktreeToTop
     self.notificationRetentionLimit = notificationRetentionLimit
+    self.notificationScope = notificationScope
+    self.notificationsGroupedByWorktree = notificationsGroupedByWorktree
+    self.notificationsUnreadOnly = notificationsUnreadOnly
     self.analyticsEnabled = analyticsEnabled
     self.crashReportsEnabled = crashReportsEnabled
     self.githubIntegrationEnabled = githubIntegrationEnabled
@@ -353,6 +375,17 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
       (try container.decodeIfPresent(Int.self, forKey: .notificationRetentionLimit))
       .flatMap(NotificationRetentionLimit.init(rawValue:))
       ?? Self.default.notificationRetentionLimit
+    // Fall back instead of throwing, which would reset the whole file.
+    notificationScope =
+      ((try? container.decodeIfPresent(String.self, forKey: .notificationScope)) ?? nil)
+      .flatMap(NotificationScope.init(rawValue:))
+      ?? Self.default.notificationScope
+    notificationsGroupedByWorktree =
+      try container.decodeIfPresent(Bool.self, forKey: .notificationsGroupedByWorktree)
+      ?? Self.default.notificationsGroupedByWorktree
+    notificationsUnreadOnly =
+      try container.decodeIfPresent(Bool.self, forKey: .notificationsUnreadOnly)
+      ?? Self.default.notificationsUnreadOnly
     analyticsEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .analyticsEnabled)
       ?? Self.default.analyticsEnabled

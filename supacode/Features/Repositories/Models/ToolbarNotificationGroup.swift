@@ -37,12 +37,165 @@ struct ToolbarNotificationWorktreeGroup: Identifiable, Equatable {
   var unseenNotificationCount: Int {
     unseenSurfaces.reduce(0) { $0 + $1.count }
   }
+}
 
-  /// Surfaces whose unread notifications were all pruned from the visible log;
-  /// the inspector renders one "go to the surface" row per entry.
-  var prunedUnseenSurfaces: [WorktreeUnseenSurface] {
-    let visibleSurfaceIDs = Set(notifications.map(\.surfaceID))
-    return unseenSurfaces.filter { !visibleSurfaceIDs.contains($0.id) }
+/// A notification flattened out of the groups, carrying its source for the
+/// inspector's single reverse-chronological list.
+struct FlatNotificationItem: Identifiable, Equatable, Sendable {
+  // A notification is never surfaced under two worktrees, so its id is unique here.
+  var id: UUID { notification.id }
+  let notification: WorktreeTerminalNotification
+  let worktreeID: Worktree.ID
+  let repositoryName: String
+  let repositoryColor: RepositoryColor?
+  let worktreeName: String
+  /// A folder's synthetic worktree repeats the repo name; drives dropping the suffix.
+  let isFolder: Bool
+}
+
+/// A worktree's notifications, for the inspector's optional grouped layout.
+struct GroupedNotifications: Identifiable, Equatable {
+  var id: Worktree.ID { worktreeID }
+  let worktreeID: Worktree.ID
+  let repositoryName: String
+  let repositoryColor: RepositoryColor?
+  let worktreeName: String
+  let isFolder: Bool
+  let items: [WorktreeTerminalNotification]
+}
+
+/// Pure derivations for the flat notification inspector.
+enum NotificationInspectorList {
+  /// Flattens the grouped cache into one list, newest first, stable on id.
+  static func flatten(_ groups: [ToolbarNotificationRepositoryGroup]) -> [FlatNotificationItem] {
+    var items: [FlatNotificationItem] = []
+    for repository in groups {
+      for worktree in repository.worktrees {
+        for notification in worktree.notifications {
+          items.append(
+            FlatNotificationItem(
+              notification: notification,
+              worktreeID: worktree.id,
+              repositoryName: repository.name,
+              repositoryColor: repository.color,
+              worktreeName: worktree.name,
+              isFolder: repository.isFolder
+            )
+          )
+        }
+      }
+    }
+    items.sort { lhs, rhs in
+      guard lhs.notification.createdAt == rhs.notification.createdAt else {
+        return lhs.notification.createdAt > rhs.notification.createdAt
+      }
+      return lhs.id.uuidString > rhs.id.uuidString
+    }
+    return items
+  }
+
+  /// Filters the flat list to the active scope and read state.
+  /// `.currentWorktree` with no selection lists nothing, not everything.
+  static func visibleItems(
+    _ items: [FlatNotificationItem],
+    scope: NotificationScope,
+    selectedWorktreeID: Worktree.ID?,
+    unreadOnly: Bool
+  ) -> [FlatNotificationItem] {
+    var filtered: [FlatNotificationItem] = []
+    for item in items {
+      guard worktreeInScope(item.worktreeID, scope: scope, selectedWorktreeID: selectedWorktreeID) else {
+        continue
+      }
+      guard !unreadOnly || !item.notification.isRead else { continue }
+      filtered.append(item)
+    }
+    return filtered
+  }
+
+  /// Worktree sections for the grouped layout, read from the already-grouped
+  /// cache in sidebar order and filtered to the active scope and read state.
+  static func visibleGroups(
+    _ groups: [ToolbarNotificationRepositoryGroup],
+    scope: NotificationScope,
+    selectedWorktreeID: Worktree.ID?,
+    unreadOnly: Bool
+  ) -> [GroupedNotifications] {
+    var result: [GroupedNotifications] = []
+    for repository in groups {
+      for worktree in repository.worktrees
+      where worktreeInScope(worktree.id, scope: scope, selectedWorktreeID: selectedWorktreeID) {
+        var items: [WorktreeTerminalNotification] = []
+        for notification in worktree.notifications where !unreadOnly || !notification.isRead {
+          items.append(notification)
+        }
+        guard !items.isEmpty else { continue }
+        result.append(
+          GroupedNotifications(
+            worktreeID: worktree.id,
+            repositoryName: repository.name,
+            repositoryColor: repository.color,
+            worktreeName: worktree.name,
+            isFolder: repository.isFolder,
+            items: items
+          )
+        )
+      }
+    }
+    return result
+  }
+
+  /// Unread the retention cap evicted, clamped per surface so a drifted counter can't borrow slack from a sibling.
+  static func prunedUnreadCount(
+    groups: [ToolbarNotificationRepositoryGroup],
+    scope: NotificationScope,
+    selectedWorktreeID: Worktree.ID?
+  ) -> Int {
+    var total = 0
+    for repository in groups {
+      for worktree in repository.worktrees {
+        guard worktreeInScope(worktree.id, scope: scope, selectedWorktreeID: selectedWorktreeID) else {
+          continue
+        }
+        var visibleUnreadBySurface: [UUID: Int] = [:]
+        for notification in worktree.notifications where !notification.isRead {
+          visibleUnreadBySurface[notification.surfaceID, default: 0] += 1
+        }
+        for surface in worktree.unseenSurfaces {
+          total += max(0, surface.count - (visibleUnreadBySurface[surface.id] ?? 0))
+        }
+      }
+    }
+    return total
+  }
+
+  /// Worktrees a bulk action targets, from the groups so a pruned-only worktree counts.
+  static func actionableWorktreeIDs(
+    groups: [ToolbarNotificationRepositoryGroup],
+    scope: NotificationScope,
+    selectedWorktreeID: Worktree.ID?
+  ) -> [Worktree.ID] {
+    var ids: [Worktree.ID] = []
+    for repository in groups {
+      for worktree in repository.worktrees
+      where worktreeInScope(worktree.id, scope: scope, selectedWorktreeID: selectedWorktreeID) {
+        ids.append(worktree.id)
+      }
+    }
+    return ids
+  }
+
+  private static func worktreeInScope(
+    _ worktreeID: Worktree.ID,
+    scope: NotificationScope,
+    selectedWorktreeID: Worktree.ID?
+  ) -> Bool {
+    switch scope {
+    case .all:
+      return true
+    case .currentWorktree:
+      return worktreeID == selectedWorktreeID
+    }
   }
 }
 

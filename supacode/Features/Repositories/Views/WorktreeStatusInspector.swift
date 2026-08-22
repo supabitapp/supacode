@@ -15,7 +15,6 @@ struct WorktreeStatusInspectorContainer: View {
   let fileOpenActions: [OpenWorktreeAction]
   let resolvedOpenAction: OpenWorktreeAction?
   let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
-  let onSelectSurface: (Worktree.ID, UUID) -> Void
   let onPullRequestAction: (RepositoriesFeature.PullRequestAction) -> Void
   let onOpenFile: (URL, OpenWorktreeAction?) -> Void
   let onActivateFile: (URL) -> Void
@@ -45,8 +44,7 @@ struct WorktreeStatusInspectorContainer: View {
         WorktreeNotificationsInspectorView(
           repositoriesStore: repositoriesStore,
           terminalManager: terminalManager,
-          onSelectNotification: onSelectNotification,
-          onSelectSurface: onSelectSurface
+          onSelectNotification: onSelectNotification
         )
       }
     }
@@ -476,26 +474,75 @@ private struct PullRequestMergeQueueRow: View {
 
 // MARK: - Notifications pane
 
-/// Inspector pane for worktree notifications. Reads the notification cache in
-/// its own body so notification churn invalidates only this pane, mirroring the
-/// toolbar bell host.
+/// Inspector pane for worktree notifications. Reads the caches in its own body
+/// so churn invalidates only this pane; applies the scope and read filter here.
 struct WorktreeNotificationsInspectorView: View {
   let repositoriesStore: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
-  let onSelectSurface: (Worktree.ID, UUID) -> Void
+
+  @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
+    let scope = settingsFile.global.notificationScope
+    let isGrouped = settingsFile.global.notificationsGroupedByWorktree
+    let unreadOnly = settingsFile.global.notificationsUnreadOnly
+    let selectedWorktreeID = repositoriesStore.selectedWorktreeID
     let groups = repositoriesStore.toolbarNotificationGroupsCache
+    let allItems = repositoriesStore.toolbarNotificationItemsCache
+    let items = NotificationInspectorList.visibleItems(
+      allItems, scope: scope, selectedWorktreeID: selectedWorktreeID, unreadOnly: unreadOnly
+    )
+    let groupedItems =
+      isGrouped
+      ? NotificationInspectorList.visibleGroups(
+        groups, scope: scope, selectedWorktreeID: selectedWorktreeID, unreadOnly: unreadOnly)
+      : []
+    let prunedCount = NotificationInspectorList.prunedUnreadCount(
+      groups: groups, scope: scope, selectedWorktreeID: selectedWorktreeID
+    )
+    let hasNotificationsAnywhere =
+      !allItems.isEmpty
+      || NotificationInspectorList.prunedUnreadCount(groups: groups, scope: .all, selectedWorktreeID: nil) > 0
+    let actionableWorktreeIDs = NotificationInspectorList.actionableWorktreeIDs(
+      groups: groups, scope: scope, selectedWorktreeID: selectedWorktreeID
+    )
+
     NotificationsInspectorContent(
-      groups: groups,
+      items: items,
+      groupedItems: groupedItems,
+      isGrouped: isGrouped,
+      scope: scope,
+      unreadOnly: unreadOnly,
+      selectedWorktreeID: selectedWorktreeID,
+      prunedCount: prunedCount,
+      hasNotificationsAnywhere: hasNotificationsAnywhere,
+      onClearFilters: {
+        $settingsFile.withLock {
+          $0.global.notificationScope = .all
+          $0.global.notificationsUnreadOnly = false
+        }
+      },
       onSelectNotification: onSelectNotification,
-      onSelectSurface: onSelectSurface,
+      onMarkRead: { worktreeID, notificationID in
+        terminalManager.markNotificationRead(worktreeID: worktreeID, notificationID: notificationID)
+      },
+      onDismiss: { worktreeID, notificationID in
+        terminalManager.dismissNotification(worktreeID: worktreeID, notificationID: notificationID)
+      },
+      onMarkAllRead: {
+        for worktreeID in actionableWorktreeIDs {
+          terminalManager.hostIfExists(for: worktreeID)?.markAllNotificationsRead()
+        }
+      },
       onDismissAll: {
-        for repositoryGroup in groups {
-          for worktreeGroup in repositoryGroup.worktrees {
-            terminalManager.hostIfExists(for: worktreeGroup.id)?
-              .dismissAllNotifications()
+        for worktreeID in actionableWorktreeIDs {
+          let host = terminalManager.hostIfExists(for: worktreeID)
+          // Unread-only view dismisses only what it shows; read entries stay.
+          if unreadOnly {
+            host?.dismissUnreadNotifications()
+          } else {
+            host?.dismissAllNotifications()
           }
         }
       }
@@ -504,40 +551,60 @@ struct WorktreeNotificationsInspectorView: View {
 }
 
 private struct NotificationsInspectorContent: View {
-  let groups: [ToolbarNotificationRepositoryGroup]
+  let items: [FlatNotificationItem]
+  let groupedItems: [GroupedNotifications]
+  let isGrouped: Bool
+  let scope: NotificationScope
+  let unreadOnly: Bool
+  let selectedWorktreeID: Worktree.ID?
+  let prunedCount: Int
+  let hasNotificationsAnywhere: Bool
+  let onClearFilters: () -> Void
   let onSelectNotification: (Worktree.ID, WorktreeTerminalNotification) -> Void
-  let onSelectSurface: (Worktree.ID, UUID) -> Void
+  let onMarkRead: (Worktree.ID, UUID) -> Void
+  let onDismiss: (Worktree.ID, UUID) -> Void
+  let onMarkAllRead: () -> Void
   let onDismissAll: () -> Void
 
+  @State private var confirmingDismissAll = false
+
   var body: some View {
-    let count = groups.reduce(0) { $0 + $1.notificationCount }
-    let unseenCount = groups.flatMap(\.worktrees).reduce(0) { $0 + $1.unseenNotificationCount }
+    let isEmpty = items.isEmpty && prunedCount == 0
     // `List` virtualizes rows (NSTableView), so a large backlog builds only the
     // on-screen rows on open, never the whole log or its markdown bodies.
     List {
-      ForEach(groups) { repository in
-        ForEach(repository.worktrees) { worktree in
+      if isGrouped {
+        ForEach(groupedItems) { group in
           Section {
-            ForEach(worktree.notifications) { notification in
+            ForEach(group.items) { notification in
               NotificationRow(
                 notification: notification,
-                worktreeID: worktree.id,
-                onSelect: onSelectNotification
-              )
-            }
-            // A surface whose unread notifications were all pruned by the cap
-            // still needs a way back, so synthesize one row per orphaned surface.
-            ForEach(worktree.prunedUnseenSurfaces) { surface in
-              PrunedNotificationRow(
-                surface: surface,
-                worktreeID: worktree.id,
-                onSelect: onSelectSurface
+                worktreeID: group.worktreeID,
+                source: nil,
+                onSelect: onSelectNotification,
+                onMarkRead: onMarkRead,
+                onDismiss: onDismiss
               )
             }
           } header: {
-            NotificationWorktreeHeader(repository: repository, worktree: worktree)
+            NotificationGroupHeader(group: group)
           }
         }
+      } else {
+        ForEach(items) { item in
+          NotificationRow(
+            notification: item.notification,
+            worktreeID: item.worktreeID,
+            source: scope == .all ? Self.rowSource(item, selectedWorktreeID: selectedWorktreeID) : nil,
+            onSelect: onSelectNotification,
+            onMarkRead: onMarkRead,
+            onDismiss: onDismiss
+          )
+        }
+      }
+      // One aggregate for evicted unread; timeless, so it sits at the bottom.
+      if prunedCount > 0 {
+        PrunedNotificationSummaryRow(count: prunedCount)
       }
     }
     .listStyle(.inset)
@@ -547,107 +614,262 @@ private struct NotificationsInspectorContent: View {
     // The header bar sits only over the list, so it scrolls under it for the
     // native top blur; the empty state reserves no bar.
     .safeAreaBar(edge: .top) {
-      if !groups.isEmpty {
-        HStack {
-          Text("Notifications")
-            .appFont(.headline)
-          Spacer()
-          Button("Dismiss All", action: onDismissAll)
-            .buttonStyle(.borderless)
-            .disabled(count == 0 && unseenCount == 0)
-            .help("Dismiss all notifications.")
-        }
-        .padding(.horizontal)
-        .padding(.vertical)
-      }
-    }
-    // Empty state as a background so it fills the whole pane (past the safe area)
-    // instead of being offset by the reserved bar.
-    .background {
-      if groups.isEmpty {
-        ContentUnavailableView(
-          "No Notifications",
-          systemImage: "bell.slash",
-          description: Text("Agent and terminal notifications appear here.")
+      if hasNotificationsAnywhere {
+        NotificationsInspectorHeader(
+          canAct: !isEmpty,
+          onMarkAllRead: onMarkAllRead,
+          onRequestDismissAll: { confirmingDismissAll = true }
         )
       }
+    }
+    // Overlay, not background, so the Show All button stays hittable above the list.
+    .overlay {
+      if isEmpty {
+        NotificationsEmptyState(
+          scope: scope,
+          unreadOnly: unreadOnly,
+          hasNotificationsElsewhere: hasNotificationsAnywhere,
+          onClearFilters: onClearFilters
+        )
+      }
+    }
+    .confirmationDialog(
+      // Dismiss All also clears pruned unread, so the count includes it.
+      Self.dismissAllTitle(scope: scope, unreadOnly: unreadOnly, count: items.count + prunedCount),
+      isPresented: $confirmingDismissAll,
+      titleVisibility: .visible
+    ) {
+      Button("Dismiss All", role: .destructive, action: onDismissAll)
+      Button("Cancel", role: .cancel) {}
+    }
+  }
+
+  private static func dismissAllTitle(scope: NotificationScope, unreadOnly: Bool, count: Int) -> String {
+    let suffix = scope == .currentWorktree ? " in this worktree" : ""
+    let adjective = unreadOnly ? "unread " : ""
+    guard count > 0 else { return "Dismiss all \(adjective)notifications\(suffix)?" }
+    let noun = count == 1 ? "notification" : "notifications"
+    return "Dismiss all \(count) \(adjective)\(noun)\(suffix)?"
+  }
+
+  private static func rowSource(
+    _ item: FlatNotificationItem, selectedWorktreeID: Worktree.ID?
+  ) -> NotificationRowSource {
+    NotificationRowSource(
+      repositoryName: item.repositoryName,
+      repositoryColor: item.repositoryColor,
+      worktreeName: item.worktreeName,
+      isFolder: item.isFolder,
+      isSelectedWorktree: item.worktreeID == selectedWorktreeID
+    )
+  }
+}
+
+private struct NotificationsInspectorHeader: View {
+  let canAct: Bool
+  let onMarkAllRead: () -> Void
+  let onRequestDismissAll: () -> Void
+
+  var body: some View {
+    HStack {
+      NotificationFilterMenu()
+      Spacer()
+      NotificationOverflowMenu(
+        onMarkAllRead: onMarkAllRead,
+        onRequestDismissAll: onRequestDismissAll
+      )
+      .disabled(!canAct)
+    }
+    .padding(.horizontal)
+    .padding(.vertical)
+  }
+}
+
+/// Scope filter (its label doubles as the pane title) plus the unread-only and
+/// grouping toggles. Binds settings directly for stable bindings, not closures.
+private struct NotificationFilterMenu: View {
+  @Shared(.settingsFile) private var settingsFile
+
+  var body: some View {
+    let scope = settingsFile.global.notificationScope
+    let unreadOnly = settingsFile.global.notificationsUnreadOnly
+    Menu {
+      Picker("Show Notifications From", selection: Binding($settingsFile.global.notificationScope)) {
+        ForEach(NotificationScope.allCases, id: \.self) { option in
+          Text(option.inspectorTitle).tag(option)
+        }
+      }
+      .pickerStyle(.inline)
+      .labelsHidden()
+      Divider()
+      Toggle("Unread Only", isOn: Binding($settingsFile.global.notificationsUnreadOnly))
+      Toggle("Group into Worktrees", isOn: Binding($settingsFile.global.notificationsGroupedByWorktree))
+    } label: {
+      HStack(spacing: 3) {
+        Text(scope.inspectorTitle)
+          .appFont(.headline)
+          .foregroundStyle(.primary)
+        // Unread-only is easy to forget once set; flag it with the row dot.
+        if unreadOnly {
+          Circle()
+            .fill(.orange)
+            .frame(width: 6, height: 6)
+            .padding(.trailing, 4)
+            .accessibilityLabel("Unread only")
+        }
+        // A plain button menu draws no indicator, so supply the chevron here.
+        Image(systemName: "chevron.down")
+          .appFont(.caption2)
+          .foregroundStyle(.secondary)
+          .accessibilityHidden(true)
+      }
+    }
+    // Plain button menu renders the label faithfully; borderless overrides its weight.
+    .menuStyle(.button)
+    .buttonStyle(.plain)
+    .fixedSize()
+    .help("Filter which worktrees' notifications are shown.")
+  }
+}
+
+/// Section header for the grouped layout.
+private struct NotificationGroupHeader: View {
+  let group: GroupedNotifications
+
+  var body: some View {
+    NotificationSourceTag(
+      repositoryName: group.repositoryName,
+      repositoryColor: group.repositoryColor,
+      worktreeName: group.worktreeName,
+      isFolder: group.isFolder
+    )
+    .appFont(.subheadline, weight: .medium)
+    .textCase(nil)
+  }
+}
+
+/// Overflow menu; Dismiss All is destructive so the owner routes it through a
+/// confirmation.
+private struct NotificationOverflowMenu: View {
+  let onMarkAllRead: () -> Void
+  let onRequestDismissAll: () -> Void
+
+  var body: some View {
+    Menu {
+      Button(action: onMarkAllRead) {
+        Label("Mark All as Read", systemImage: "checkmark.circle")
+      }
+      Button(role: .destructive, action: onRequestDismissAll) {
+        Label("Dismiss All", systemImage: "trash")
+      }
+    } label: {
+      Image(systemName: "ellipsis")
+        .appFont(.headline)
+        .contentShape(.rect)
+        .accessibilityLabel("More notification actions")
+    }
+    .menuStyle(.borderlessButton)
+    .menuIndicator(.hidden)
+    .fixedSize()
+    .help("More notification actions.")
+  }
+}
+
+/// Distinguishes "nothing anywhere" from "nothing matches the active filters",
+/// which offers a one-tap reset back to every notification.
+private struct NotificationsEmptyState: View {
+  let scope: NotificationScope
+  let unreadOnly: Bool
+  let hasNotificationsElsewhere: Bool
+  let onClearFilters: () -> Void
+
+  var body: some View {
+    if filtersActive, hasNotificationsElsewhere {
+      ContentUnavailableView {
+        Label(title, systemImage: "bell.slash")
+      } description: {
+        Text(message)
+      } actions: {
+        Button("Show All Notifications", action: onClearFilters)
+      }
+    } else {
+      ContentUnavailableView(
+        "No Notifications",
+        systemImage: "bell.slash",
+        description: Text("Agent and terminal notifications appear here.")
+      )
+    }
+  }
+
+  private var filtersActive: Bool {
+    scope == .currentWorktree || unreadOnly
+  }
+
+  private var title: String {
+    switch (unreadOnly, scope) {
+    case (true, .currentWorktree): "No Unread in This Worktree"
+    case (true, .all): "No Unread Notifications"
+    case (false, _): "None in This Worktree"
+    }
+  }
+
+  private var message: String {
+    switch (unreadOnly, scope) {
+    case (true, .currentWorktree): "Read notifications and other worktrees are hidden."
+    case (true, .all): "Read notifications are hidden."
+    case (false, _): "Notifications from other worktrees are hidden."
     }
   }
 }
 
-/// Section header mirroring the sidebar's row identity: colored repo name,
-/// folder glyph for folder repos, and the worktree's sidebar title.
-private struct NotificationWorktreeHeader: View {
-  let repository: ToolbarNotificationRepositoryGroup
-  let worktree: ToolbarNotificationWorktreeGroup
-
-  var body: some View {
-    HStack(spacing: 5) {
-      if repository.isFolder {
-        Image(systemName: "folder")
-          .resizable()
-          .aspectRatio(contentMode: .fit)
-          .frame(width: 14, height: 14)
-          .foregroundStyle(.secondary)
-          .accessibilityHidden(true)
-      } else {
-        Image(worktree.pullRequestIcon.assetName)
-          .renderingMode(.template)
-          .resizable()
-          .aspectRatio(contentMode: .fit)
-          .frame(width: 14, height: 14)
-          .foregroundStyle(worktree.pullRequestIcon.color)
-          .help(worktree.pullRequestIcon.statusDescription)
-          .accessibilityLabel(worktree.pullRequestIcon.statusDescription)
-      }
-      // Repo keeps layout priority so the colored tag doesn't truncate first,
-      // mirroring the sidebar highlight subtitle.
-      Text(repository.name)
-        .foregroundStyle(repositoryStyle)
-        .layoutPriority(1)
-      // A folder's synthetic worktree repeats the repo name; skip the trail.
-      if !repository.isFolder {
-        Text(verbatim: "·")
-          .foregroundStyle(.tertiary)
-        Text(worktree.name)
-          .foregroundStyle(.secondary)
-      }
-    }
-    .appFont(.subheadline, weight: .medium)
-    .lineLimit(1)
-    .textCase(nil)
-  }
-
-  private var repositoryStyle: AnyShapeStyle {
-    repository.color.map { AnyShapeStyle($0.color) } ?? AnyShapeStyle(.secondary)
-  }
+/// The repo/worktree source shown inside a flat-list row; nil in grouped mode
+/// where the section header carries it instead.
+private struct NotificationRowSource {
+  let repositoryName: String
+  let repositoryColor: RepositoryColor?
+  let worktreeName: String
+  let isFolder: Bool
+  let isSelectedWorktree: Bool
 }
 
 private struct NotificationRow: View {
   let notification: WorktreeTerminalNotification
   let worktreeID: Worktree.ID
+  let source: NotificationRowSource?
   let onSelect: (Worktree.ID, WorktreeTerminalNotification) -> Void
+  let onMarkRead: (Worktree.ID, UUID) -> Void
+  let onDismiss: (Worktree.ID, UUID) -> Void
 
   var body: some View {
-    // Notification titles are the agent slug ("claude", "codex", …) when the
-    // notification came from an agent; show its mark and display name instead.
+    // Agent notifications carry the agent slug as the title; show its mark and name.
     let agent = SkillAgent(rawValue: notification.title.lowercased())
     let title = agent?.displayName ?? (notification.title.isEmpty ? "Terminal" : notification.title)
+    // The whole row navigates to the source; the chevron is a passive affordance.
     Button {
       onSelect(worktreeID, notification)
     } label: {
       HStack(alignment: .top, spacing: 10) {
         NotificationSourceIcon(agent: agent)
           .padding(.top, 1)
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 3) {
+          // Dimmed for other worktrees so the selected one stands out.
+          if let source {
+            NotificationSourceTag(
+              repositoryName: source.repositoryName,
+              repositoryColor: source.repositoryColor,
+              worktreeName: source.worktreeName,
+              isFolder: source.isFolder
+            )
+            .appFont(.caption)
+            .opacity(source.isSelectedWorktree ? 1 : 0.5)
+          }
           HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(title)
               .appFont(.subheadline, weight: .semibold)
               .foregroundStyle(notification.isRead ? Color.secondary : Color.primary)
               .lineLimit(1)
             Spacer(minLength: 6)
-            // Self-updating relative time; no shared clock needed, so a row's
-            // markdown body is never re-parsed just to advance the timestamp.
+            // Self-updating relative time, so the markdown body isn't re-parsed to tick.
             Text(notification.createdAt, style: .relative)
               .appFont(.caption)
               .foregroundStyle(.tertiary)
@@ -660,19 +882,94 @@ private struct NotificationRow: View {
               .accessibilityHidden(true)
           }
           if !notification.body.isEmpty {
-            Text(Self.markdown(notification.body))
-              .appFont(.callout)
-              .foregroundStyle(notification.isRead ? Color.secondary : Color.primary)
-              .fixedSize(horizontal: false, vertical: true)
-              .frame(maxWidth: .infinity, alignment: .leading)
+            NotificationBodyText(text: notification.body, isRead: notification.isRead)
           }
         }
+        Image(systemName: "chevron.forward")
+          .appFont(.caption)
+          .foregroundStyle(.tertiary)
+          .padding(.top, 1)
+          .accessibilityHidden(true)
       }
       .padding(.vertical, 4)
       .contentShape(.rect)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .buttonStyle(.plain)
+    .contextMenu {
+      Button {
+        Self.copyToPasteboard(title: title, body: notification.body)
+      } label: {
+        Label("Copy Notification", systemImage: "doc.on.doc")
+      }
+      Section {
+        Button {
+          onMarkRead(worktreeID, notification.id)
+        } label: {
+          Label("Mark as Read", systemImage: "checkmark.circle")
+        }
+        .disabled(notification.isRead)
+        Button(role: .destructive) {
+          onDismiss(worktreeID, notification.id)
+        } label: {
+          Label("Dismiss", systemImage: "trash")
+        }
+      }
+    }
+  }
+
+  private static func copyToPasteboard(title: String, body: String) {
+    var parts: [String] = []
+    for part in [title, body] where !part.isEmpty {
+      parts.append(part)
+    }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(parts.joined(separator: "\n\n"), forType: .string)
+  }
+}
+
+/// Colored repository name, then "· worktree" for non-folder repos. Shared by
+/// the flat row source line and the grouped section header (which set the font).
+private struct NotificationSourceTag: View {
+  let repositoryName: String
+  let repositoryColor: RepositoryColor?
+  let worktreeName: String
+  let isFolder: Bool
+
+  var body: some View {
+    HStack(spacing: 4) {
+      // Repo keeps layout priority so the colored tag doesn't truncate first.
+      Text(repositoryName)
+        .foregroundStyle(repositoryStyle)
+        .layoutPriority(1)
+      // A folder's synthetic worktree repeats the repo name, so skip the trail.
+      if !isFolder {
+        Text(verbatim: "·")
+          .foregroundStyle(.tertiary)
+        Text(worktreeName)
+          .foregroundStyle(.secondary)
+      }
+    }
+    .lineLimit(1)
+  }
+
+  private var repositoryStyle: AnyShapeStyle {
+    repositoryColor.map { AnyShapeStyle($0.color) } ?? AnyShapeStyle(.secondary)
+  }
+}
+
+/// Notification body, capped at three lines. Truncated, not expandable: the row
+/// click navigates to the source instead.
+private struct NotificationBodyText: View {
+  let text: String
+  let isRead: Bool
+
+  var body: some View {
+    Text(Self.markdown(text))
+      .appFont(.callout)
+      .foregroundStyle(isRead ? Color.secondary : Color.primary)
+      .lineLimit(3)
+      .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private static func markdown(_ string: String) -> AttributedString {
@@ -683,48 +980,42 @@ private struct NotificationRow: View {
   }
 }
 
-/// Synthesized row for a surface whose unread notifications the cap already
-/// pruned from the log. Keeps the unread reachable: tapping focuses the surface.
-private struct PrunedNotificationRow: View {
-  let surface: WorktreeUnseenSurface
-  let worktreeID: Worktree.ID
-  let onSelect: (Worktree.ID, UUID) -> Void
+/// Non-interactive aggregate reconciling the bell badge with the visible rows.
+private struct PrunedNotificationSummaryRow: View {
+  let count: Int
 
   var body: some View {
-    Button {
-      onSelect(worktreeID, surface.id)
-    } label: {
-      HStack(alignment: .top, spacing: 10) {
-        NotificationSourceIcon(agent: nil)
-          .padding(.top, 1)
-        VStack(alignment: .leading, spacing: 2) {
-          HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(title)
-              .appFont(.subheadline, weight: .semibold)
-              .foregroundStyle(.primary)
-              .lineLimit(1)
-            Spacer(minLength: 6)
-            Circle()
-              .fill(.orange)
-              .frame(width: 6, height: 6)
-              .accessibilityHidden(true)
-          }
-          Text("Cleared per your Notification settings.")
-            .appFont(.callout)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
+    HStack(alignment: .top, spacing: 10) {
+      NotificationSourceIcon(agent: nil)
+        .padding(.top, 1)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title)
+          .appFont(.subheadline, weight: .semibold)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+        Text("Older unread cleared per your Notification settings.")
+          .appFont(.callout)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+          .frame(maxWidth: .infinity, alignment: .leading)
       }
-      .padding(.vertical, 4)
-      .contentShape(.rect)
-      .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .buttonStyle(.plain)
+    .padding(.vertical, 4)
+    .contentShape(.rect)
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private var title: String {
-    surface.count == 1 ? "1 unread notification" : "\(surface.count) unread notifications"
+    count == 1 ? "1 more unread beyond retention" : "\(count) more unread beyond retention"
+  }
+}
+
+extension NotificationScope {
+  fileprivate var inspectorTitle: String {
+    switch self {
+    case .all: "All Notifications"
+    case .currentWorktree: "Current Worktree"
+    }
   }
 }
 

@@ -375,6 +375,14 @@ final class WorktreeContentHost {
     emitNotificationStateChanged()
   }
 
+  /// Drops unread entries, visible and pruned; read entries stay. Backs the
+  /// inspector's "Dismiss All" while the unread-only filter is active.
+  func dismissUnreadNotifications() {
+    notifications.removeAll { !$0.isRead }
+    clearAllUnseenCounters()
+    emitNotificationStateChanged()
+  }
+
   func enforceNotificationRetentionLimit() {
     guard trimNotificationsToRetentionLimit() else { return }
     emitNotificationStateChanged()

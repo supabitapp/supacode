@@ -1954,6 +1954,11 @@ final class WorktreeTerminalManager {
     emitProjection(for: worktreeID)
   }
 
+  func dismissNotification(worktreeID: Worktree.ID, notificationID: UUID) {
+    hosts[worktreeID]?.dismissNotification(notificationID)
+    emitProjection(for: worktreeID)
+  }
+
   /// Indicator and projection updates propagate via each state's notification
   /// callbacks. Every state is swept, not just the unread ones, so a surface
   /// whose unseen mirror drifted out of sync with its notifications is repaired.

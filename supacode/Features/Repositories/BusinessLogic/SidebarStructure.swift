@@ -364,9 +364,10 @@ extension RepositoriesFeature.State {
   /// projection actually changes.
   mutating func recomputeToolbarNotificationGroupsIfChanged() {
     let new = computeToolbarNotificationGroups()
-    if new != toolbarNotificationGroupsCache {
-      toolbarNotificationGroupsCache = new
-    }
+    guard new != toolbarNotificationGroupsCache else { return }
+    toolbarNotificationGroupsCache = new
+    // Pure function of the groups, so rebuild it in the same guarded step.
+    toolbarNotificationItemsCache = NotificationInspectorList.flatten(new)
   }
 
   /// Equatable-diffs the menu bar sections against the cache so the status menu

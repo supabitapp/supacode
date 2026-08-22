@@ -58,6 +58,11 @@ public struct SettingsFeature {
     public var muteNotificationsForActiveSurface: Bool
     public var moveNotifiedWorktreeToTop: Bool
     public var notificationRetentionLimit: NotificationRetentionLimit
+    // Inspector-owned notification view prefs; the Settings window doesn't edit
+    // them, it only carries them through so a settings write can't reset them.
+    public var notificationScope: NotificationScope
+    public var notificationsGroupedByWorktree: Bool
+    public var notificationsUnreadOnly: Bool
     public var analyticsEnabled: Bool
     public var crashReportsEnabled: Bool
     public var githubIntegrationEnabled: Bool
@@ -150,6 +155,9 @@ public struct SettingsFeature {
       muteNotificationsForActiveSurface = settings.muteNotificationsForActiveSurface
       moveNotifiedWorktreeToTop = settings.moveNotifiedWorktreeToTop
       notificationRetentionLimit = settings.notificationRetentionLimit
+      notificationScope = settings.notificationScope
+      notificationsGroupedByWorktree = settings.notificationsGroupedByWorktree
+      notificationsUnreadOnly = settings.notificationsUnreadOnly
       analyticsEnabled = settings.analyticsEnabled
       crashReportsEnabled = settings.crashReportsEnabled
       githubIntegrationEnabled = settings.githubIntegrationEnabled
@@ -198,6 +206,9 @@ public struct SettingsFeature {
         muteNotificationsForActiveSurface: muteNotificationsForActiveSurface,
         moveNotifiedWorktreeToTop: moveNotifiedWorktreeToTop,
         notificationRetentionLimit: notificationRetentionLimit,
+        notificationScope: notificationScope,
+        notificationsGroupedByWorktree: notificationsGroupedByWorktree,
+        notificationsUnreadOnly: notificationsUnreadOnly,
         analyticsEnabled: analyticsEnabled,
         crashReportsEnabled: crashReportsEnabled,
         githubIntegrationEnabled: githubIntegrationEnabled,
@@ -364,6 +375,9 @@ public struct SettingsFeature {
         state.muteNotificationsForActiveSurface = normalizedSettings.muteNotificationsForActiveSurface
         state.moveNotifiedWorktreeToTop = normalizedSettings.moveNotifiedWorktreeToTop
         state.notificationRetentionLimit = normalizedSettings.notificationRetentionLimit
+        state.notificationScope = normalizedSettings.notificationScope
+        state.notificationsGroupedByWorktree = normalizedSettings.notificationsGroupedByWorktree
+        state.notificationsUnreadOnly = normalizedSettings.notificationsUnreadOnly
         state.analyticsEnabled = normalizedSettings.analyticsEnabled
         state.crashReportsEnabled = normalizedSettings.crashReportsEnabled
         state.githubIntegrationEnabled = normalizedSettings.githubIntegrationEnabled

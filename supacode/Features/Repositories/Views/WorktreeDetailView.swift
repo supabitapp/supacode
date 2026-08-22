@@ -122,7 +122,6 @@ struct WorktreeDetailView: View {
         fileOpenActions: state.installedOpenActions.filter(\.canOpenFiles),
         resolvedOpenAction: resolvedSelection,
         onSelectNotification: selectToolbarNotification,
-        onSelectSurface: selectToolbarSurface,
         onPullRequestAction: { sendPullRequestAction($0, worktree: selectedWorktree) },
         onOpenFile: { store.send(.openFile($0, with: $1)) },
         onActivateFile: { store.send(.openFileFromExplorer($0)) }
@@ -412,21 +411,17 @@ struct WorktreeDetailView: View {
       }
   }
 
+  /// Selects the worktree and focuses the notification's surface, which marks it read.
   private func selectToolbarNotification(
     _ worktreeID: Worktree.ID,
     _ notification: WorktreeTerminalNotification
   ) {
-    selectToolbarSurface(worktreeID, notification.surfaceID)
-  }
-
-  /// Focuses a surface directly, used by the inspector's pruned-unread row where
-  /// no notification object survives to carry the surface ID.
-  private func selectToolbarSurface(_ worktreeID: Worktree.ID, _ surfaceID: UUID) {
     store.send(.repositories(.selectWorktree(worktreeID)))
     if let host = terminalManager.hostIfExists(for: worktreeID),
-      !host.focusSurface(id: surfaceID)
+      !host.focusSurface(id: notification.surfaceID)
     {
-      SupaLogger("Terminal").warning("Failed to focus surface \(surfaceID) for worktree \(worktreeID).")
+      SupaLogger("Terminal").warning(
+        "Failed to focus surface \(notification.surfaceID) for worktree \(worktreeID).")
     }
   }
 
