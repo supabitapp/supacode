@@ -66,7 +66,7 @@ struct TerminalFindBar: View {
 
   // One height for the field and the controls so nothing sits taller than a
   // small bordered button.
-  private let controlHeight: CGFloat = 22
+  private let controlHeight: CGFloat = 20
 
   var body: some View {
     HStack(spacing: 8) {
@@ -109,7 +109,6 @@ struct TerminalFindBar: View {
     .padding(.horizontal, 8)
     .padding(.vertical, 6)
     .frame(maxWidth: .infinity)
-    .background(.bar)
     .overlay(alignment: .bottom) {
       Divider()
     }
@@ -223,6 +222,7 @@ private struct FindSearchField: View {
   var body: some View {
     HStack(spacing: 4) {
       Image(systemName: "magnifyingglass")
+        .imageScale(.small)
         .foregroundStyle(.secondary)
         .accessibilityHidden(true)
 
@@ -252,7 +252,7 @@ private struct FindSearchField: View {
     .frame(height: height)
     .background(
       RoundedRectangle(cornerRadius: 6, style: .continuous)
-        .fill(Color(nsColor: .textBackgroundColor))
+        .fill(.quaternary)
     )
   }
 }
@@ -293,7 +293,7 @@ private struct GhosttySearchField: NSViewRepresentable {
     field.usesSingleLineMode = true
     field.lineBreakMode = .byTruncatingTail
     field.cell?.isScrollable = true
-    field.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+    field.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
     return field
   }
 
