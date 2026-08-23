@@ -398,6 +398,7 @@ struct AppFeature {
           refreshInstalledOpenActionsEffect(current: state.installedOpenActions),
           .send(.repositories(.task)),
           .send(.settings(.task)),
+          .send(.terminals(.task)),
           .run { @MainActor send in
             guard startupHotkey != nil else { return }
             if !appLifecycleClient.updateGlobalHotkey(startupHotkey) {
