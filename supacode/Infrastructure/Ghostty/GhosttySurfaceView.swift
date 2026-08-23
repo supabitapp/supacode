@@ -564,7 +564,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     guard surface != nil else { return }
     guard self.focused != focused else { return }
     self.focused = focused
-    if focused {
+    if focused, bridge.state.bellCount != 0 {
       bridge.state.bellCount = 0
     }
     setSurfaceFocus(focused)
@@ -712,7 +712,11 @@ final class GhosttySurfaceView: NSView, Identifiable {
       interpretKeyEvents([event])
       return
     }
-    bridge.state.bellCount = 0
+    // Guarded: an unconditional write invalidates every observer of the bridge
+    // state on every keystroke, key repeat included.
+    if bridge.state.bellCount != 0 {
+      bridge.state.bellCount = 0
+    }
     let (translationEvent, translationMods) = translationState(event, surface: surface)
     let action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
     keyTextAccumulator = []

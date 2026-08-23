@@ -11,15 +11,35 @@ extension Reducer where State: Equatable {
   }
 }
 
+#if DEBUG
+  private enum ActionLogging {
+    // Opt-in: the per-action state copy, reflective diff, and print are the
+    // single largest debug-build cost on the terminal hot path. Enable by
+    // setting SUPACODE_LOG_ACTIONS to a truthy value (1); a falsy or unset value
+    // leaves the wrapper a passthrough.
+    static let isEnabled: Bool = {
+      guard let value = ProcessInfo.processInfo.environment["SUPACODE_LOG_ACTIONS"] else {
+        return false
+      }
+      return !["", "0", "false", "no"].contains(value.lowercased())
+    }()
+  }
+#endif
+
 struct LogActionsReducer<Base: Reducer>: Reducer where Base.State: Equatable {
   let base: Base
 
-  private let logger = SupaLogger("TCA")
+  #if DEBUG
+    private let logger = SupaLogger("TCA")
+  #endif
 
   func reduce(into state: inout Base.State, action: Base.Action) -> Effect<Base.Action> {
-    let actionLabel = debugCaseOutput(action)
-    logger.debug("Action: \(actionLabel)")
     #if DEBUG
+      guard ActionLogging.isEnabled else {
+        return base.reduce(into: &state, action: action)
+      }
+      let actionLabel = debugCaseOutput(action)
+      logger.debug("Action: \(actionLabel)")
       let previousState = state
       let effects = base.reduce(into: &state, action: action)
       if previousState != state, let diff = CustomDump.diff(previousState, state) {
@@ -27,6 +47,7 @@ struct LogActionsReducer<Base: Reducer>: Reducer where Base.State: Equatable {
       }
       return effects
     #else
+      let actionLabel = debugCaseOutput(action)
       SentrySDK.logger.info("Action: \(actionLabel)")
       let breadcrumb = Breadcrumb(level: .debug, category: "action")
       breadcrumb.message = actionLabel

@@ -760,6 +760,12 @@ final class WorktreeTerminalManager {
       self?.emitNotificationIndicatorCountIfNeeded()
       self?.emitProjection(for: worktree.id)
     }
+    // Only the debounce: the title itself is read back off the chrome when the
+    // snapshot is built, so a title storm costs one coalesced write, not one
+    // store send per report.
+    host.onReportedTitleChanged = { [weak self] in
+      self?.markLayoutDirty(worktreeID: worktree.id)
+    }
     host.onFocusChanged = { [weak self] surfaceID in
       self?.emit(.focusChanged(worktreeID: worktree.id, surfaceID: surfaceID))
       self?.refreshFocusedSurfaceBackground()
@@ -858,6 +864,17 @@ final class WorktreeTerminalManager {
     )
   }
 
+  /// Hands the content's last reported title back to the layout. The title is
+  /// carried by the content's chrome alone, so every teardown that keeps the tab
+  /// (a reattach rebuild, quit-time termination) must commit it first or the tab
+  /// falls back to its creation-time name.
+  private func commitReportedTitle(of contentID: ContentID, worktreeID: Worktree.ID) {
+    guard let title = ContentRuntime.liveValue.content(for: contentID)?.chrome?.reportedTitle,
+      !title.isEmpty
+    else { return }
+    sendLayout(worktreeID, .runtime(.titleCommitted(id: contentID, title: title)))
+  }
+
   /// An unexpected zmx exit: probe the session, then spare, kill, or reattach.
   func handleUnexpectedZmxClose(_ view: GhosttySurfaceView, worktreeID: Worktree.ID) {
     let surfaceID = view.id
@@ -883,6 +900,7 @@ final class WorktreeTerminalManager {
       }
       if session.clients == 0 {
         // Reattachable: rebuild the same content at its persisted geometry.
+        self.commitReportedTitle(of: ContentID(rawValue: surfaceID), worktreeID: worktreeID)
         ContentRuntime.liveValue.remove(ContentID(rawValue: surfaceID), tombstone: false)
         self.sendLayout(worktreeID, .wakeTab(id: tabID))
         return
@@ -1737,18 +1755,30 @@ final class WorktreeTerminalManager {
   /// so "Quit and Terminate" must explicitly sweep orphan sessions or they
   /// would survive forever.
   func terminateAllSessions(killBudget: Duration = WorktreeTerminalManager.quitKillBudget) async {
-    let trackedSurfaceIDs = hosts.values.flatMap(\.allSurfaceIDs)
-    let trackedSessionIDs = Set(trackedSurfaceIDs.map(ZmxSessionID.make(surfaceID:)))
+    // Captured before `tearDown`, which clears the hosts' surface tracking.
+    let trackedByWorktree = hosts.flatMap { worktreeID, host in
+      host.allSurfaceIDs.map { (worktreeID: worktreeID, surfaceID: $0) }
+    }
+    let trackedSessionIDs = Set(trackedByWorktree.map { ZmxSessionID.make(surfaceID: $0.surfaceID) })
     // "Quit and Terminate" promises nothing keeps running, so the host-side
     // sessions of remote worktrees are swept too (best-effort over SSH).
     let trackedRemoteSessions = Self.remoteSessions(in: Array(hosts.values))
+    // Commit reported titles before teardown: the content is still live, so
+    // this reaches the layout before the snapshot save empties the runtime. A
+    // commit after `tearDown` would re-run layout lifecycle reconciliation,
+    // which sees the removed renderers as dormant and restarts the very session
+    // watchers this teardown just stopped (the process survives a Terminate All).
+    for entry in trackedByWorktree {
+      commitReportedTitle(of: ContentID(rawValue: entry.surfaceID), worktreeID: entry.worktreeID)
+    }
     for host in hosts.values {
       host.tearDown()
     }
-    for surfaceID in trackedSurfaceIDs {
-      guard let content = ContentRuntime.liveValue.content(for: ContentID(rawValue: surfaceID)) else { continue }
+    for entry in trackedByWorktree {
+      let contentID = ContentID(rawValue: entry.surfaceID)
+      guard let content = ContentRuntime.liveValue.content(for: contentID) else { continue }
       content.hibernate()
-      ContentRuntime.liveValue.remove(content.id, tombstone: false)
+      ContentRuntime.liveValue.remove(contentID, tombstone: false)
     }
     emitHasAnyTerminalSurfaceIfNeeded()
     // This instance's tracked local sessions are killed. A remote surface's

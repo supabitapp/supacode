@@ -70,11 +70,11 @@ struct TerminalsFeature {
 
   private static let logger = SupaLogger("TerminalsFeature")
 
-  // Ratio drags and title reports arrive at high frequency and cannot flip
-  // tab visibility; skip the layout-wide re-diff for them.
+  // Ratio drags, the inline rename begin/end toggles, and a teardown title
+  // commit never flip tab visibility, so skip the layout-wide re-diff for them.
   private static func canAffectVisibility(_ action: LayoutFeature.Action) -> Bool {
     switch action {
-    case .resizePane, .runtime(.titleChanged), .beginTabRename, .endTabRename:
+    case .resizePane, .beginTabRename, .endTabRename, .runtime(.titleCommitted):
       return false
     case .newTab, .splitPane, .closeTab, .closePane, .selectTab, .renameTab, .focusPane,
       .moveTab, .moveTabToSplit, .moveTabToSpanningSplit, .enterWindowMode, .exitWindowMode,

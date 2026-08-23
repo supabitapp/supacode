@@ -1423,13 +1423,15 @@ struct LayoutFeatureTests {
     #expect(harness.store.state.layout.isConsistent)
   }
 
-  @Test func titleChangedUpdatesTitleNotCustomTitle() async {
+  @Test func titleCommittedUpdatesTitleNotCustomTitle() async {
     let harness = await makeHarness()
     let paneID = harness.paneID
     await harness.store.send(.renameTab(id: harness.tabID, title: "Custom")) {
       $0.layout.panes[id: paneID]?.tabs[id: harness.tabID]?.customTitle = "Custom"
     }
-    await harness.store.send(.runtime(.titleChanged(id: harness.contentID, title: "zsh"))) {
+    // The commit is what survives the content leaving the runtime, so it lands
+    // on the layout's own title, never on the user's override.
+    await harness.store.send(.runtime(.titleCommitted(id: harness.contentID, title: "zsh"))) {
       $0.layout.panes[id: paneID]?.tabs[id: harness.tabID]?.title = "zsh"
     }
     #expect(harness.store.state.layout.panes[id: paneID]?.tabs[id: harness.tabID]?.customTitle == "Custom")
@@ -1456,10 +1458,10 @@ struct LayoutFeatureTests {
     #expect(killed.value.first?.worktree == WorktreeID("/tmp/layout-feature"))
   }
 
-  @Test func titleChangedWithTheSameTitleIsANoOp() async {
+  @Test func titleCommittedWithTheSameTitleIsANoOp() async {
     let harness = await makeHarness()
-    // The bootstrap tab is titled "One"; an identical report must not write.
-    await harness.store.send(.runtime(.titleChanged(id: harness.contentID, title: "One")))
+    // The bootstrap tab is titled "One"; an identical commit must not write.
+    await harness.store.send(.runtime(.titleCommitted(id: harness.contentID, title: "One")))
     #expect(harness.store.state.layout.isConsistent)
   }
 
@@ -1838,7 +1840,7 @@ struct LayoutFeatureTests {
     #expect(harness.store.state.layout.isConsistent)
   }
 
-  @Test func renameAndTitleReportsRespectTheTitleLock() async {
+  @Test func renameAndTitleCommitsRespectTheTitleLock() async {
     let harness = await makeHarness()
     let paneID = harness.paneID
     // Lock the bootstrap tab's title, as a script tab would be.
@@ -1849,7 +1851,7 @@ struct LayoutFeatureTests {
     locked.panes[id: paneID]?.tabs[id: harness.tabID]?.isLocked = true
     let bundle = makeStore(layout: locked)
     await bundle.store.send(.renameTab(id: harness.tabID, title: "Rejected"))
-    await bundle.store.send(.runtime(.titleChanged(id: harness.contentID, title: "Shell Report")))
+    await bundle.store.send(.runtime(.titleCommitted(id: harness.contentID, title: "Shell Report")))
     #expect(bundle.store.state.layout.panes[id: paneID]?.tabs[id: harness.tabID]?.customTitle == "Custom")
     #expect(bundle.store.state.layout.panes[id: paneID]?.tabs[id: harness.tabID]?.title == "One")
   }

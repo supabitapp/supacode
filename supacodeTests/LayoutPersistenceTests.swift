@@ -48,6 +48,38 @@ struct LayoutPersistenceTests {
     )
   }
 
+  @Test func overlaysTheChromesReportedTitle() {
+    let paneID = PaneID()
+    let tabID = TabID()
+    let contentID = ContentID()
+    let runtime = ContentRuntime()
+    let live = ChromeTabContent(id: contentID)
+    _ = runtime.provision(live, at: .fallback)
+    live.terminalChrome.reportedTitle = "claude"
+
+    // Reported titles never reach the reducer, so the snapshot pull is their
+    // only path to disk.
+    let record = LayoutPersistence.record(
+      for: layout(paneID: paneID, tabID: tabID, contentID: contentID),
+      runtime: runtime
+    )
+    #expect(record.layout.panes[id: paneID]?.tabs[id: tabID]?.title == "claude")
+  }
+
+  @Test func keepsTheStoredTitleForContentThatNeverReported() {
+    let paneID = PaneID()
+    let tabID = TabID()
+    let contentID = ContentID()
+    let runtime = ContentRuntime()
+    _ = runtime.provision(ChromeTabContent(id: contentID), at: .fallback)
+
+    let record = LayoutPersistence.record(
+      for: layout(paneID: paneID, tabID: tabID, contentID: contentID),
+      runtime: runtime
+    )
+    #expect(record.layout.panes[id: paneID]?.tabs[id: tabID]?.title == "One")
+  }
+
   @Test func overlaysLiveSnapshotsOverStoredOnes() throws {
     let paneID = PaneID()
     let tabID = TabID()

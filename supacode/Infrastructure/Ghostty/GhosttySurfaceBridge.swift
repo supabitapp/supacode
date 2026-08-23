@@ -276,7 +276,10 @@ final class GhosttySurfaceBridge {
       return true
 
     case GHOSTTY_ACTION_PWD:
-      state.pwd = string(from: action.action.pwd.pwd)
+      // Shells re-emit OSC 7 per prompt; skip the no-op write and a11y posts.
+      let pwd = string(from: action.action.pwd.pwd)
+      guard pwd != state.pwd else { return true }
+      state.pwd = pwd
       if let surfaceView {
         NSAccessibility.post(element: surfaceView, notification: .valueChanged)
         // VoiceOver does not reliably re-read the label on `.valueChanged` alone.

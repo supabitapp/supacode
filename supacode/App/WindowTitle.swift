@@ -65,8 +65,10 @@ enum WindowTitle {
       repository: repository,
       repositories: repositories
     )
+    // Through the content's chrome: reported titles never enter the reducer, so
+    // this read is what keeps the window title tracking the terminal.
     let tabTitle = terminalManager.hostIfExists(for: worktreeID)?.focusedTab.flatMap { tab in
-      sanitize(tab.customTitle ?? tab.title)
+      sanitize(TabTitle.resolved(for: tab, runtime: ContentRuntime.liveValue))
     }
     return format(repo: repoTitle, tab: tabTitle)
   }

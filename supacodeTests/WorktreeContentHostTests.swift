@@ -131,6 +131,48 @@ struct WorktreeContentHostTests {
     host.trackBlockingScript(kind: .archive, tabID: tabID, launchDirectory: nil)
     #expect(content.terminalChrome.isReadOnly == false)
   }
+
+  @Test func aReportedTitleLandsOnTheChromeAndRearmsPersistenceOnce() {
+    let surfaceID = UUID()
+    let contentID = ContentID(rawValue: surfaceID)
+    let runtime = ContentRuntime()
+    let content = ChromeTabContent(id: contentID)
+    #expect(runtime.provision(content, at: .fallback))
+    let host = makeHost(layout: singleTabLayout(contentID: surfaceID), runtime: runtime)
+    var sentLayoutActions = 0
+    var persistenceRearms = 0
+    host.sendLayoutAction = { _ in sentLayoutActions += 1 }
+    host.onReportedTitleChanged = { persistenceRearms += 1 }
+
+    host.updateReportedTitle(for: contentID, title: "claude")
+    // An unchanged report is dropped before it can touch the chrome.
+    host.updateReportedTitle(for: contentID, title: "claude")
+
+    #expect(content.terminalChrome.reportedTitle == "claude")
+    #expect(persistenceRearms == 1)
+    // The whole point: a title storm never reaches the store.
+    #expect(sentLayoutActions == 0)
+  }
+
+  @Test(.dependencies) func anEmptyReportedTitleIsIgnoredSoTheLabelHoldsItsLastValue() {
+    let surfaceID = UUID()
+    let contentID = ContentID(rawValue: surfaceID)
+    let runtime = ContentRuntime()
+    let content = ChromeTabContent(id: contentID)
+    #expect(runtime.provision(content, at: .fallback))
+    let host = makeHost(layout: singleTabLayout(contentID: surfaceID), runtime: runtime)
+    var persistenceRearms = 0
+    host.onReportedTitleChanged = { persistenceRearms += 1 }
+
+    host.updateReportedTitle(for: contentID, title: "~/project")
+    // A shell that clears the title mid-command must not flash the label: the
+    // empty and whitespace reports are dropped, keeping the last real title.
+    host.updateReportedTitle(for: contentID, title: "")
+    host.updateReportedTitle(for: contentID, title: "   ")
+
+    #expect(content.terminalChrome.reportedTitle == "~/project")
+    #expect(persistenceRearms == 1)
+  }
 }
 
 /// Pins the render-host claim invariants the steal-proof mount depends on.

@@ -130,10 +130,16 @@ struct LayoutFeature {
     @Presents var alert: AlertState<Action.Alert>?
   }
 
-  /// Events pushed by the content-runtime plumbing.
+  /// Events pushed by the content-runtime plumbing. Individual title reports are
+  /// NOT here: they arrive at keystroke frequency, so they land on the content's
+  /// own `TabChrome` and reach persistence through the snapshot pull. Only the
+  /// once-per-content commit below crosses into the layout.
   nonisolated enum RuntimeEvent: Equatable, Sendable {
     case killConfirmed(id: ContentID)
-    case titleChanged(id: ContentID, title: String)
+    /// The content's last reported title, handed back before the content leaves
+    /// the runtime; the chrome that carried it dies with it, and the layout's
+    /// own title is what the tab falls back to afterwards.
+    case titleCommitted(id: ContentID, title: String)
   }
 
   /// What `focusPane` aims at. One payload instead of two `focusPane`
@@ -220,18 +226,19 @@ struct LayoutFeature {
 
   private static let logger = SupaLogger("LayoutFeature")
 
-  // Ratio drags and title reports arrive at frame rate and cannot alter
-  // structure; exempt them from the per-action layout walk.
+  // Ratio drags arrive at frame rate and the inline rename begin/end toggles are
+  // transient; neither alters structure, so exempt them from the per-action walk.
   private static func isExemptFromConsistencyCheck(_ action: Action) -> Bool {
     switch action {
-    case .resizePane, .runtime(.titleChanged), .beginTabRename, .endTabRename:
+    case .resizePane, .beginTabRename, .endTabRename:
       return true
     case .newTab, .splitPane, .closeTab, .closePane, .selectTab, .renameTab, .focusPane,
       .moveTab, .moveTabToSplit, .moveTabToSpanningSplit, .enterWindowMode, .exitWindowMode,
       .equalizePanes, .toggleZoom, .hibernateTab, .wakeTab, .runtime(.killConfirmed),
-      .contentRequestedClose, .contentRequestedNewTab, .contentRequestedSplit,
-      .contentRequestedFocus, .contentRequestedFocusSplit, .contentRequestedToggleZoom,
-      .contentRequestedResize, .contentRequestedGotoTab, .contentRequestedMoveTab, .alert:
+      .runtime(.titleCommitted), .contentRequestedClose, .contentRequestedNewTab,
+      .contentRequestedSplit, .contentRequestedFocus, .contentRequestedFocusSplit,
+      .contentRequestedToggleZoom, .contentRequestedResize, .contentRequestedGotoTab,
+      .contentRequestedMoveTab, .alert:
       return false
     }
   }
@@ -1035,13 +1042,11 @@ extension LayoutFeature {
     switch event {
     case .killConfirmed(let contentID):
       contentRuntime.confirmKill(contentID)
-    case .titleChanged(let contentID, let title):
+    case .titleCommitted(let contentID, let title):
       guard let located = state.layout.tab(containingContent: contentID) else { break }
-      // A script tab owns its title; shell reports must not overwrite it.
-      guard !located.tab.isLocked else { break }
-      // TUIs rewrite their title constantly; skip no-op writes so an unchanged
-      // title does not re-render the tab strip on every report.
-      guard located.tab.title != title else { break }
+      // A script tab owns its title; shell reports must not overwrite it. Skip a
+      // no-op write so an identical commit does not re-render the tab strip.
+      guard !located.tab.isLocked, located.tab.title != title else { break }
       var pane = located.pane
       pane.tabs[id: located.tab.id]?.title = title
       state.layout.panes[id: pane.id] = pane

@@ -41,7 +41,7 @@ struct LayoutSurfaceConduit {
     let host = host
     view.bridge.onTitleChange = { [weak view] title in
       guard let view, isLive(view) else { return }
-      host.sendLayoutAction(.runtime(.titleChanged(id: contentID, title: title)))
+      host.updateReportedTitle(for: contentID, title: title)
     }
     // Layout topology belongs to the app's own chords, menus, and palette;
     // a Ghostty keybind for it is consumed and ignored so the terminal can
