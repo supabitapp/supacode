@@ -13,7 +13,7 @@ struct SkillAgentTests {
     #expect(
       SkillAgent.allCasesByDisplayName.map(\.displayName) == [
         "Claude Code", "Codex", "Copilot CLI", "Google Antigravity", "Grok Code", "Hermes",
-        "Kimi Code", "Kiro CLI", "Oh My Pi", "OpenCode", "Pi",
+        "jcode", "Kimi Code", "Kiro CLI", "Oh My Pi", "OpenCode", "Pi",
       ]
     )
   }
@@ -30,6 +30,13 @@ struct SkillAgentTests {
     #expect(SkillAgent.hermes.displayName == "Hermes")
     #expect(SkillAgent.hermes.assetName == "hermes-mark")
     #expect(SkillAgent.hermes.configDirectoryName == ".hermes")
+  }
+
+  @Test func jcodeIdentityUsesDotJcodePathsAndLowercaseDisplayName() {
+    #expect(SkillAgent.jcode.rawValue == "jcode")
+    #expect(SkillAgent.jcode.displayName == "jcode")
+    #expect(SkillAgent.jcode.configDirectoryName == ".jcode")
+    #expect(SkillAgent.jcode.assetName == "jcode-mark")
   }
 
   @Test func kimiIdentityUsesKimiCodePathsAndDisplayName() {
