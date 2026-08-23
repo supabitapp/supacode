@@ -8,13 +8,17 @@ import UniformTypeIdentifiers
 final class GhosttyRuntime {
   private static let logger = SupaLogger("Ghostty")
 
-  /// Live-pointer registries for C callbacks. A queued main-queue callback
-  /// (e.g. a wakeup) can fire after its runtime deinit freed the app, so
-  /// dereferencing the raw userdata/app pointer would be use-after-free;
-  /// every resolution validates membership first. Registered in init,
-  /// removed in deinit.
+  /// Live-pointer registries for C callbacks. A queued main-queue callback can
+  /// fire after the raw pointer it names was freed, so dereferencing it would be
+  /// use-after-free; the deferred handler validates membership first. App and
+  /// userdata are registered in init and removed in deinit; surfaces are
+  /// registered on `registerSurface` and removed on `unregisterSurface`, which
+  /// `closeSurface` calls synchronously before the deferred
+  /// `ghostty_surface_free`, so a background-thread action queued around the
+  /// close is dropped instead of hitting freed memory.
   private static var liveUserdataBits: Set<UInt> = []
   private static var liveAppBits: Set<UInt> = []
+  private static var liveSurfaceBits: Set<UInt> = []
 
   final class SurfaceReference {
     let surface: ghostty_surface_t
@@ -183,6 +187,7 @@ final class GhosttyRuntime {
     let ref = SurfaceReference(surface)
     surfaceRefs.append(ref)
     surfaceRefs = surfaceRefs.filter { $0.isValid }
+    Self.liveSurfaceBits.insert(UInt(bitPattern: surface))
     if let lastColorScheme {
       ghostty_surface_set_color_scheme(surface, lastColorScheme)
     }
@@ -192,6 +197,7 @@ final class GhosttyRuntime {
   func unregisterSurface(_ ref: SurfaceReference) {
     ref.invalidate()
     surfaceRefs = surfaceRefs.filter { $0.isValid }
+    Self.liveSurfaceBits.remove(UInt(bitPattern: ref.surface))
   }
 
   /// Reloads the full app config from disk and re-applies the current color scheme.
@@ -315,12 +321,25 @@ final class GhosttyRuntime {
     guard let app else { return false }
     let appBits = UInt(bitPattern: app)
     if Thread.isMainThread {
+      // Synchronous: the caller is driving this surface right now (e.g. its
+      // creation, which emits the initial cell-size/title before the surface is
+      // registered), so it is live by construction.
       return MainActor.assumeIsolated {
         handleAction(appBits: appBits, target: target, action: action)
       }
     }
+    // A background surface thread can emit an action just before, or during, the
+    // surface's deferred free; capture its identity so the main-actor block can
+    // drop it if the surface was unregistered (closing/freed) in the meantime,
+    // rather than dereferencing a pointer that is about to be, or already is,
+    // freed.
+    let surfaceBits =
+      target.tag == GHOSTTY_TARGET_SURFACE
+      ? target.target.surface.map { UInt(bitPattern: $0) }
+      : nil
     DispatchQueue.main.async {
       MainActor.assumeIsolated {
+        if let surfaceBits, !liveSurfaceBits.contains(surfaceBits) { return }
         _ = handleAction(appBits: appBits, target: target, action: action)
       }
     }

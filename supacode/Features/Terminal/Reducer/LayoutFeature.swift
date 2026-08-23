@@ -573,19 +573,21 @@ extension LayoutFeature {
     guard var pane = state.layout.pane(containingTab: tabID), let index = pane.tabs.index(id: tabID) else {
       return .none
     }
-    let reaping = reap(pane.tabs[index].content.id, worktree: state.id)
+    let contentID = pane.tabs[index].content.id
     releaseTabBookkeeping(&state, tabID: tabID)
     pane.tabs.remove(at: index)
-    guard !pane.tabs.isEmpty else {
+    if pane.tabs.isEmpty {
       collapse(&state, paneID: pane.id)
-      return reaping
+    } else {
+      if pane.selectedTabID == tabID {
+        // Selection retargets to the previous tab, else the first.
+        pane.selectedTabID = index > 0 ? pane.tabs[index - 1].id : pane.tabs.first?.id
+      }
+      state.layout.panes[id: pane.id] = pane
     }
-    if pane.selectedTabID == tabID {
-      // Selection retargets to the previous tab, else the first.
-      pane.selectedTabID = index > 0 ? pane.tabs[index - 1].id : pane.tabs.first?.id
-    }
-    state.layout.panes[id: pane.id] = pane
-    return reaping
+    // Reap after the tree has collapsed so the collapse is the turn's state
+    // mutation and the surface teardown runs off it, not before it.
+    return reap(contentID, worktree: state.id)
   }
 
   private func reduceMoveTab(
@@ -916,13 +918,14 @@ extension LayoutFeature {
 
   private func reduceClosePane(_ state: inout State, paneID: PaneID) -> Effect<Action> {
     guard let pane = state.layout.panes[id: paneID] else { return .none }
-    // Merged: one hung kill must not queue the siblings behind it.
-    let reaping = Effect<Action>.merge(pane.tabs.map { reap($0.content.id, worktree: state.id) })
     for tab in pane.tabs {
       releaseTabBookkeeping(&state, tabID: tab.id)
     }
     collapse(&state, paneID: paneID)
-    return reaping
+    // Reap after the tree has collapsed so the collapse is the turn's state
+    // mutation and the surface teardown runs off it, not before it. Merged: one
+    // hung kill must not queue the siblings behind it.
+    return .merge(pane.tabs.map { reap($0.content.id, worktree: state.id) })
   }
 
   private func reduceResizePane(_ state: inout State, node: SplitTree<PaneID>.Node, ratio: Double) -> Effect<Action> {

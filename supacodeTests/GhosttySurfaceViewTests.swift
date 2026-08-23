@@ -561,4 +561,30 @@ struct GhosttySurfaceViewTests {
     #expect(first !== second)
     #expect(surfaceView.scrollWrapper === second)
   }
+
+  // `closeSurface` detaches synchronously (surface cleared, view hidden so the
+  // "[Process exited]" overlay can't flash during a collapse) and defers the
+  // costly `ghostty_surface_free` off the turn, and a second close is a safe
+  // no-op. Only the hide needs a live renderer, absent when the display sleeps;
+  // the synchronous clear and the double-close no-op hold on both paths.
+  @Test func closeSurfaceDetachesSynchronouslyAndHidesTheView() {
+    let surfaceView = GhosttySurfaceView(
+      id: UUID(),
+      runtime: GhosttyRuntime(),
+      workingDirectory: nil,
+      initialGeometry: .fallback,
+      context: GHOSTTY_SURFACE_CONTEXT_TAB
+    )
+    let hadLiveRenderer = surfaceView.surface != nil
+
+    surfaceView.closeSurface()
+    #expect(surfaceView.surface == nil)
+    if hadLiveRenderer {
+      #expect(surfaceView.isHidden)
+    }
+
+    // Idempotent: the surface is already gone, so this must not double-free.
+    surfaceView.closeSurface()
+    #expect(surfaceView.surface == nil)
+  }
 }

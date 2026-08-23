@@ -307,7 +307,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
       SecureInput.shared.removeScoped(id)
     }
     // A live surface here means a teardown path bypassed `closeSurface`; the
-    // call below still frees it.
+    // call below still frees it, off the turn.
     if surface != nil {
       assertionFailure("GhosttySurfaceView deallocated with a live surface; a teardown path bypassed closeSurface().")
     }
@@ -330,19 +330,37 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   func closeSurface() {
     clearNotificationObservers()
-    if let surface {
-      if let surfaceRef {
-        runtime.unregisterSurface(surfaceRef)
-        self.surfaceRef = nil
-      }
-      ghostty_surface_free(surface)
-      self.surface = nil
-      bridge.surface = nil
-      lastOcclusion = nil
-      lastSurfaceFocus = nil
-    }
     // Break the surface<->wrapper cycle; the strong hold otherwise blocks deinit.
-    ownedScrollWrapper = nil
+    defer { ownedScrollWrapper = nil }
+    guard let surface else { return }
+    if let surfaceRef {
+      runtime.unregisterSurface(surfaceRef)
+      self.surfaceRef = nil
+    }
+    self.surface = nil
+    bridge.surface = nil
+    lastOcclusion = nil
+    lastSurfaceFocus = nil
+    // Hide before the free so the "[Process exited]" overlay can't paint while
+    // the layout collapses around the closing pane.
+    isHidden = true
+    // Free off the current turn on the main queue: `ghostty_surface_free` joins
+    // the surface's search, renderer, and IO threads and tears down the Metal
+    // renderer, which would otherwise block the reducer turn. The main queue,
+    // not a `Task`, runs the free outside the reducer's inherited task-local
+    // scope, where an isolated-deinit release it triggers can abort as an
+    // invalid free. Retain the runtime and bridge by hand across the free (a
+    // Sendable block can't capture them) so the Ghostty app stays alive and a
+    // synchronous callback during the free still resolves a live bridge; `self`
+    // is intentionally not captured, as the free never touches the surface's
+    // nsview.
+    let retainedRuntime = Unmanaged.passRetained(runtime)
+    let retainedBridge = Unmanaged.passRetained(bridge)
+    DispatchQueue.main.async {
+      ghostty_surface_free(surface)
+      retainedBridge.release()
+      retainedRuntime.release()
+    }
   }
 
   private func updateScreenObservers() {
