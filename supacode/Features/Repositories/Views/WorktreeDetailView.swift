@@ -303,6 +303,10 @@ struct WorktreeDetailView: View {
         }
       } else if let selectedWorktree {
         let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
+        let pendingTerminalFocus: Worktree.ID? = shouldFocusTerminal ? selectedWorktree.id : nil
+        // No `.id` on purpose: keeping the view stable across a worktree switch
+        // lets the live surface reparent its cached wrapper instead of tearing
+        // the hosting chain down and rebuilding it at zero size.
         WorktreeLayoutView(
           worktree: selectedWorktree,
           manager: terminalManager,
@@ -311,13 +315,13 @@ struct WorktreeDetailView: View {
           forceAutoFocus: shouldFocusTerminal,
           isLifecycleBusy: selectedSlice?.lifecycle.isBusy ?? false
         )
-        .id(selectedWorktree.id)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.container, edges: .bottom)
-        .onAppear {
-          if shouldFocusTerminal {
-            store.send(.repositories(.consumeTerminalFocus(selectedWorktree.id)))
-          }
+        // The subtree is stable across a switch, so `onAppear` fires only once;
+        // drive the consume from the focus request itself.
+        .onChange(of: pendingTerminalFocus, initial: true) { _, target in
+          guard let target else { return }
+          store.send(.repositories(.consumeTerminalFocus(target)))
         }
       } else if !repositories.isInitialLoadComplete {
         DetailPlaceholderView()

@@ -359,47 +359,6 @@ nonisolated struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
     return best?.leaf
   }
 
-  var structuralIdentity: StructuralIdentity {
-    StructuralIdentity(self)
-  }
-
-  struct StructuralIdentity: Hashable {
-    private let root: Node?
-    private let zoomed: Node?
-
-    init(_ tree: SplitTree) {
-      self.root = tree.root
-      self.zoomed = tree.zoomed
-    }
-
-    static func == (lhs: Self, rhs: Self) -> Bool {
-      areNodesStructurallyEqual(lhs.root, rhs.root)
-        && areNodesStructurallyEqual(lhs.zoomed, rhs.zoomed)
-    }
-
-    func hash(into hasher: inout Hasher) {
-      hasher.combine(0)
-      if let root {
-        root.hashStructure(into: &hasher)
-      }
-      hasher.combine(1)
-      if let zoomed {
-        zoomed.hashStructure(into: &hasher)
-      }
-    }
-
-    private static func areNodesStructurallyEqual(_ lhs: Node?, _ rhs: Node?) -> Bool {
-      switch (lhs, rhs) {
-      case (nil, nil):
-        return true
-      case (let node1?, let node2?):
-        return node1.isStructurallyEqual(to: node2)
-      default:
-        return false
-      }
-    }
-  }
-
   private init(root: Node?, zoomed: Node?) {
     self.root = root
     self.zoomed = zoomed
@@ -741,52 +700,6 @@ nonisolated extension SplitTree.Node {
       slots += split.left.spatialSlots(in: leftBounds)
       slots += split.right.spatialSlots(in: rightBounds)
       return slots
-    }
-  }
-
-  var structuralIdentity: StructuralIdentity {
-    StructuralIdentity(self)
-  }
-
-  struct StructuralIdentity: Hashable {
-    private let node: SplitTree.Node
-
-    init(_ node: SplitTree.Node) {
-      self.node = node
-    }
-
-    static func == (lhs: Self, rhs: Self) -> Bool {
-      lhs.node.isStructurallyEqual(to: rhs.node)
-    }
-
-    func hash(into hasher: inout Hasher) {
-      node.hashStructure(into: &hasher)
-    }
-  }
-
-  fileprivate func isStructurallyEqual(to other: Node) -> Bool {
-    switch (self, other) {
-    case (.leaf(let view1), .leaf(let view2)):
-      return view1 == view2
-    case (.split(let split1), .split(let split2)):
-      return split1.direction == split2.direction
-        && split1.left.isStructurallyEqual(to: split2.left)
-        && split1.right.isStructurallyEqual(to: split2.right)
-    default:
-      return false
-    }
-  }
-
-  fileprivate func hashStructure(into hasher: inout Hasher) {
-    switch self {
-    case .leaf(let view):
-      hasher.combine(0)
-      hasher.combine(view)
-    case .split(let split):
-      hasher.combine(1)
-      hasher.combine(split.direction)
-      split.left.hashStructure(into: &hasher)
-      split.right.hashStructure(into: &hasher)
     }
   }
 }

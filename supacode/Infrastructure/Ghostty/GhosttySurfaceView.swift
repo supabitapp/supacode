@@ -146,6 +146,20 @@ final class GhosttySurfaceView: NSView, Identifiable {
       }
     }
   }
+  // Strong hold forms a surface<->wrapper cycle, so `closeSurface` must release
+  // it; `deinit` cannot free the surface until it has.
+  private var ownedScrollWrapper: GhosttySurfaceScrollView?
+
+  /// The view a content host mounts for this surface: its scroll wrapper, built
+  /// once and reused across remounts so a rebuild or worktree switch reparents
+  /// it and the live surface keeps its painted frames, instead of rebuilding at
+  /// zero size.
+  func hostedView() -> GhosttySurfaceScrollView {
+    if let ownedScrollWrapper { return ownedScrollWrapper }
+    let wrapper = GhosttySurfaceScrollView(surfaceView: self)
+    ownedScrollWrapper = wrapper
+    return wrapper
+  }
   var onFocusChange: ((Bool) -> Void)?
   /// Asks the owning state to re-derive activity because user input reached an
   /// occluded surface, passing the window's fresh key/visibility readings so
@@ -292,6 +306,11 @@ final class GhosttySurfaceView: NSView, Identifiable {
     MainActor.assumeIsolated {
       SecureInput.shared.removeScoped(id)
     }
+    // A live surface here means a teardown path bypassed `closeSurface`; the
+    // call below still frees it.
+    if surface != nil {
+      assertionFailure("GhosttySurfaceView deallocated with a live surface; a teardown path bypassed closeSurface().")
+    }
     closeSurface()
     if let workingDirectoryCString {
       free(workingDirectoryCString)
@@ -322,6 +341,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
       lastOcclusion = nil
       lastSurfaceFocus = nil
     }
+    // Break the surface<->wrapper cycle; the strong hold otherwise blocks deinit.
+    ownedScrollWrapper = nil
   }
 
   private func updateScreenObservers() {

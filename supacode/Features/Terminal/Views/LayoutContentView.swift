@@ -80,14 +80,14 @@ struct LayoutPaneTreeView: View {
   var body: some View {
     Group {
       if let node = store.layout.tree.visibleNode {
-        // Panes and the windowed set flow down by value from this `.id`
-        // boundary, so a dismantling copy cannot retarget a content host to
-        // post-swap state.
+        // Panes and the windowed set flow down by value, so a dismantling copy
+        // cannot retarget a content host to post-swap state. Identity lives on
+        // the leaves instead of the whole tree, so a split or close
+        // re-identifies only the branch it changed, never the survivor.
         PaneNodeView(
           node: node, panes: store.layout.panes, windowedPaneIDs: store.windowedPaneIDs,
           store: store, renderContext: renderContext
         )
-        .id(store.layout.tree.structuralIdentity)
       } else {
         EmptyLayoutView()
       }
@@ -199,8 +199,6 @@ private struct EmptyLayoutView: View {
 /// One node of the pane tree: a split renders its children with a draggable
 /// divider, a leaf renders its pane.
 private struct PaneNodeView: View {
-  private static let logger = SupaLogger("LayoutContentView")
-
   let node: SplitTree<PaneID>.Node
   let panes: IdentifiedArrayOf<Pane>
   /// Frozen alongside `panes`: a live read here would let a dismantling copy
@@ -212,32 +210,54 @@ private struct PaneNodeView: View {
   var body: some View {
     switch node {
     case .leaf(let paneID):
-      if let pane = panes[id: paneID] {
-        if windowedPaneIDs.contains(paneID) {
-          WindowedPanePlaceholderView(paneID: paneID, store: store, showWindow: renderContext.showWindowedPane)
-        } else {
-          PaneStripView(
-            pane: pane, windowedPaneIDs: windowedPaneIDs, store: store,
-            runtime: renderContext.runtime,
-            unfocusedOverlay: renderContext.unfocusedOverlay,
-            surfaceState: renderContext.surfaceState,
-            isLifecycleBusy: renderContext.isLifecycleBusy,
-            dragModel: renderContext.dragModel)
-        }
-      } else {
-        // Tree and panes disagree; render an explicit fallback, never a hole.
-        EmptyTerminalPaneView(
-          message: "This pane is unavailable.",
-          hint: Text("Reopen the worktree to rebuild its layout.")
-        )
-        .onAppear {
-          Self.logger.error("Tree leaf \(paneID.rawValue) has no pane; layout state is inconsistent.")
-        }
-      }
+      // The pane's own id, not the tree's shape: a split or close elsewhere
+      // leaves this leaf's identity, and so its mounted surface, untouched.
+      PaneLeafView(
+        paneID: paneID, panes: panes, windowedPaneIDs: windowedPaneIDs,
+        store: store, renderContext: renderContext
+      )
+      .id(paneID)
     case .split(let split):
       PaneSplitView(
         node: node, split: split, panes: panes, windowedPaneIDs: windowedPaneIDs,
         store: store, renderContext: renderContext)
+    }
+  }
+}
+
+/// One leaf of the pane tree: the pane's strip, its windowed-pane placeholder,
+/// or an explicit fallback when the tree and panes disagree.
+private struct PaneLeafView: View {
+  private static let logger = SupaLogger("LayoutContentView")
+
+  let paneID: PaneID
+  let panes: IdentifiedArrayOf<Pane>
+  let windowedPaneIDs: Set<PaneID>
+  let store: StoreOf<LayoutFeature>
+  let renderContext: PaneRenderContext
+
+  var body: some View {
+    if let pane = panes[id: paneID] {
+      if windowedPaneIDs.contains(paneID) {
+        WindowedPanePlaceholderView(paneID: paneID, store: store, showWindow: renderContext.showWindowedPane)
+      } else {
+        PaneStripView(
+          pane: pane, windowedPaneIDs: windowedPaneIDs, store: store,
+          runtime: renderContext.runtime,
+          unfocusedOverlay: renderContext.unfocusedOverlay,
+          surfaceState: renderContext.surfaceState,
+          isLifecycleBusy: renderContext.isLifecycleBusy,
+          dragModel: renderContext.dragModel)
+      }
+    } else {
+      // Tree and panes disagree; render an explicit fallback, never a hole.
+      EmptyTerminalPaneView(
+        message: "This pane is unavailable.",
+        hint: Text("Reopen the worktree to rebuild its layout.")
+      )
+      .onAppear {
+        Self.logger.error("Tree leaf \(paneID.rawValue) has no pane; layout state is inconsistent.")
+      }
     }
   }
 }
@@ -801,7 +821,9 @@ private struct ContentHostView: NSViewRepresentable {
       {
         return
       }
-      hostedView = GhosttySurfaceScrollView(surfaceView: surface)
+      // Reuse the surface's own wrapper: a remount reparents it rather than
+      // rebuilding at zero size, so the IOSurface keeps its frames.
+      hostedView = surface.hostedView()
     } else {
       // Already showing the right renderer: nothing to do.
       if container.subviews.first === renderer { return }
