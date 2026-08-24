@@ -7,9 +7,16 @@ private nonisolated let skillInstallerLogger = SupaLogger("Settings")
 /// uninstall together as one component.
 nonisolated struct CLISkillInstaller {
   let homeDirectoryURL: URL
+  /// Custom-folder installs point this at the chosen config dir; when nil the
+  /// dir is derived per agent under home.
+  let configDirectoryOverride: URL?
 
-  init(homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser) {
+  init(
+    homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
+    configDirectoryURL: URL? = nil
+  ) {
     self.homeDirectoryURL = homeDirectoryURL
+    self.configDirectoryOverride = configDirectoryURL
   }
 
   // MARK: - Planned files.
@@ -20,9 +27,14 @@ nonisolated struct CLISkillInstaller {
     let content: () throws -> String
   }
 
+  private func configDirectoryURL(for agent: SkillAgent) -> URL {
+    configDirectoryOverride
+      ?? homeDirectoryURL.appending(path: agent.configDirectoryName, directoryHint: .isDirectory)
+  }
+
   private func skillDir(for agent: SkillAgent, skillName: String) -> URL {
-    homeDirectoryURL
-      .appending(path: "\(agent.configDirectoryName)/skills/\(skillName)", directoryHint: .isDirectory)
+    configDirectoryURL(for: agent)
+      .appending(path: "skills/\(skillName)", directoryHint: .isDirectory)
   }
 
   private func plannedFiles(for agent: SkillAgent) -> [PlannedFile] {

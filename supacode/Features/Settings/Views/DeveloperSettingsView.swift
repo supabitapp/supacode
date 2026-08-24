@@ -64,19 +64,12 @@ private struct CodingAgentsSections: View {
   let store: StoreOf<SettingsFeature>
 
   var body: some View {
-    let mainRows = store.mainListAgentRows
     let uninstalled = store.uninstalledAgents
     Group {
-      if !mainRows.isEmpty {
+      // Each agent gets its own section so multi-folder rows never blend across agents.
+      ForEach(store.mainListAgentRows, id: \.self) { agent in
         Section {
-          ForEach(mainRows, id: \.self) { agent in
-            AgentIntegrationRow(
-              agent: agent,
-              state: store.agentIntegrationStates[agent] ?? .checking,
-              installAction: { store.send(.agentIntegrationInstallTapped(agent)) },
-              uninstallAction: { store.send(.agentIntegrationUninstallTapped(agent)) }
-            )
-          }
+          AgentIntegrationRow(agent: agent, store: store)
         }
       }
       if !uninstalled.isEmpty {
@@ -128,14 +121,13 @@ private struct AgentInstallSheetView: View {
   var body: some View {
     NavigationStack {
       Form {
-        Section("Add Agent Integration") {
-          ForEach(store.agentInstallSheetAgents, id: \.self) { agent in
-            AgentIntegrationRow(
-              agent: agent,
-              state: store.agentIntegrationStates[agent] ?? .checking,
-              installAction: { store.send(.agentIntegrationInstallTapped(agent)) },
-              uninstallAction: { store.send(.agentIntegrationUninstallTapped(agent)) }
-            )
+        // Each agent in its own section, matching the Developer list; the first
+        // carries the modal's header.
+        ForEach(Array(store.agentInstallSheetAgents.enumerated()), id: \.element) { index, agent in
+          Section {
+            AgentIntegrationRow(agent: agent, store: store, showsAllFeatures: true)
+          } header: {
+            index == 0 ? Text("Add Agent Integration") : nil
           }
         }
       }
@@ -237,13 +229,25 @@ private struct ReferenceLink: View {
 
 // MARK: - Agent integration row.
 
+/// One agent: its mark and capability grid once, then a line per install
+/// location (the default, plus any custom folders).
 private struct AgentIntegrationRow: View {
   let agent: SkillAgent
-  let state: AgentIntegrationRowState
-  let installAction: () -> Void
-  let uninstallAction: () -> Void
+  let store: StoreOf<SettingsFeature>
+  let showsAllFeatures: Bool
+
+  init(agent: SkillAgent, store: StoreOf<SettingsFeature>, showsAllFeatures: Bool = false) {
+    self.agent = agent
+    self.store = store
+    self.showsAllFeatures = showsAllFeatures
+  }
+
+  private var capabilities: [FeatureCapability] {
+    AgentFeature.allCases.map { FeatureCapability(name: $0.title, isSupported: agent.supports($0)) }
+  }
 
   var body: some View {
+    let defaultPresent = (store.agentIntegrationStates[agent] ?? .checking).isPresentOnDisk
     HStack(alignment: .firstTextBaseline, spacing: 10) {
       Image(agent.assetName)
         .resizable()
@@ -253,14 +257,72 @@ private struct AgentIntegrationRow: View {
         // Image has no native baseline; nudge so its visual center sits near the title baseline.
         .alignmentGuide(.firstTextBaseline) { dimension in dimension[.bottom] - 5 }
         .accessibilityHidden(true)
+      // Outer spacing gives dividers even breathing room; the title and grid stay tightly grouped.
+      VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 2) {
+          HStack(alignment: .firstTextBaseline) {
+            Text(agent.displayName)
+            Spacer()
+            // Once the default is installed the split button is gone, so this is
+            // the affordance for adding another folder.
+            if agent.supportsCustomConfigFolder && defaultPresent {
+              Button("Install at Folder\u{2026}") { store.send(.agentAddCustomFolderTapped(agent)) }
+                .help("Install the \(agent.displayName) integration into another folder.")
+            }
+          }
+          FeatureCapabilityGrid(capabilities: capabilities, supportedOnly: !showsAllFeatures)
+        }
+        // One line per install location, each set off by a row separator.
+        ForEach(targets, id: \.self) { target in
+          Divider()
+          AgentInstallTargetLine(
+            agent: agent,
+            target: target,
+            state: store.agentIntegrationStates[target] ?? .checking,
+            directoryExists: store.configDirectoriesOnDisk.contains(target),
+            install: { store.send(.agentIntegrationInstallTapped(target)) },
+            uninstall: { store.send(.agentIntegrationUninstallTapped(target)) },
+            addCustomFolder: { store.send(.agentAddCustomFolderTapped(agent)) }
+          )
+        }
+      }
+    }
+  }
+
+  /// The default location first, then any custom folders in state for this agent.
+  private var targets: [AgentInstallTarget] {
+    let customs = store.agentIntegrationStates.keys
+      .filter { $0.agent == agent && $0.location != .standard }
+      .sorted { ($0.configDirectoryURL?.path ?? "") < ($1.configDirectoryURL?.path ?? "") }
+    return [.standard(agent)] + customs
+  }
+}
+
+/// One install location under an agent: the config path phrased for the state,
+/// and that location's own install control.
+private struct AgentInstallTargetLine: View {
+  let agent: SkillAgent
+  let target: AgentInstallTarget
+  let state: AgentIntegrationRowState
+  let directoryExists: Bool
+  let install: () -> Void
+  let uninstall: () -> Void
+  let addCustomFolder: () -> Void
+
+  private var isStandard: Bool { target.location == .standard }
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 10) {
       VStack(alignment: .leading, spacing: 2) {
-        Text(agent.displayName)
-        Text(agent.integrationSubtitle)
-          .appFont(.subheadline)
-          .foregroundStyle(.secondary)
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+          if let verb = verbPrefix {
+            Text(verb)
+              .appFont(.subheadline)
+              .foregroundStyle(.secondary)
+          }
+          pathLabel
+        }
         if let message = state.errorMessage {
-          // Must stay a plain `String`: the message embeds a filesystem path that
-          // `LocalizedStringKey` would parse as markdown and mangle.
           Text(message)
             .appFont(.subheadline)
             .foregroundStyle(state.isUndetermined ? Color.orange : Color.red)
@@ -268,6 +330,54 @@ private struct AgentIntegrationRow: View {
       }
       Spacer()
       trailingControl
+    }
+  }
+
+  /// Resolved directory to reveal in Finder.
+  private var configDirectoryURL: URL { target.configDirectory() }
+
+  private var configPath: String {
+    (configDirectoryURL.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
+  }
+
+  /// Leading verb for the state, or `nil` when the line is just the path.
+  private var verbPrefix: String? {
+    switch state {
+    case .installing: "Installing at"
+    case .uninstalling: "Removing"
+    case .ready(.installed), .ready(.outdated): "Installed at"
+    case .undetermined(let lastKnown, _): lastKnown == nil ? nil : "Installed at"
+    // A failed row still offers Install (retry), so it reads as prospective.
+    case .ready(.notInstalled), .failed, .failedTransient: "Installs to"
+    case .checking: nil
+    }
+  }
+
+  private var showsEllipsis: Bool {
+    switch state {
+    case .installing, .uninstalling: true
+    case .checking, .ready, .failed, .failedTransient, .undetermined: false
+    }
+  }
+
+  /// The path: a Finder-revealing link (tinted, with an arrow) whenever the
+  /// directory is on disk (so even a prospective install links, since the
+  /// agent's config dir already exists), otherwise the plain forge-style path.
+  @ViewBuilder private var pathLabel: some View {
+    if directoryExists && !showsEllipsis {
+      Button {
+        NSWorkspace.shared.open(configDirectoryURL)
+      } label: {
+        Text(verbatim: "\(configPath) \u{2197}")
+      }
+      .buttonStyle(.plain)
+      .foregroundStyle(.tint)
+      .appFont(.subheadline)
+      .help("Show \(configPath) in Finder")
+    } else {
+      Text(verbatim: showsEllipsis ? "\(configPath)\u{2026}" : configPath)
+        .appFont(.subheadline)
+        .foregroundStyle(.secondary)
     }
   }
 
@@ -279,53 +389,61 @@ private struct AgentIntegrationRow: View {
     case .ready(.installed), .undetermined(.installed, _):
       ControlGroup {
         Label("Installed", systemImage: "checkmark")
-        Button("Uninstall", role: .destructive, action: uninstallAction)
+        Button("Uninstall", role: .destructive, action: uninstall)
       }
     case .ready(.outdated), .undetermined(.outdated, _):
       ControlGroup {
-        Button("Update", action: installAction)
-        Button("Uninstall", role: .destructive, action: uninstallAction)
+        Button("Update", action: install)
+        Button("Uninstall", role: .destructive, action: uninstall)
       }
     case .ready(.notInstalled), .failed, .failedTransient, .undetermined(.notInstalled, _),
       .undetermined(nil, _):
-      // Nothing was read for this agent, but offering Install still beats a row
-      // with no action: the attempt surfaces the real error where the warning
-      // line only describes it.
-      Button("Install", action: installAction)
+      installControl
     case .installing:
-      Button("Installing\u{2026}") {}
-        .disabled(true)
+      Button("Installing\u{2026}") {}.disabled(true)
     case .uninstalling:
-      Button("Uninstalling\u{2026}") {}
-        .disabled(true)
+      Button("Uninstalling\u{2026}") {}.disabled(true)
+    }
+  }
+
+  /// Not-installed control. A supporting agent's default offers the split
+  /// button (primary installs the default, the menu adds a custom folder). A
+  /// custom row offers retry plus remove; everything else a plain Install.
+  @ViewBuilder
+  private var installControl: some View {
+    if isStandard && agent.supportsCustomConfigFolder {
+      Menu {
+        Button("Install at Folder\u{2026}", action: addCustomFolder)
+      } label: {
+        Text("Install")
+      } primaryAction: {
+        install()
+      }
+      .fixedSize()
+      .help("Install into \(configPath), or choose another folder.")
+    } else if !isStandard {
+      ControlGroup {
+        Button("Install", action: install)
+        Button("Remove", role: .destructive, action: uninstall)
+      }
+    } else {
+      Button("Install", action: install)
     }
   }
 }
 
-// MARK: - Per-agent integration subtitle.
-
-extension SkillAgent {
-  fileprivate var integrationSubtitle: LocalizedStringKey {
+extension AgentIntegrationRowState {
+  /// True when the last disk read found the integration present (installed or
+  /// outdated), so the default's "add another folder" affordance can show.
+  fileprivate var isPresentOnDisk: Bool {
     switch self {
-    case .antigravity:
-      """
-      Hooks in `~/.gemini/config/hooks.json` & `~/.gemini/antigravity-cli/settings.json` \
-      and skill in `~/.gemini/antigravity-cli/skills/`.
-      """
-    case .claude: "Hooks in `~/.claude/settings.json` and skill in `~/.claude/skills/`."
-    case .codex:
-      """
-      Hooks in `~/.codex/hooks.json` and skill in `~/.codex/skills/`. After installing, trust the hooks in Codex; \
-      the badge appears once you send the first message.
-      """
-    case .copilot: "Hooks in `~/.copilot/hooks/supacode.json` and skill in `~/.copilot/skills/`."
-    case .grok: "Hooks in `~/.grok/hooks/supacode.json` and skill in `~/.grok/skills/`."
-    case .hermes: "Plugin in `~/.hermes/plugins/` and skill in `~/.hermes/skills/`."
-    case .kimi: "Hooks in `~/.kimi-code/config.toml` and skill in `~/.kimi-code/skills/`. Hooks system is in Beta."
-    case .kiro: "Hooks in `~/.kiro/agents/` and skill in `~/.kiro/skills/`."
-    case .omp: "Extension in `~/.omp/agent/extensions/` and skill in `~/.omp/agent/skills/`."
-    case .opencode: "Plugin in `~/.config/opencode/plugins/` and skill in `~/.config/opencode/skills/`."
-    case .pi: "Extension in `~/.pi/agent/extensions/` and skill in `~/.pi/agent/skills/`."
+    case .ready(.installed), .ready(.outdated), .undetermined(.installed, _), .undetermined(.outdated, _):
+      true
+    case .checking, .installing, .uninstalling, .failed, .failedTransient, .ready(.notInstalled),
+      .undetermined(.notInstalled, _), .undetermined(nil, _):
+      false
     }
   }
 }
+
+// MARK: - Per-agent capability grid.

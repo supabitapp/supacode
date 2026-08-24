@@ -7,37 +7,46 @@ nonisolated enum AgentIntegrationFactory {
   static func make(
     for agent: SkillAgent,
     homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
+    configDirectoryURL: URL? = nil,
     fileManager: FileManager = .default
   ) -> AgentIntegration {
+    // Only agents whose whole integration lives under one relocatable config dir
+    // honor a custom override; the rest stay home-rooted.
+    let defaultConfigDir = homeDirectoryURL.appending(
+      path: agent.configDirectoryName, directoryHint: .isDirectory)
+    let resolvedConfigDir =
+      agent.supportsCustomConfigFolder ? (configDirectoryURL ?? defaultConfigDir) : defaultConfigDir
+
     let components =
       switch agent {
-      case .antigravity: antigravity(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-      case .claude: claude(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-      case .codex: codex(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-      case .copilot: copilot(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-      case .grok: grok(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-      case .hermes: hermes(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-      case .kimi: kimi(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-      case .kiro: kiro(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-      case .omp: omp(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-      case .pi: pi(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
-      case .opencode: opencode(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+      case .antigravity:
+        antigravity(
+          homeDirectoryURL: homeDirectoryURL, configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
+      case .claude: claude(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
+      case .codex: codex(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
+      case .copilot: copilot(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
+      case .grok: grok(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
+      case .hermes: hermes(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
+      case .kimi: kimi(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
+      case .kiro: kiro(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
+      case .omp: omp(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
+      case .pi: pi(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
+      case .opencode: opencode(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
       }
-    // Gate install on the agent's own config directory existing, as a proxy for
-    // the CLI being installed, so Supacode never bootstraps a harness from
-    // nothing. Wiring it here (the only construction path) makes the gate a
-    // construction-time invariant.
+    // Gate install on the resolved config directory existing, as a proxy for the
+    // CLI being installed, so Supacode never bootstraps a harness from nothing. A
+    // custom folder the user picked already exists, satisfying the gate.
     return AgentIntegration(
       agent: agent,
       components: components,
-      requiredDirectory: homeDirectoryURL.appending(path: agent.configDirectoryName),
+      requiredDirectory: resolvedConfigDir,
       fileManager: fileManager
     )
   }
 
   // MARK: - Per-agent component lists.
 
-  private static func antigravity(homeDirectoryURL: URL, fileManager: FileManager)
+  private static func antigravity(homeDirectoryURL: URL, configDirectoryURL: URL, fileManager: FileManager)
     -> [AgentIntegration.Component]
   {
     let installer = AntigravitySettingsInstaller(
@@ -49,15 +58,15 @@ nonisolated enum AgentIntegrationFactory {
         install: { try installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
-      skillsComponent(agent: .antigravity, homeDirectoryURL: homeDirectoryURL),
+      skillsComponent(agent: .antigravity, configDirectoryURL: configDirectoryURL),
     ]
   }
 
-  private static func claude(homeDirectoryURL: URL, fileManager: FileManager)
+  private static func claude(configDirectoryURL: URL, fileManager: FileManager)
     -> [AgentIntegration.Component]
   {
     let installer = ClaudeSettingsInstaller(
-      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+      configDirectoryURL: configDirectoryURL, fileManager: fileManager)
     return [
       AgentIntegration.Component(
         kind: .hooks,
@@ -65,15 +74,15 @@ nonisolated enum AgentIntegrationFactory {
         install: { try installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
-      skillsComponent(agent: .claude, homeDirectoryURL: homeDirectoryURL),
+      skillsComponent(agent: .claude, configDirectoryURL: configDirectoryURL),
     ]
   }
 
-  private static func codex(homeDirectoryURL: URL, fileManager: FileManager)
+  private static func codex(configDirectoryURL: URL, fileManager: FileManager)
     -> [AgentIntegration.Component]
   {
     let installer = CodexSettingsInstaller(
-      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+      configDirectoryURL: configDirectoryURL, fileManager: fileManager)
     return [
       AgentIntegration.Component(
         kind: .hooks,
@@ -81,15 +90,15 @@ nonisolated enum AgentIntegrationFactory {
         install: { try await installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
-      skillsComponent(agent: .codex, homeDirectoryURL: homeDirectoryURL),
+      skillsComponent(agent: .codex, configDirectoryURL: configDirectoryURL),
     ]
   }
 
-  private static func grok(homeDirectoryURL: URL, fileManager: FileManager)
+  private static func grok(configDirectoryURL: URL, fileManager: FileManager)
     -> [AgentIntegration.Component]
   {
     let installer = GrokSettingsInstaller(
-      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+      configDirectoryURL: configDirectoryURL, fileManager: fileManager)
     return [
       AgentIntegration.Component(
         kind: .hooks,
@@ -97,15 +106,15 @@ nonisolated enum AgentIntegrationFactory {
         install: { try installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
-      skillsComponent(agent: .grok, homeDirectoryURL: homeDirectoryURL),
+      skillsComponent(agent: .grok, configDirectoryURL: configDirectoryURL),
     ]
   }
 
-  private static func kimi(homeDirectoryURL: URL, fileManager: FileManager)
+  private static func kimi(configDirectoryURL: URL, fileManager: FileManager)
     -> [AgentIntegration.Component]
   {
     let installer = KimiSettingsInstaller(
-      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+      configDirectoryURL: configDirectoryURL, fileManager: fileManager)
     return [
       AgentIntegration.Component(
         kind: .hooks,
@@ -113,15 +122,15 @@ nonisolated enum AgentIntegrationFactory {
         install: { try installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
-      skillsComponent(agent: .kimi, homeDirectoryURL: homeDirectoryURL),
+      skillsComponent(agent: .kimi, configDirectoryURL: configDirectoryURL),
     ]
   }
 
-  private static func hermes(homeDirectoryURL: URL, fileManager: FileManager)
+  private static func hermes(configDirectoryURL: URL, fileManager: FileManager)
     -> [AgentIntegration.Component]
   {
     let installer = HermesPluginInstaller(
-      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+      configDirectoryURL: configDirectoryURL, fileManager: fileManager)
     return [
       AgentIntegration.Component(
         kind: .hooks,
@@ -129,15 +138,15 @@ nonisolated enum AgentIntegrationFactory {
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
-      skillsComponent(agent: .hermes, homeDirectoryURL: homeDirectoryURL),
+      skillsComponent(agent: .hermes, configDirectoryURL: configDirectoryURL),
     ]
   }
 
-  private static func kiro(homeDirectoryURL: URL, fileManager: FileManager)
+  private static func kiro(configDirectoryURL: URL, fileManager: FileManager)
     -> [AgentIntegration.Component]
   {
     let installer = KiroSettingsInstaller(
-      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+      configDirectoryURL: configDirectoryURL, fileManager: fileManager)
     return [
       AgentIntegration.Component(
         kind: .hooks,
@@ -145,15 +154,15 @@ nonisolated enum AgentIntegrationFactory {
         install: { try await installer.installAllHooks() },
         uninstall: { try installer.uninstallAllHooks() }
       ),
-      skillsComponent(agent: .kiro, homeDirectoryURL: homeDirectoryURL),
+      skillsComponent(agent: .kiro, configDirectoryURL: configDirectoryURL),
     ]
   }
 
-  private static func omp(homeDirectoryURL: URL, fileManager: FileManager)
+  private static func omp(configDirectoryURL: URL, fileManager: FileManager)
     -> [AgentIntegration.Component]
   {
     let installer = OmpSettingsInstaller(
-      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+      configDirectoryURL: configDirectoryURL, fileManager: fileManager)
     return [
       AgentIntegration.Component(
         kind: .hooks,
@@ -161,15 +170,15 @@ nonisolated enum AgentIntegrationFactory {
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
-      skillsComponent(agent: .omp, homeDirectoryURL: homeDirectoryURL),
+      skillsComponent(agent: .omp, configDirectoryURL: configDirectoryURL),
     ]
   }
 
-  private static func pi(homeDirectoryURL: URL, fileManager: FileManager)
+  private static func pi(configDirectoryURL: URL, fileManager: FileManager)
     -> [AgentIntegration.Component]
   {
     let installer = PiSettingsInstaller(
-      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+      configDirectoryURL: configDirectoryURL, fileManager: fileManager)
     return [
       AgentIntegration.Component(
         kind: .hooks,
@@ -177,15 +186,15 @@ nonisolated enum AgentIntegrationFactory {
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
-      skillsComponent(agent: .pi, homeDirectoryURL: homeDirectoryURL),
+      skillsComponent(agent: .pi, configDirectoryURL: configDirectoryURL),
     ]
   }
 
-  private static func opencode(homeDirectoryURL: URL, fileManager: FileManager)
+  private static func opencode(configDirectoryURL: URL, fileManager: FileManager)
     -> [AgentIntegration.Component]
   {
     let installer = OpenCodePluginInstaller(
-      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+      configDirectoryURL: configDirectoryURL, fileManager: fileManager)
     return [
       AgentIntegration.Component(
         kind: .hooks,
@@ -193,15 +202,15 @@ nonisolated enum AgentIntegrationFactory {
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
-      skillsComponent(agent: .opencode, homeDirectoryURL: homeDirectoryURL),
+      skillsComponent(agent: .opencode, configDirectoryURL: configDirectoryURL),
     ]
   }
 
-  private static func copilot(homeDirectoryURL: URL, fileManager: FileManager)
+  private static func copilot(configDirectoryURL: URL, fileManager: FileManager)
     -> [AgentIntegration.Component]
   {
     let installer = CopilotHooksInstaller(
-      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+      configDirectoryURL: configDirectoryURL, fileManager: fileManager)
     return [
       AgentIntegration.Component(
         kind: .hooks,
@@ -209,14 +218,14 @@ nonisolated enum AgentIntegrationFactory {
         install: { try installer.install() },
         uninstall: { try installer.uninstall() }
       ),
-      skillsComponent(agent: .copilot, homeDirectoryURL: homeDirectoryURL),
+      skillsComponent(agent: .copilot, configDirectoryURL: configDirectoryURL),
     ]
   }
 
   private static func skillsComponent(
-    agent: SkillAgent, homeDirectoryURL: URL
+    agent: SkillAgent, configDirectoryURL: URL
   ) -> AgentIntegration.Component {
-    let installer = CLISkillInstaller(homeDirectoryURL: homeDirectoryURL)
+    let installer = CLISkillInstaller(configDirectoryURL: configDirectoryURL)
     return AgentIntegration.Component(
       kind: .skills,
       state: { try installer.installState(agent) },

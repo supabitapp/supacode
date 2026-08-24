@@ -28,7 +28,7 @@ struct CodingAgentsSidebarCardView: View {
   /// pure and free of hidden global reads.
   static func resolveMode(for store: StoreOf<AppFeature>, dismissedAt: Date) -> Mode {
     Self.mode(
-      for: store.settings.agentIntegrationStates,
+      for: store.settings.standardAgentIntegrationStates,
       dismissed: Self.isDismissed(at: dismissedAt)
     )
   }

@@ -158,6 +158,28 @@ struct CodexSettingsInstallerTests {
     #expect(try installer.installState() == .installed)
   }
 
+  @Test func enableHooksCommandRoutesCodexHomeThroughEnvSoExecCanRunIt() {
+    let command = CodexSettingsInstaller.enableHooksInnerCommand(
+      codexHomeURL: URL(fileURLWithPath: "/Users/x/.codex-gn"))
+    #expect(command == "env CODEX_HOME='/Users/x/.codex-gn' codex features enable hooks")
+    // The login-shell wrapper prepends `exec`; `env` must be the exec'd program,
+    // not a bare `CODEX_HOME=...` prefix (which exec would treat as the command).
+    let wrapped = ShellClient.loginShellCommandInvocation(
+      command, userShell: URL(fileURLWithPath: "/bin/zsh"), workingDirectory: nil
+    ).command
+    #expect(wrapped.hasSuffix("exec env CODEX_HOME='/Users/x/.codex-gn' codex features enable hooks"))
+  }
+
+  @Test func enableHooksCommandEscapesQuotesAndSpacesInTheCodexHomePath() {
+    // A custom folder may contain a space or an apostrophe; the single-quote
+    // escaping must keep it one `env … codex` invocation, not a broken/injectable
+    // command once the login-shell wrapper execs it.
+    let command = CodexSettingsInstaller.enableHooksInnerCommand(
+      codexHomeURL: URL(fileURLWithPath: "/Users/o'brien/My Configs/.codex"))
+    #expect(
+      command == "env CODEX_HOME='/Users/o'\\''brien/My Configs/.codex' codex features enable hooks")
+  }
+
   @Test func unreadableConfigTomlDoesNotReadAsFeatureFlagAbsent() async throws {
     // Reading the flag as unset would send the auto-update off to rewrite a
     // config file we never managed to read.

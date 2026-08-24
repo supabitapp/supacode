@@ -7,14 +7,14 @@ import Foundation
 public nonisolated struct AgentIntegrationClient: Sendable {
   /// Throws when the on-disk state can't be determined (see `AgentFileProbe`).
   /// Callers must not treat that as "not installed".
-  public var state: @Sendable (SkillAgent) async throws -> AgentIntegrationState
-  public var install: @Sendable (SkillAgent) async throws -> Void
-  public var uninstall: @Sendable (SkillAgent) async throws -> Void
+  public var state: @Sendable (AgentInstallTarget) async throws -> AgentIntegrationState
+  public var install: @Sendable (AgentInstallTarget) async throws -> Void
+  public var uninstall: @Sendable (AgentInstallTarget) async throws -> Void
 
   public init(
-    state: @escaping @Sendable (SkillAgent) async throws -> AgentIntegrationState,
-    install: @escaping @Sendable (SkillAgent) async throws -> Void,
-    uninstall: @escaping @Sendable (SkillAgent) async throws -> Void
+    state: @escaping @Sendable (AgentInstallTarget) async throws -> AgentIntegrationState,
+    install: @escaping @Sendable (AgentInstallTarget) async throws -> Void,
+    uninstall: @escaping @Sendable (AgentInstallTarget) async throws -> Void
   ) {
     self.state = state
     self.install = install
@@ -24,14 +24,20 @@ public nonisolated struct AgentIntegrationClient: Sendable {
 
 extension AgentIntegrationClient: DependencyKey {
   public static let liveValue = Self(
-    state: { agent in
-      try AgentIntegrationFactory.make(for: agent).state()
+    state: { target in
+      try AgentIntegrationFactory.make(
+        for: target.agent, configDirectoryURL: target.configDirectoryURL
+      ).state()
     },
-    install: { agent in
-      try await AgentIntegrationFactory.make(for: agent).install()
+    install: { target in
+      try await AgentIntegrationFactory.make(
+        for: target.agent, configDirectoryURL: target.configDirectoryURL
+      ).install()
     },
-    uninstall: { agent in
-      try AgentIntegrationFactory.make(for: agent).uninstall()
+    uninstall: { target in
+      try AgentIntegrationFactory.make(
+        for: target.agent, configDirectoryURL: target.configDirectoryURL
+      ).uninstall()
     }
   )
 

@@ -90,61 +90,20 @@ private struct ForgeStatusLine: View {
   }
 }
 
-/// One supported (or unsupported) feature in a forge row's grid.
-private struct ForgeFeature: Identifiable {
-  let name: String
-  let isSupported: Bool
-
-  var id: String { name }
-}
-
 extension ForgeCapabilities {
-  fileprivate var features: [ForgeFeature] {
+  fileprivate var features: [FeatureCapability] {
     [
-      ForgeFeature(name: "Sidebar \(vocabulary.abbreviation) icons", isSupported: true),
-      ForgeFeature(name: "Inspector details", isSupported: true),
-      ForgeFeature(name: "Command palette actions", isSupported: true),
-      ForgeFeature(name: "Auto-archive merged worktrees", isSupported: true),
-      ForgeFeature(name: "Squash merges", isSupported: mergeStrategies.contains(.squash)),
-      ForgeFeature(name: "Rebase merges", isSupported: mergeStrategies.contains(.rebase)),
-      ForgeFeature(name: "Mark ready for review", isSupported: canMarkReady),
-      ForgeFeature(name: "Re-run failed \(vocabulary.ciNoun.lowercased())", isSupported: canRerunChecks),
-      ForgeFeature(name: "Copy failure logs", isSupported: canCopyCIFailureLogs),
+      FeatureCapability(name: "Sidebar \(vocabulary.abbreviation) icons", isSupported: true),
+      FeatureCapability(name: "Inspector details", isSupported: true),
+      FeatureCapability(name: "Command palette actions", isSupported: true),
+      FeatureCapability(name: "Auto-archive merged worktrees", isSupported: true),
+      FeatureCapability(name: "Squash merges", isSupported: mergeStrategies.contains(.squash)),
+      FeatureCapability(name: "Rebase merges", isSupported: mergeStrategies.contains(.rebase)),
+      FeatureCapability(name: "Mark ready for review", isSupported: canMarkReady),
+      FeatureCapability(
+        name: "Re-run failed \(vocabulary.ciNoun.lowercased())", isSupported: canRerunChecks),
+      FeatureCapability(name: "Copy failure logs", isSupported: canCopyCIFailureLogs),
     ]
-  }
-}
-
-private struct ForgeFeatureCell: View {
-  let feature: ForgeFeature
-
-  var body: some View {
-    HStack(spacing: 4) {
-      Image(systemName: feature.isSupported ? "checkmark" : "minus")
-        .foregroundStyle(feature.isSupported ? AnyShapeStyle(.green) : AnyShapeStyle(.tertiary))
-        .frame(width: 12)
-        .accessibilityLabel(feature.isSupported ? "Supported" : "Not supported")
-      Text(feature.name)
-        .foregroundStyle(feature.isSupported ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
-    }
-    .appFont(.caption)
-  }
-}
-
-private struct ForgeFeatureGrid: View {
-  let capabilities: ForgeCapabilities
-
-  private static let columns = [
-    GridItem(.flexible(), alignment: .leading),
-    GridItem(.flexible(), alignment: .leading),
-  ]
-
-  var body: some View {
-    LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 4) {
-      ForEach(capabilities.features) { feature in
-        ForgeFeatureCell(feature: feature)
-      }
-    }
-    .padding(.top, 4)
   }
 }
 
@@ -173,7 +132,7 @@ private struct ForgeRow<Detail: View>: View {
           isBeta ? BetaBadge() : nil
         }
         detail
-        ForgeFeatureGrid(capabilities: capabilities)
+        FeatureCapabilityGrid(capabilities: capabilities.features)
       }
       Spacer()
       Toggle(title, isOn: $isEnabled)

@@ -3,14 +3,16 @@ import Foundation
 private nonisolated let piInstallerLogger = SupaLogger("Settings")
 
 nonisolated struct PiSettingsInstaller {
-  let homeDirectoryURL: URL
+  let configDirectoryURL: URL
   let fileManager: FileManager
 
   init(
     homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
+    configDirectoryURL: URL? = nil,
     fileManager: FileManager = .default
   ) {
-    self.homeDirectoryURL = homeDirectoryURL
+    self.configDirectoryURL =
+      configDirectoryURL ?? homeDirectoryURL.appending(path: ".pi/agent", directoryHint: .isDirectory)
     self.fileManager = fileManager
   }
 
@@ -42,7 +44,8 @@ nonisolated struct PiSettingsInstaller {
       throw error
     }
     if let contents, !contents.contains(PiExtensionContent.ownershipMarker) {
-      throw PiSettingsInstallerError.extensionNotManaged
+      throw PiSettingsInstallerError.extensionNotManaged(
+        path: (extensionDirectoryURL.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath)
     }
     let dirPath = extensionDirectoryURL.path(percentEncoded: false)
     try fileManager.createDirectory(atPath: dirPath, withIntermediateDirectories: true)
@@ -70,7 +73,8 @@ nonisolated struct PiSettingsInstaller {
     // surface it as a typed error so the reducer can show `.failed(…)`
     // instead of silently flipping the UI to "not installed".
     guard contents.contains(PiExtensionContent.ownershipMarker) else {
-      throw PiSettingsInstallerError.extensionNotManaged
+      throw PiSettingsInstallerError.extensionNotManaged(
+        path: (extensionDirectoryURL.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath)
     }
     try fileManager.removeItem(atPath: dirPath)
     piInstallerLogger.info("Uninstalled Pi extension from \(dirPath)")
@@ -79,7 +83,9 @@ nonisolated struct PiSettingsInstaller {
   // MARK: - Paths.
 
   private var extensionDirectoryURL: URL {
-    Self.extensionDirectoryURL(homeDirectoryURL: homeDirectoryURL)
+    configDirectoryURL
+      .appending(path: "extensions", directoryHint: .isDirectory)
+      .appending(path: PiExtensionContent.extensionDirectoryName, directoryHint: .isDirectory)
   }
 
   private var extensionIndexURL: URL {
@@ -94,12 +100,12 @@ nonisolated struct PiSettingsInstaller {
 }
 
 nonisolated enum PiSettingsInstallerError: Error, Equatable, LocalizedError {
-  case extensionNotManaged
+  case extensionNotManaged(path: String)
 
   var errorDescription: String? {
     switch self {
-    case .extensionNotManaged:
-      "The Pi extension at ~/.pi/agent/extensions/supacode is not managed by Supacode."
+    case .extensionNotManaged(let path):
+      "The Pi extension at \(path) is not managed by Supacode."
     }
   }
 }

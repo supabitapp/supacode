@@ -5,14 +5,16 @@ private nonisolated let copilotInstallerLogger = SupaLogger("Settings")
 /// Writes / removes Supacode's own `~/.copilot/hooks/supacode.json`. The hooks
 /// dir is shared with the user's files, so only `supacode.json` is ever touched.
 nonisolated struct CopilotHooksInstaller {
-  let homeDirectoryURL: URL
+  let configDirectoryURL: URL
   let fileManager: FileManager
 
   init(
     homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
+    configDirectoryURL: URL? = nil,
     fileManager: FileManager = .default
   ) {
-    self.homeDirectoryURL = homeDirectoryURL
+    self.configDirectoryURL =
+      configDirectoryURL ?? homeDirectoryURL.appending(path: ".copilot", directoryHint: .isDirectory)
     self.fileManager = fileManager
   }
 
@@ -32,7 +34,8 @@ nonisolated struct CopilotHooksInstaller {
     // present" and let the unattended auto-update clobber a user's own file.
     if let contents = try AgentFileProbe.text(at: hookFileURL) {
       guard contents.contains(CopilotHookSettings.ownershipMarker) else {
-        throw CopilotHooksInstallerError.fileNotManaged
+        throw CopilotHooksInstallerError.fileNotManaged(
+          path: (hookFileURL.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath)
       }
     }
     try fileManager.createDirectory(at: hooksDirectoryURL, withIntermediateDirectories: true)
@@ -45,7 +48,8 @@ nonisolated struct CopilotHooksInstaller {
     // Never remove a user file that merely shares the name.
     guard let contents = try AgentFileProbe.text(at: hookFileURL) else { return }
     guard contents.contains(CopilotHookSettings.ownershipMarker) else {
-      throw CopilotHooksInstallerError.fileNotManaged
+      throw CopilotHooksInstallerError.fileNotManaged(
+        path: (hookFileURL.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath)
     }
     try fileManager.removeItem(at: hookFileURL)
     copilotInstallerLogger.info("Uninstalled Copilot hooks from \(path)")
@@ -56,7 +60,7 @@ nonisolated struct CopilotHooksInstaller {
   }
 
   private var hooksDirectoryURL: URL {
-    Self.hooksDirectoryURL(homeDirectoryURL: homeDirectoryURL)
+    configDirectoryURL.appending(path: "hooks", directoryHint: .isDirectory)
   }
 
   static func hooksDirectoryURL(homeDirectoryURL: URL) -> URL {
@@ -67,13 +71,13 @@ nonisolated struct CopilotHooksInstaller {
 }
 
 nonisolated enum CopilotHooksInstallerError: Error, Equatable, LocalizedError {
-  case fileNotManaged
+  case fileNotManaged(path: String)
   case encodingFailed
 
   var errorDescription: String? {
     switch self {
-    case .fileNotManaged:
-      "The Copilot hook file at ~/.copilot/hooks/supacode.json is not managed by Supacode."
+    case .fileNotManaged(let path):
+      "The Copilot hook file at \(path) is not managed by Supacode."
     case .encodingFailed:
       "Failed to encode the Copilot hook payload."
     }

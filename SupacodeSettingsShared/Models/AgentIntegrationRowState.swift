@@ -1,3 +1,59 @@
+import Foundation
+
+/// Where an agent integration is installed: its default config directory, or a
+/// custom one the user chose. The custom payload is the resolved config dir
+/// itself, canonicalized so it keys per-install state uniquely.
+public nonisolated enum AgentInstallLocation: Hashable, Sendable {
+  case standard
+  case custom(configDirectoryPath: String)
+}
+
+/// One installable integration: an agent at a specific location. Keys the
+/// per-install row state and the install/uninstall effects so two installs of
+/// the same agent into different folders never cancel or clobber each other.
+public nonisolated struct AgentInstallTarget: Hashable, Sendable {
+  public let agent: SkillAgent
+  public let location: AgentInstallLocation
+
+  public init(agent: SkillAgent, location: AgentInstallLocation = .standard) {
+    self.agent = agent
+    self.location = location
+  }
+
+  /// The default-directory target for an agent.
+  public static func standard(_ agent: SkillAgent) -> AgentInstallTarget {
+    AgentInstallTarget(agent: agent, location: .standard)
+  }
+
+  /// Config-dir override to hand `AgentIntegrationFactory`: `nil` for the
+  /// default location (the factory then derives it under home).
+  public var configDirectoryURL: URL? {
+    switch location {
+    case .standard: nil
+    case .custom(let path): URL(filePath: path, directoryHint: .isDirectory)
+    }
+  }
+
+  /// The actual config directory: the agent's dir under `home` for the default,
+  /// or the chosen folder for a custom install.
+  public func configDirectory(
+    underHome home: URL = FileManager.default.homeDirectoryForCurrentUser
+  ) -> URL {
+    switch location {
+    case .standard: home.appending(path: agent.configDirectoryName, directoryHint: .isDirectory)
+    case .custom(let path): URL(filePath: path, directoryHint: .isDirectory)
+    }
+  }
+}
+
+extension [AgentInstallTarget: AgentIntegrationRowState] {
+  /// Convenience access to an agent's DEFAULT-location row.
+  public subscript(agent: SkillAgent) -> AgentIntegrationRowState? {
+    get { self[.standard(agent)] }
+    set { self[.standard(agent)] = newValue }
+  }
+}
+
 /// UI-side install state for a per-agent integration row. Distinct from
 /// `AgentIntegrationState` (which is the on-disk truth) because the row also
 /// has to represent in-flight operations and the most recent failure.
@@ -52,6 +108,14 @@ public nonisolated enum AgentIntegrationRowState: Equatable, Sendable {
   public var isUndetermined: Bool {
     if case .undetermined = self { return true }
     return false
+  }
+
+  /// A transient operation is in flight, so no settled verdict exists yet.
+  public var isInFlight: Bool {
+    switch self {
+    case .checking, .installing, .uninstalling: true
+    case .ready, .failed, .failedTransient, .undetermined: false
+    }
   }
 
   /// Belongs in the main "Coding Agents" list: installed, outdated, still

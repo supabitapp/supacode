@@ -32,16 +32,18 @@ nonisolated struct KiroSettingsInstaller {
   /// hang a drain past the timeout (#504).
   private static let drainDeadlineSeconds: UInt64 = versionCommandTimeoutSeconds + terminateGraceSeconds + 3
 
-  let homeDirectoryURL: URL
+  let configDirectoryURL: URL
   let fileManager: FileManager
   let runKiroVersionCommand: @Sendable () async throws -> CommandResult
 
   init(
     homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
+    configDirectoryURL: URL? = nil,
     fileManager: FileManager = .default,
   ) {
     self.init(
       homeDirectoryURL: homeDirectoryURL,
+      configDirectoryURL: configDirectoryURL,
       fileManager: fileManager,
       runKiroVersionCommand: Self.runKiroVersionCommand,
     )
@@ -49,10 +51,12 @@ nonisolated struct KiroSettingsInstaller {
 
   init(
     homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
+    configDirectoryURL: URL? = nil,
     fileManager: FileManager = .default,
     runKiroVersionCommand: @escaping @Sendable () async throws -> CommandResult,
   ) {
-    self.homeDirectoryURL = homeDirectoryURL
+    self.configDirectoryURL =
+      configDirectoryURL ?? homeDirectoryURL.appending(path: ".kiro", directoryHint: .isDirectory)
     self.fileManager = fileManager
     self.runKiroVersionCommand = runKiroVersionCommand
   }
@@ -188,7 +192,9 @@ nonisolated struct KiroSettingsInstaller {
   // MARK: - Paths.
 
   private var settingsURL: URL {
-    Self.settingsURL(homeDirectoryURL: homeDirectoryURL)
+    configDirectoryURL
+      .appending(path: "agents", directoryHint: .isDirectory)
+      .appending(path: "kiro_default.json", directoryHint: .notDirectory)
   }
 
   static func settingsURL(homeDirectoryURL: URL) -> URL {

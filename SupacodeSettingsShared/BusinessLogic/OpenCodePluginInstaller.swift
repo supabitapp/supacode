@@ -12,14 +12,16 @@ nonisolated enum OpenCodePluginInstallerError: Error {
 }
 
 nonisolated struct OpenCodePluginInstaller {
-  let homeDirectoryURL: URL
+  let configDirectoryURL: URL
   let fileManager: FileManager
 
   init(
     homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
+    configDirectoryURL: URL? = nil,
     fileManager: FileManager = .default
   ) {
-    self.homeDirectoryURL = homeDirectoryURL
+    self.configDirectoryURL =
+      configDirectoryURL ?? homeDirectoryURL.appending(path: ".config/opencode", directoryHint: .isDirectory)
     self.fileManager = fileManager
   }
 
@@ -63,7 +65,7 @@ nonisolated struct OpenCodePluginInstaller {
   }
 
   private var pluginDirectoryURL: URL {
-    Self.pluginDirectoryURL(homeDirectoryURL: homeDirectoryURL)
+    configDirectoryURL.appending(path: "plugins", directoryHint: .isDirectory)
   }
 
   static func pluginDirectoryURL(homeDirectoryURL: URL) -> URL {

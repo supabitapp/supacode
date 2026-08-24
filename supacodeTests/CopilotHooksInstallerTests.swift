@@ -58,7 +58,7 @@ struct CopilotHooksInstallerTests {
     let userFile = #"{ "version": 1, "hooks": { "stop": [] } }"#
     try userFile.write(to: installer.hookFileURL, atomically: true, encoding: .utf8)
 
-    #expect(throws: CopilotHooksInstallerError.fileNotManaged) {
+    #expect(throws: CopilotHooksInstallerError.self) {
       try installer.install()
     }
     let after = try String(contentsOf: installer.hookFileURL, encoding: .utf8)
@@ -87,7 +87,7 @@ struct CopilotHooksInstallerTests {
     let userFile = #"{ "version": 1, "hooks": { "stop": [] } }"#
     try userFile.write(to: installer.hookFileURL, atomically: true, encoding: .utf8)
 
-    #expect(throws: CopilotHooksInstallerError.fileNotManaged) {
+    #expect(throws: CopilotHooksInstallerError.self) {
       try installer.uninstall()
     }
     let after = try String(contentsOf: installer.hookFileURL, encoding: .utf8)

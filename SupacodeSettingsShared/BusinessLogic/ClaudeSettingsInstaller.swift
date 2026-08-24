@@ -1,14 +1,16 @@
 import Foundation
 
 nonisolated struct ClaudeSettingsInstaller {
-  let homeDirectoryURL: URL
+  let configDirectoryURL: URL
   let fileManager: FileManager
 
   init(
     homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
+    configDirectoryURL: URL? = nil,
     fileManager: FileManager = .default
   ) {
-    self.homeDirectoryURL = homeDirectoryURL
+    self.configDirectoryURL =
+      configDirectoryURL ?? homeDirectoryURL.appending(path: ".claude", directoryHint: .isDirectory)
     self.fileManager = fileManager
   }
 
@@ -47,7 +49,7 @@ nonisolated struct ClaudeSettingsInstaller {
   }
 
   private var settingsURL: URL {
-    Self.settingsURL(homeDirectoryURL: homeDirectoryURL)
+    configDirectoryURL.appending(path: "settings.json", directoryHint: .notDirectory)
   }
 
   static func settingsURL(homeDirectoryURL: URL) -> URL {

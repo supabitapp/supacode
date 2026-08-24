@@ -71,4 +71,61 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
   /// Computed once: the inputs are static, so re-sorting per access is waste.
   public static let allCasesByDisplayName: [SkillAgent] =
     allCases.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+
+  /// True when Supacode can WRITE this agent's whole integration into a chosen
+  /// config directory. It does NOT mean Supacode drives the agent from there, or
+  /// that the agent can even be pointed at it: honoring the relocated dir is the
+  /// user's job (e.g. `CLAUDE_CONFIG_DIR`). False only when the integration spans
+  /// fixed paths a relocated dir can't cover: Antigravity's `~/.gemini` siblings
+  /// and Kiro's absolute `~/.kiro` paths.
+  public var supportsCustomConfigFolder: Bool {
+    self != .antigravity && self != .kiro
+  }
+
+  /// Whether the agent surfaces a given capability, for the settings grid.
+  /// Hand-maintained from each agent's installed hook events (not exposed as a
+  /// readable set). Keep in sync with the per-agent hook definitions.
+  public func supports(_ feature: AgentFeature) -> Bool {
+    switch feature {
+    case .activityBadge, .idleBadge, .skills:
+      true
+    case .inputNeededBadge:
+      self == .claude || self == .grok || self == .copilot || self == .kimi || self == .opencode
+    case .errorDetection:
+      self == .claude || self == .antigravity
+    case .compactionBadge:
+      self == .claude
+    case .notifications:
+      self != .opencode
+    case .customFolder:
+      supportsCustomConfigFolder
+    }
+  }
+}
+
+/// A capability surfaced by an installed agent integration, rendered as one row
+/// of the settings capability grid. Ordered as it should read top-to-bottom.
+public nonisolated enum AgentFeature: String, CaseIterable, Sendable {
+  case activityBadge
+  case idleBadge
+  case inputNeededBadge
+  case errorDetection
+  case compactionBadge
+  case notifications
+  case skills
+  case customFolder
+
+  /// User-facing row label.
+  public var title: String {
+    switch self {
+    case .activityBadge: "Activity badge"
+    case .idleBadge: "Idle badge"
+    case .inputNeededBadge: "Input-needed badge"
+    case .errorDetection: "Error detection"
+    case .compactionBadge: "Compaction badge"
+    case .notifications: "Notifications"
+    case .skills: "Skills"
+    case .customFolder: "Custom folder"
+    }
+  }
 }

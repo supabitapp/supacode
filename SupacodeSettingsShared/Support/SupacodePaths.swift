@@ -182,6 +182,11 @@ public nonisolated enum SupacodePaths {
     configBaseDirectory.appending(path: "routes.json", directoryHint: .notDirectory)
   }
 
+  /// Installed agent integrations (default + custom), reconciled against disk.
+  public static var agentsURL: URL {
+    configBaseDirectory.appending(path: "agents.json", directoryHint: .notDirectory)
+  }
+
   /// Per-repository settings fallback, keyed by repository id, for repos without
   /// a local `supacode.json` (notably every remote repo).
   public static var reposURL: URL {

@@ -96,12 +96,16 @@ public struct SettingsFeature {
     public var cliInstallState = CLIInstallState.checking
     /// Installed editors in menu order, resolved once off the picker's body.
     public var installedOpenActions: [OpenWorktreeAction]
-    /// Aggregate per-agent install state for the unified integration row.
-    public var agentIntegrationStates: [SkillAgent: AgentIntegrationRowState] = [:]
-    /// Agents Supacode has already auto-updated this session. Recorded directly
-    /// so no intermediate row state can make the once-per-session guard forget.
-    /// A manual Install tap never consults it.
-    public var autoInstalledAgents: Set<SkillAgent> = []
+    /// Per-install row state, keyed by target (agent + location) so two installs
+    /// of one agent into different folders never share a row.
+    public var agentIntegrationStates: [AgentInstallTarget: AgentIntegrationRowState] = [:]
+    /// Targets auto-updated this session, recorded directly so no intermediate
+    /// row state can make the once-per-session guard forget. Keyed by target so a
+    /// custom folder's heal never consumes the default's. A manual tap never reads it.
+    public var autoInstalledTargets: Set<AgentInstallTarget> = []
+    /// Targets whose config directory exists on disk, resolved by the probe, so
+    /// the Finder-link affordance never stats in a view body.
+    public var configDirectoriesOnDisk: Set<AgentInstallTarget> = []
     /// True while the install-more-agents modal is presented. Opening is gated
     /// in the reducer (`agentInstallSheetOpenTapped`) so the sheet is never
     /// reachable empty.
@@ -118,22 +122,63 @@ public struct SettingsFeature {
       systemNotificationsEnabled || notificationSound != .never
     }
 
-    /// Rows for the main "Coding Agents" list
-    /// (see `AgentIntegrationRowState.isMainListRow`). Unprobed agents count as
-    /// still-checking so they render while their state resolves.
-    public var mainListAgentRows: [SkillAgent] {
-      SkillAgent.allCasesByDisplayName.filter { (agentIntegrationStates[$0] ?? .checking).isMainListRow }
+    /// Custom-folder targets present in state for an agent, ordered by path.
+    func customTargets(for agent: SkillAgent) -> [AgentInstallTarget] {
+      agentIntegrationStates.keys
+        .filter { $0.agent == agent && $0.location != .standard }
+        .sorted { ($0.configDirectoryURL?.path ?? "") < ($1.configDirectoryURL?.path ?? "") }
     }
 
-    /// Agents that resolved to "not installed": the collapsed install prompt's
-    /// avatar lineup.
+    /// Every install row for an agent: the default first, then custom folders.
+    public func installTargets(for agent: SkillAgent) -> [AgentInstallTarget] {
+      [.standard(agent)] + customTargets(for: agent)
+    }
+
+    /// Rows for the main "Coding Agents" list (see `AgentIntegrationRowState.isMainListRow`).
+    /// An agent with any custom folder always belongs here. Unprobed agents count
+    /// as still-checking so they render while resolving.
+    public var mainListAgentRows: [SkillAgent] {
+      SkillAgent.allCasesByDisplayName.filter { agent in
+        !customTargets(for: agent).isEmpty || (agentIntegrationStates[agent] ?? .checking).isMainListRow
+      }
+    }
+
+    /// Agents whose default resolved to "not installed" with no custom folder:
+    /// the collapsed install prompt's avatar lineup.
     public var uninstalledAgents: [SkillAgent] {
-      SkillAgent.allCasesByDisplayName.filter { (agentIntegrationStates[$0] ?? .checking).isNotInstalled }
+      SkillAgent.allCasesByDisplayName.filter { agent in
+        customTargets(for: agent).isEmpty && (agentIntegrationStates[agent] ?? .checking).isNotInstalled
+      }
     }
 
     /// Rows for the install modal (see `AgentIntegrationRowState.isInstallSheetCandidate`).
+    /// An agent with a custom folder lives in the main list, never the modal.
     public var agentInstallSheetAgents: [SkillAgent] {
-      SkillAgent.allCasesByDisplayName.filter { (agentIntegrationStates[$0] ?? .checking).isInstallSheetCandidate }
+      SkillAgent.allCasesByDisplayName.filter { agent in
+        customTargets(for: agent).isEmpty
+          && (agentIntegrationStates[agent] ?? .checking).isInstallSheetCandidate
+      }
+    }
+
+    /// Per-agent state for consumers that reason per agent (the sidebar upsell),
+    /// collapsing every target for the agent: installed anywhere reads as
+    /// installed (silences the prompt), an in-flight or undetermined custom probe
+    /// keeps it waiting (never a false upsell), otherwise the default state stands.
+    public var standardAgentIntegrationStates: [SkillAgent: AgentIntegrationRowState] {
+      var result: [SkillAgent: AgentIntegrationRowState] = [:]
+      for agent in SkillAgent.allCases {
+        let targetStates = agentIntegrationStates.compactMap { $0.key.agent == agent ? $0.value : nil }
+        if targetStates.contains(where: { $0 == .ready(.installed) || $0 == .ready(.outdated) }) {
+          result[agent] = .ready(.installed)
+        } else if let inFlight = targetStates.first(where: \.isInFlight) {
+          result[agent] = inFlight
+        } else if let undetermined = targetStates.first(where: \.isUndetermined) {
+          result[agent] = undetermined
+        } else {
+          result[agent] = agentIntegrationStates[.standard(agent)]
+        }
+      }
+      return result
     }
 
     public init(settings: GlobalSettings = .default) {
@@ -208,20 +253,24 @@ public struct SettingsFeature {
     case cliUninstallTapped
     case cliInstallCompleted(Result<Bool, Error>)
     case refreshAgentIntegrationStates
-    case agentIntegrationChecked(SkillAgent, Result<AgentIntegrationState, Error>)
-    case agentIntegrationInstallTapped(SkillAgent)
-    case agentIntegrationUninstallTapped(SkillAgent)
+    case agentIntegrationChecked(AgentInstallTarget, Result<AgentIntegrationState, Error>)
+    case agentIntegrationInstallTapped(AgentInstallTarget)
+    case agentIntegrationUninstallTapped(AgentInstallTarget)
     case agentIntegrationCompleted(
-      SkillAgent,
+      AgentInstallTarget,
       Result<AgentIntegrationState, Error>,
       failureIsTransient: Bool,
       expected: AgentIntegrationState
     )
     /// The write succeeded but the follow-up read failed, so it can be neither
     /// confirmed nor called a failure. Carries the verdict from before the write.
-    case agentIntegrationUnverified(SkillAgent, lastKnown: AgentIntegrationState?, reason: String)
+    case agentIntegrationUnverified(AgentInstallTarget, lastKnown: AgentIntegrationState?, reason: String)
     case agentInstallSheetOpenTapped
     case setAgentInstallSheetPresented(Bool)
+    case agentAddCustomFolderTapped(SkillAgent)
+    case agentCustomFolderPicked(SkillAgent, URL)
+    case agentConfigDirectoriesResolved(Set<AgentInstallTarget>)
+    case agentCustomFolderPersistFailed(AgentInstallTarget, reason: String)
     case repositorySettings(RepositorySettingsFeature.Action)
     case addGlobalScript
     case removeGlobalScript(ScriptDefinition.ID)
@@ -245,6 +294,7 @@ public struct SettingsFeature {
   @Dependency(AnalyticsClient.self) private var analyticsClient
   @Dependency(CLIInstallerClient.self) private var cliInstallerClient
   @Dependency(AgentIntegrationClient.self) private var agentIntegrationClient
+  @Dependency(\.directoryPicker) private var directoryPicker
   @Dependency(ArchivedWorktreeDatesClient.self) private var archivedWorktreeDatesClient
   @Dependency(SystemNotificationClient.self) private var systemNotificationClient
   @Dependency(NotificationSoundClient.self) private var notificationSoundClient
@@ -275,19 +325,39 @@ public struct SettingsFeature {
         // can both dispatch `.agentIntegrationInstallTapped`, which
         // shares `AgentIntegrationCancelID` with the install effect and
         // would kill the first install mid-write.
+        // Custom folders aren't filesystem-discoverable; they exist only because
+        // `agents.json` records them. Probe them alongside the default targets.
+        @Shared(.agentsFile) var agentsFile
+        // Skip custom records whose agent can't be relocated: the factory ignores
+        // their path, so a shown row would silently operate on the default dir.
+        let customTargets = agentsFile.agents.compactMap {
+          $0.path != nil && $0.target.agent.supportsCustomConfigFolder ? $0.target : nil
+        }
+        // Seed custom rows so they render while their probe resolves; default
+        // rows already default to `.checking` in the row computeds.
+        for target in customTargets where state.agentIntegrationStates[target] == nil {
+          state.agentIntegrationStates[target] = .checking
+        }
+        let targets = SkillAgent.allCases.map(AgentInstallTarget.standard) + customTargets
         return .run { [agentIntegrationClient] send in
-          await withTaskGroup(of: (SkillAgent, Result<AgentIntegrationState, Error>).self) { group in
-            for agent in SkillAgent.allCases {
+          // Resolve which config dirs exist off the main thread, so the view's
+          // Finder link reads observable state instead of statting in its body.
+          let onDisk = targets.filter {
+            FileManager.default.fileExists(atPath: $0.configDirectory().path(percentEncoded: false))
+          }
+          await send(.agentConfigDirectoriesResolved(Set(onDisk)))
+          await withTaskGroup(of: (AgentInstallTarget, Result<AgentIntegrationState, Error>).self) { group in
+            for target in targets {
               group.addTask {
                 do {
-                  return (agent, .success(try await agentIntegrationClient.state(agent)))
+                  return (target, .success(try await agentIntegrationClient.state(target)))
                 } catch {
-                  return (agent, .failure(error))
+                  return (target, .failure(error))
                 }
               }
             }
-            for await (agent, probe) in group {
-              await send(.agentIntegrationChecked(agent, probe))
+            for await (target, probe) in group {
+              await send(.agentIntegrationChecked(target, probe))
             }
           }
         }
@@ -466,14 +536,20 @@ public struct SettingsFeature {
         state.cliInstallState = .failed(error.localizedDescription)
         return .none
 
-      case .agentIntegrationChecked(let agent, let probe):
+      case .agentIntegrationChecked(let target, let probe):
+        // A custom target removed from agents.json (uninstalled) must not be
+        // resurrected by an in-flight probe that predates the removal.
+        if target.location != .standard {
+          @Shared(.agentsFile) var agentsFile
+          guard agentsFile.agents.contains(where: { $0.target == target }) else { return .none }
+        }
         // Don't clobber in-flight or failed states. `.installing` /
         // `.uninstalling` settle via `.agentIntegrationCompleted`;
         // overwriting them races the shared `AgentIntegrationCancelID`
         // (the re-install below would otherwise cancel a manual uninstall).
         // `.failed`/`.failedTransient` must survive so the error stays visible
         // and the re-install can't loop on a persistent failure.
-        let previous = state.agentIntegrationStates[agent]
+        let previous = state.agentIntegrationStates[target]
         switch previous {
         case .installing, .uninstalling, .failed, .failedTransient: return .none
         case nil, .checking, .ready, .undetermined: break
@@ -486,15 +562,20 @@ public struct SettingsFeature {
           // Never `.failed`: that state is sticky for the session, and a probe
           // fault clears as soon as the file becomes readable, which only a
           // re-probe can observe. No auto-install against a file we can't read.
-          settingsFeatureLogger.warning("\(agent.rawValue) integration state unreadable: \(error)")
-          state.agentIntegrationStates[agent] = .undetermined(
+          settingsFeatureLogger.warning("\(target.agent.rawValue) integration state unreadable: \(error)")
+          state.agentIntegrationStates[target] = .undetermined(
             lastKnown: previous?.lastKnownState,
             reason: Self.probeFailureMessage(error)
           )
           dismissInstallSheetIfSettled(&state)
           return .none
         }
-        state.agentIntegrationStates[agent] = .ready(resolved)
+        state.agentIntegrationStates[target] = .ready(resolved)
+        // Reconcile the record with disk: an install found on disk earns a record
+        // so `agents.json` stays the source of truth. Absence never removes a
+        // record, so a recorded target reading `.notInstalled` shows as a wrong
+        // install, not a silent forget.
+        if resolved != .notInstalled { Self.addRecordIfMissing(for: target) }
         // A refresh (not just a completed install) can be what finally empties
         // the modal, e.g. an agent installed externally between activations.
         dismissInstallSheetIfSettled(&state)
@@ -502,106 +583,122 @@ public struct SettingsFeature {
         // hooks are matched by signal, so `.outdated` means our own components
         // drifted. Re-arming on every activation would be a silent, unbounded
         // hook rewrite.
-        guard resolved == .outdated, !state.autoInstalledAgents.contains(agent) else { return .none }
-        state.autoInstalledAgents.insert(agent)
-        return .send(.agentIntegrationInstallTapped(agent))
+        guard resolved == .outdated, !state.autoInstalledTargets.contains(target) else { return .none }
+        state.autoInstalledTargets.insert(target)
+        return .send(.agentIntegrationInstallTapped(target))
 
-      case .agentIntegrationInstallTapped(let agent):
+      case .agentIntegrationInstallTapped(let target):
         // A fresh install of a not-yet-present agent surfaces failures
         // transiently in the modal; retrying a persistent error or updating an
-        // already-present integration keeps them as a main-list row.
+        // already-present integration keeps them as a main-list row. Custom
+        // folders never live in the modal, so their errors are always persistent.
         let failureIsTransient: Bool
-        switch state.agentIntegrationStates[agent] {
-        case .ready(.installed), .ready(.outdated), .failed, .undetermined: failureIsTransient = false
-        case nil, .checking, .installing, .uninstalling, .ready(.notInstalled), .failedTransient:
-          failureIsTransient = true
+        if target.location != .standard {
+          failureIsTransient = false
+        } else {
+          switch state.agentIntegrationStates[target] {
+          case .ready(.installed), .ready(.outdated), .failed, .undetermined: failureIsTransient = false
+          case nil, .checking, .installing, .uninstalling, .ready(.notInstalled), .failedTransient:
+            failureIsTransient = true
+          }
         }
         // Captured before the write: an unverifiable read afterwards must not
         // erase what the auto-update guard already knew.
-        let lastKnown = state.agentIntegrationStates[agent]?.lastKnownState
-        state.agentIntegrationStates[agent] = .installing
+        let lastKnown = state.agentIntegrationStates[target]?.lastKnownState
+        state.agentIntegrationStates[target] = .installing
         return .run { [agentIntegrationClient] send in
           do {
-            try await agentIntegrationClient.install(agent)
+            try await agentIntegrationClient.install(target)
           } catch {
             await send(
               .agentIntegrationCompleted(
-                agent, .failure(error), failureIsTransient: failureIsTransient, expected: .installed))
+                target, .failure(error), failureIsTransient: failureIsTransient, expected: .installed))
             return
           }
           await send(
             Self.verificationAction(
-              agent: agent,
+              target: target,
               expected: .installed,
               lastKnown: lastKnown,
               failureIsTransient: failureIsTransient,
               client: agentIntegrationClient
             ))
         }
-        // Cancel an in-flight install for the same agent if Settings
-        // is closed/reopened mid-flight — otherwise two effects could
-        // race the same `~/.codex/hooks.json` read-modify-write.
-        .cancellable(id: AgentIntegrationCancelID(agent: agent), cancelInFlight: true)
+        // Cancel an in-flight install for the same TARGET if Settings is reopened
+        // mid-flight, otherwise two effects race the same config dir's read-modify-
+        // write. Per-target (not per-agent) so a custom install never cancels the default's.
+        .cancellable(id: AgentIntegrationCancelID(target: target), cancelInFlight: true)
 
-      case .agentIntegrationUninstallTapped(let agent):
-        let lastKnown = state.agentIntegrationStates[agent]?.lastKnownState
-        state.agentIntegrationStates[agent] = .uninstalling
+      case .agentIntegrationUninstallTapped(let target):
+        let lastKnown = state.agentIntegrationStates[target]?.lastKnownState
+        state.agentIntegrationStates[target] = .uninstalling
         return .run { [agentIntegrationClient] send in
           do {
-            try await agentIntegrationClient.uninstall(agent)
+            try await agentIntegrationClient.uninstall(target)
           } catch {
             // An uninstall failure is a persistent main-list error, not a modal one.
             await send(
               .agentIntegrationCompleted(
-                agent, .failure(error), failureIsTransient: false, expected: .notInstalled))
+                target, .failure(error), failureIsTransient: false, expected: .notInstalled))
             return
           }
           await send(
             Self.verificationAction(
-              agent: agent,
+              target: target,
               expected: .notInstalled,
               lastKnown: lastKnown,
               failureIsTransient: false,
               client: agentIntegrationClient
             ))
         }
-        .cancellable(id: AgentIntegrationCancelID(agent: agent), cancelInFlight: true)
+        .cancellable(id: AgentIntegrationCancelID(target: target), cancelInFlight: true)
 
-      case .agentIntegrationCompleted(let agent, .success(let integrationState), _, let expected):
+      case .agentIntegrationCompleted(let target, .success(let integrationState), _, let expected):
         // The operation reported success, so trust the disk, not the report: a
         // write that did not land must not render as a healthy row.
         guard integrationState == expected else {
-          state.agentIntegrationStates[agent] = .failed(
-            Self.unlandedWriteMessage(agent: agent, expected: expected, actual: integrationState))
+          state.agentIntegrationStates[target] = .failed(
+            Self.unlandedWriteMessage(agent: target.agent, expected: expected, actual: integrationState))
           dismissInstallSheetIfSettled(&state)
           return .none
         }
-        state.agentIntegrationStates[agent] = .ready(integrationState)
+        state.agentIntegrationStates[target] = .ready(integrationState)
+        // Keep `agents.json` in step with the write that just landed: an
+        // install earns a record, an uninstall drops it.
+        if expected == .notInstalled {
+          Self.removeRecord(for: target)
+          // An uninstalled custom folder has no row to show, so drop it rather
+          // than linger as an empty line. The default's row stays and reverts to the prompt.
+          if target.location != .standard { state.agentIntegrationStates[target] = nil }
+        } else {
+          Self.addRecordIfMissing(for: target)
+        }
         dismissInstallSheetIfSettled(&state)
         return .none
 
-      case .agentIntegrationUnverified(let agent, let lastKnown, let reason):
+      case .agentIntegrationUnverified(let target, let lastKnown, let reason):
         // Only the confirming read failed, so claiming either outcome would be
         // a guess.
-        settingsFeatureLogger.warning("\(agent.rawValue) integration could not be verified: \(reason)")
-        state.agentIntegrationStates[agent] = .undetermined(lastKnown: lastKnown, reason: reason)
+        settingsFeatureLogger.warning("\(target.agent.rawValue) integration could not be verified: \(reason)")
+        state.agentIntegrationStates[target] = .undetermined(lastKnown: lastKnown, reason: reason)
         dismissInstallSheetIfSettled(&state)
         return .none
 
-      case .agentIntegrationCompleted(let agent, .failure(let error), let failureIsTransient, _):
+      case .agentIntegrationCompleted(let target, .failure(let error), let failureIsTransient, _):
         if error is AgentIntegrationError {
-          settingsFeatureLogger.warning("\(agent.rawValue) integration install skipped: \(error.localizedDescription)")
+          settingsFeatureLogger.warning(
+            "\(target.agent.rawValue) integration install skipped: \(error.localizedDescription)")
         } else {
-          settingsFeatureLogger.error("\(agent.rawValue) integration operation failed: \(error)")
+          settingsFeatureLogger.error("\(target.agent.rawValue) integration operation failed: \(error)")
         }
         // A transient error has no home once its modal is gone: re-resolve the
         // real state instead of stranding an invisible row.
         if failureIsTransient, !state.agentInstallSheetPresented {
-          state.agentIntegrationStates[agent] = .checking
+          state.agentIntegrationStates[target] = .checking
           return .send(.refreshAgentIntegrationStates)
         }
         let message = error.localizedDescription
-        state.agentIntegrationStates[agent] = failureIsTransient ? .failedTransient(message) : .failed(message)
+        state.agentIntegrationStates[target] = failureIsTransient ? .failedTransient(message) : .failed(message)
         // A persistent failure can be the last modal candidate settling, which
         // would otherwise leave the sheet presented over an empty form.
         dismissInstallSheetIfSettled(&state)
@@ -627,6 +724,75 @@ public struct SettingsFeature {
           clearedFailure = true
         }
         return clearedFailure ? .send(.refreshAgentIntegrationStates) : .none
+
+      case .agentAddCustomFolderTapped(let agent):
+        // Only agents whose whole integration relocates can take a custom folder.
+        guard agent.supportsCustomConfigFolder else { return .none }
+        return .run { [directoryPicker] send in
+          let message = "Choose a folder to install the \(agent.displayName) integration into."
+          guard let url = await directoryPicker.pickDirectory(message) else { return }
+          await send(.agentCustomFolderPicked(agent, url))
+        }
+
+      case .agentCustomFolderPicked(let agent, let url):
+        let picked = url.standardizedFileURL
+        // Reject a folder already backing another integration: two targets on one
+        // config dir would race the same files, breaking per-target cancellation.
+        if let owner = Self.integrationOwner(ofFolder: picked, among: state.agentIntegrationStates.keys) {
+          state.alert = AlertState {
+            TextState("Folder Already in Use")
+          } actions: {
+            ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+          } message: {
+            let display = (picked.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
+            return TextState("\(display) already holds the \(owner.displayName) integration.")
+          }
+          return .none
+        }
+        let target = AgentInstallTarget(
+          agent: agent, location: .custom(configDirectoryPath: picked.path(percentEncoded: false)))
+        // The picked folder exists (the panel returns a real dir), so its path links to Finder now.
+        state.configDirectoriesOnDisk.insert(target)
+        // Persist the record before installing, and only install once it's durably
+        // saved: a record that never reaches disk would orphan the install next
+        // launch, since custom folders are their own sole on-disk trace.
+        return .run { send in
+          @Shared(.agentsFile) var agentsFile
+          let didAppend = $agentsFile.withLock { file -> Bool in
+            guard !file.agents.contains(where: { $0.target == target }) else { return false }
+            file.agents.append(target.installRecord)
+            return true
+          }
+          do {
+            // `save()` flushes the pending write the `withLock` scheduled, and
+            // surfaces its error: this is the same durable write, not a duplicate.
+            try await $agentsFile.save()
+          } catch {
+            // Roll back only what this effect appended, so a pre-existing record survives.
+            if didAppend { $agentsFile.withLock { $0.agents.removeAll { $0.target == target } } }
+            await send(.agentCustomFolderPersistFailed(target, reason: error.localizedDescription))
+            return
+          }
+          await send(.agentIntegrationInstallTapped(target))
+        }
+
+      case .agentConfigDirectoriesResolved(let dirs):
+        state.configDirectoriesOnDisk = dirs
+        return .none
+
+      case .agentCustomFolderPersistFailed(let target, let reason):
+        // The install never started, so drop the optimistic Finder-link entry.
+        state.configDirectoriesOnDisk.remove(target)
+        state.alert = AlertState {
+          TextState("Couldn't Save the Folder")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState(
+            "Supacode couldn't record the folder in agents.json, so the integration "
+              + "wasn't installed. \(reason)")
+        }
+        return .none
 
       case .updateShortcut(let id, let override):
         // A non-customizable shortcut ignores overrides; refuse to persist one.
@@ -804,21 +970,21 @@ public struct SettingsFeature {
   /// Re-read the state after a successful write. An unreadable follow-up is
   /// reported as unverified rather than as a failure we did not observe.
   private static func verificationAction(
-    agent: SkillAgent,
+    target: AgentInstallTarget,
     expected: AgentIntegrationState,
     lastKnown: AgentIntegrationState?,
     failureIsTransient: Bool,
     client: AgentIntegrationClient
   ) async -> Action {
     do {
-      let next = try await client.state(agent)
+      let next = try await client.state(target)
       return .agentIntegrationCompleted(
-        agent, .success(next), failureIsTransient: failureIsTransient, expected: expected)
+        target, .success(next), failureIsTransient: failureIsTransient, expected: expected)
     } catch {
       let detail = Self.sentence(
-        "\(Self.writeVerb(for: expected)) the \(agent.displayName) integration, but couldn't "
+        "\(Self.writeVerb(for: expected)) the \(target.agent.displayName) integration, but couldn't "
           + "read it back to confirm. \(error.localizedDescription)")
-      return .agentIntegrationUnverified(agent, lastKnown: lastKnown, reason: Self.withRetryNote(detail))
+      return .agentIntegrationUnverified(target, lastKnown: lastKnown, reason: Self.withRetryNote(detail))
     }
   }
 
@@ -874,6 +1040,51 @@ public struct SettingsFeature {
     state.agentInstallSheetPresented = false
   }
 
+  /// The agent whose config directory resolves to `folder`, if any. Used to
+  /// refuse pointing two integrations at one directory.
+  private static func integrationOwner(
+    ofFolder folder: URL,
+    among keys: some Collection<AgentInstallTarget>
+  ) -> SkillAgent? {
+    let wanted = canonicalPath(folder)
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    for agent in SkillAgent.allCases {
+      let dir = home.appending(path: agent.configDirectoryName, directoryHint: .isDirectory)
+      if canonicalPath(dir) == wanted { return agent }
+    }
+    for key in keys where key.location != .standard {
+      guard let url = key.configDirectoryURL else { continue }
+      if canonicalPath(url) == wanted { return key.agent }
+    }
+    return nil
+  }
+
+  /// Symlink-resolved, standardized path for comparing two directory URLs.
+  private static func canonicalPath(_ url: URL) -> String {
+    let path = url.standardizedFileURL.resolvingSymlinksInPath().path(percentEncoded: false)
+    // A non-existent directory resolves with an inconsistent trailing slash
+    // depending on how the URL was built, so two URLs to the same dir would
+    // compare unequal; drop it so the comparison is stable.
+    return path.count > 1 && path.hasSuffix("/") ? String(path.dropLast()) : path
+  }
+
+  /// Records the target in `agents.json` unless it is already there.
+  private static func addRecordIfMissing(for target: AgentInstallTarget) {
+    @Shared(.agentsFile) var agentsFile
+    // Check and append in one critical section so two concurrent writers can't
+    // both pass the guard and append a duplicate record.
+    $agentsFile.withLock { file in
+      guard !file.agents.contains(where: { $0.target == target }) else { return }
+      file.agents.append(target.installRecord)
+    }
+  }
+
+  /// Drops every `agents.json` record matching the target (an uninstall).
+  private static func removeRecord(for target: AgentInstallTarget) {
+    @Shared(.agentsFile) var agentsFile
+    $agentsFile.withLock { $0.agents.removeAll { $0.target == target } }
+  }
+
   private func synchronizeRepositorySelection(for state: inout State) {
     guard let selection = state.selection else {
       state.repositorySettings = nil
@@ -911,9 +1122,10 @@ public struct SettingsFeature {
 }
 
 /// Cancellation key for in-flight integration install/uninstall effects so
-/// the next tap (or a fresh Settings open) supersedes the prior one.
+/// the next tap (or a fresh Settings open) supersedes the prior one. Keyed by
+/// target so two folders of one agent never cancel each other.
 private nonisolated struct AgentIntegrationCancelID: Hashable, Sendable {
-  let agent: SkillAgent
+  let target: AgentInstallTarget
 }
 
 /// Cancellation key for the agent-state refresh effect so stacked scene

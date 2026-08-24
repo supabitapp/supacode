@@ -113,7 +113,7 @@ struct PiSettingsInstallerTests {
     try "// user's custom extension".write(to: indexURL, atomically: true, encoding: .utf8)
 
     let installer = makeInstaller(homeDirectoryURL: home)
-    #expect(throws: PiSettingsInstallerError.extensionNotManaged) {
+    #expect(throws: PiSettingsInstallerError.self) {
       try installer.uninstall()
     }
     // Neither the file nor the enclosing directory may be touched when
@@ -170,7 +170,7 @@ struct PiSettingsInstallerTests {
     try "// user's custom extension".write(to: indexURL, atomically: true, encoding: .utf8)
 
     let installer = makeInstaller(homeDirectoryURL: home)
-    #expect(throws: PiSettingsInstallerError.extensionNotManaged) {
+    #expect(throws: PiSettingsInstallerError.self) {
       try installer.install()
     }
     // User's file must be preserved byte-for-byte.
