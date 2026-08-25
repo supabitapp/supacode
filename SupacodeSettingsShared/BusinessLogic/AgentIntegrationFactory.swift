@@ -17,6 +17,7 @@ nonisolated enum AgentIntegrationFactory {
       case .copilot: copilot(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
       case .grok: grok(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
       case .hermes: hermes(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+      case .jcode: jcode(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
       case .kimi: kimi(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
       case .kiro: kiro(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
       case .omp: omp(homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
@@ -98,6 +99,22 @@ nonisolated enum AgentIntegrationFactory {
         uninstall: { try installer.uninstallAllHooks() }
       ),
       skillsComponent(agent: .grok, homeDirectoryURL: homeDirectoryURL),
+    ]
+  }
+
+  private static func jcode(homeDirectoryURL: URL, fileManager: FileManager)
+    -> [AgentIntegration.Component]
+  {
+    let installer = JcodeSettingsInstaller(
+      homeDirectoryURL: homeDirectoryURL, fileManager: fileManager)
+    return [
+      AgentIntegration.Component(
+        kind: .hooks,
+        state: { try installer.installState() },
+        install: { try installer.installAllHooks() },
+        uninstall: { try installer.uninstallAllHooks() }
+      ),
+      skillsComponent(agent: .jcode, homeDirectoryURL: homeDirectoryURL),
     ]
   }
 

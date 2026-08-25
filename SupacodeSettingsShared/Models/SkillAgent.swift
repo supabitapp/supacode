@@ -7,6 +7,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
   case copilot
   case grok
   case hermes
+  case jcode
   case kimi
   case kiro
   case omp
@@ -25,6 +26,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .copilot: ".copilot"
     case .grok: ".grok"
     case .hermes: ".hermes"
+    case .jcode: ".jcode"
     case .kimi: ".kimi-code"
     case .kiro: ".kiro"
     case .omp: ".omp/agent"
@@ -42,6 +44,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .copilot: "Copilot CLI"
     case .grok: "Grok Code"
     case .hermes: "Hermes"
+    case .jcode: "jcode"
     case .kimi: "Kimi Code"
     case .kiro: "Kiro CLI"
     case .omp: "Oh My Pi"
@@ -59,6 +62,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .copilot: "copilot-mark"
     case .grok: "grok-mark"
     case .hermes: "hermes-mark"
+    case .jcode: "jcode-mark"
     case .kimi: "kimi-mark"
     case .kiro: "kiro-mark"
     case .omp: "omp-mark"
