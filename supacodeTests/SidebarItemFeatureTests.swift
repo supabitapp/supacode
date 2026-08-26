@@ -174,6 +174,32 @@ struct SidebarItemFeatureTests {
     }
   }
 
+  /// The reducer never treats a stored running script as work: `isTaskRunning`
+  /// is driven by agent activity and terminal progress only, so a projection
+  /// carrying `runningScripts` without either does not shimmer the row (#828).
+  @Test func runningScriptAloneDoesNotMarkTheRowAsTaskRunning() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    let scriptID = UUID()
+    await store.send(
+      .terminalProjectionChanged(makeProjection(runningScripts: [.init(id: scriptID, tint: .purple)]))
+    ) {
+      $0.hasTerminalProjection = true
+      $0.runningScripts = [.init(id: scriptID, tint: .purple)]
+    }
+    #expect(!store.state.isProgressBusy)
+    #expect(!store.state.hasAgentActivity)
+    #expect(!store.state.isTaskRunning)
+
+    // An agent starting work shimmers the row even while the script keeps running.
+    let busy = AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)
+    await store.send(.agentSnapshotChanged(.init(agents: [busy], isWorking: true))) {
+      $0.agentSnapshot = .init(agents: [busy], isWorking: true)
+    }
+    #expect(store.state.isTaskRunning)
+  }
+
   @Test func terminalProjectionTogglesAllTabsDormant() async {
     let store = TestStore(initialState: makeState(name: "feature")) {
       SidebarItemFeature()

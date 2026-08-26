@@ -499,15 +499,22 @@ final class WorktreeContentHost {
   }
 
   private func isTabActivityBusy(_ tab: TabItem) -> Bool {
-    guard liveSurface(tab.content.id.rawValue) != nil else { return false }
-    guard !completedBlockingScriptTabs.contains(tab.id) else { return false }
-    if blockingScripts[tab.id] != nil { return true }
-    return hasRunningProgress(in: tab)
+    guard let surface = liveSurface(tab.content.id.rawValue) else { return false }
+    return Self.isTabActivityBusy(
+      isCompletedBlockingScript: completedBlockingScriptTabs.contains(tab.id),
+      progressState: surface.bridge.state.progressState
+    )
   }
 
-  private func hasRunningProgress(in tab: TabItem) -> Bool {
-    guard let surface = liveSurface(tab.content.id.rawValue) else { return false }
-    return Self.isRunningProgressState(surface.bridge.state.progressState)
+  /// A tracked blocking script's presence no longer forces busy (#828): only
+  /// genuine OSC-9 progress shimmers the row, and a completed-parked script's
+  /// lingering progress is suppressed.
+  static func isTabActivityBusy(
+    isCompletedBlockingScript: Bool,
+    progressState: ghostty_action_progress_report_state_e?
+  ) -> Bool {
+    guard !isCompletedBlockingScript else { return false }
+    return isRunningProgressState(progressState)
   }
 
   private static func isRunningProgressState(_ state: ghostty_action_progress_report_state_e?) -> Bool {

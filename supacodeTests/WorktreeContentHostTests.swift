@@ -2,6 +2,7 @@ import AppKit
 import Dependencies
 import DependenciesTestSupport
 import Foundation
+import GhosttyKit
 import IdentifiedCollections
 import Sharing
 import SupacodeSettingsShared
@@ -111,6 +112,25 @@ struct WorktreeContentHostTests {
 
     #expect(host.surfaceStates[surfaceID]?.unseenNotificationCount == 1)
     #expect(host.hasUnseenNotification)
+  }
+
+  /// #828: a tracked blocking script alone must not shimmer the worktree row.
+  /// Only genuine OSC-9 progress does, and a completed-parked script's lingering
+  /// progress stays off the row.
+  @Test func rowActivityBusyReflectsProgressNotScriptPresence() {
+    #expect(!WorktreeContentHost.isTabActivityBusy(isCompletedBlockingScript: false, progressState: nil))
+    #expect(
+      WorktreeContentHost.isTabActivityBusy(
+        isCompletedBlockingScript: false, progressState: GHOSTTY_PROGRESS_STATE_SET
+      ))
+    #expect(
+      WorktreeContentHost.isTabActivityBusy(
+        isCompletedBlockingScript: false, progressState: GHOSTTY_PROGRESS_STATE_INDETERMINATE
+      ))
+    #expect(
+      !WorktreeContentHost.isTabActivityBusy(
+        isCompletedBlockingScript: true, progressState: GHOSTTY_PROGRESS_STATE_SET
+      ))
   }
 
   @Test(.dependencies) func blockingScriptCompletionLocksTheTabChrome() {
