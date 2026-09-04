@@ -163,7 +163,8 @@ struct SupacodeApp: App {
     // Seed the flag at construction so a user who disabled background refresh
     // never eats a launch-time SSH / gh burst before the setting is applied.
     let worktreeInfoWatcher = WorktreeInfoWatcherManager(
-      automaticRefreshEnabled: initialSettings.automaticRepositoryRefreshEnabled
+      automaticRefreshEnabled: initialSettings.automaticRepositoryRefreshEnabled,
+      reconcileInterval: .seconds(initialSettings.automaticRepositoryRefreshInterval)
     )
     _worktreeInfoWatcher = State(initialValue: worktreeInfoWatcher)
     let keyObserver = CommandKeyObserver()

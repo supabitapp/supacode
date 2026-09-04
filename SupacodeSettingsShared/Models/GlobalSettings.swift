@@ -178,6 +178,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   /// Gates all background repository polling (remote SSH, PR checks, reconcile).
   /// On by default; disable to stop SSH passphrase prompts or GitHub rate limiting.
   public var automaticRepositoryRefreshEnabled: Bool
+  public var automaticRepositoryRefreshInterval: Int
   /// Whether hovering a split pane focuses it (focus follows mouse). Off by default.
   public var hoverFocusMode: HoverFocusMode
   /// System-wide chord that toggles the app; nil (the default) leaves it unbound.
@@ -273,6 +274,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminalHibernationEnabled: Bool = true,
     chromeTextSize: ChromeTextSize = .default,
     automaticRepositoryRefreshEnabled: Bool = true,
+    automaticRepositoryRefreshInterval: Int = 300,
     hoverFocusMode: HoverFocusMode = .never,
     globalToggleVisibilityHotkey: AppShortcutOverride? = nil
   ) {
@@ -320,6 +322,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.terminalHibernationEnabled = terminalHibernationEnabled
     self.chromeTextSize = chromeTextSize
     self.automaticRepositoryRefreshEnabled = automaticRepositoryRefreshEnabled
+    self.automaticRepositoryRefreshInterval = automaticRepositoryRefreshInterval
     self.hoverFocusMode = hoverFocusMode
     self.globalToggleVisibilityHotkey = globalToggleVisibilityHotkey
   }
@@ -543,6 +546,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     automaticRepositoryRefreshEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .automaticRepositoryRefreshEnabled)
       ?? Self.default.automaticRepositoryRefreshEnabled
+    automaticRepositoryRefreshInterval =
+      try container.decodeIfPresent(Int.self, forKey: .automaticRepositoryRefreshInterval)
+      ?? Self.default.automaticRepositoryRefreshInterval
     // Decode the raw string so an unrecognized future mode falls back rather
     // than throwing (which would reset the whole file to defaults).
     hoverFocusMode =

@@ -88,6 +88,7 @@ public struct SettingsFeature {
     public var terminalHibernationEnabled: Bool
     public var chromeTextSize: ChromeTextSize
     public var automaticRepositoryRefreshEnabled: Bool
+    public var automaticRepositoryRefreshInterval: Int
     public var hoverFocusMode: HoverFocusMode
     public var globalToggleVisibilityHotkey: AppShortcutOverride?
     /// True when the last registration of the global hotkey failed (chord
@@ -224,6 +225,7 @@ public struct SettingsFeature {
       terminalHibernationEnabled = settings.terminalHibernationEnabled
       chromeTextSize = settings.chromeTextSize
       automaticRepositoryRefreshEnabled = settings.automaticRepositoryRefreshEnabled
+      automaticRepositoryRefreshInterval = settings.automaticRepositoryRefreshInterval
       hoverFocusMode = settings.hoverFocusMode
       globalToggleVisibilityHotkey = settings.globalToggleVisibilityHotkey
       defaultWorktreeBaseDirectoryPath =
@@ -414,6 +416,7 @@ public struct SettingsFeature {
         state.terminalHibernationEnabled = normalizedSettings.terminalHibernationEnabled
         state.chromeTextSize = normalizedSettings.chromeTextSize
         state.automaticRepositoryRefreshEnabled = normalizedSettings.automaticRepositoryRefreshEnabled
+        state.automaticRepositoryRefreshInterval = normalizedSettings.automaticRepositoryRefreshInterval
         state.hoverFocusMode = normalizedSettings.hoverFocusMode
         state.globalToggleVisibilityHotkey = normalizedSettings.globalToggleVisibilityHotkey
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
@@ -1190,6 +1193,7 @@ extension SettingsFeature.State {
     settings.terminalHibernationEnabled = terminalHibernationEnabled
     settings.chromeTextSize = chromeTextSize
     settings.automaticRepositoryRefreshEnabled = automaticRepositoryRefreshEnabled
+    settings.automaticRepositoryRefreshInterval = automaticRepositoryRefreshInterval
     settings.hoverFocusMode = hoverFocusMode
     settings.globalToggleVisibilityHotkey = globalToggleVisibilityHotkey
   }

@@ -116,7 +116,7 @@ final class WorktreeInfoWatcherManager {
   /// Gap between self-healing reconcile sweeps. Rare on purpose: the fast path
   /// is event-driven, and this only backstops signals with no local event
   /// (remote line counts, GitHub merges, a dead watcher).
-  private let reconcileInterval: Duration
+  private var reconcileInterval: Duration
   /// Delay between reconciling successive worktrees / repos so a sweep rolls
   /// through them one at a time instead of fanning a diff storm.
   private let reconcileStep: Duration
@@ -192,6 +192,8 @@ final class WorktreeInfoWatcherManager {
       setPullRequestTrackingEnabled(isEnabled)
     case .setAutomaticRefreshEnabled(let isEnabled):
       setAutomaticRefreshEnabled(isEnabled)
+    case .setAutomaticRefreshInterval(let interval):
+      setAutomaticRefreshInterval(interval)
     case .setActive(let active):
       setActive(active)
     case .refresh:
@@ -654,6 +656,15 @@ final class WorktreeInfoWatcherManager {
     for repositoryRootURL in sortedRepositoryRoots() {
       refreshPullRequests(repositoryRootURL: repositoryRootURL, trigger: .manual)
     }
+  }
+
+  private func setAutomaticRefreshInterval(_ interval: Int) {
+    let duration: Duration = .seconds(interval)
+    guard reconcileInterval != duration else {
+      return
+    }
+    reconcileInterval = duration
+    reconfigureBackgroundPolling()
   }
 
   private func setAutomaticRefreshEnabled(_ enabled: Bool) {

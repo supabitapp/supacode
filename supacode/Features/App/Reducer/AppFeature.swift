@@ -836,6 +836,9 @@ struct AppFeature {
             await worktreeInfoWatcher.send(
               .setAutomaticRefreshEnabled(settings.automaticRepositoryRefreshEnabled)
             )
+            await worktreeInfoWatcher.send(
+              .setAutomaticRefreshInterval(settings.automaticRepositoryRefreshInterval)
+            )
           },
           .run { send in
             guard shouldCheckSystemNotificationPermission else { return }

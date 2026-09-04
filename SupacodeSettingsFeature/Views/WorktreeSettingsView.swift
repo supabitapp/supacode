@@ -54,6 +54,15 @@ public struct WorktreeSettingsView: View {
           Text("Keeps changed-line counts, branches, and pull-request status up to date.")
           Text("Turn off if it triggers SSH passphrase prompts or GitHub rate limiting.")
         }
+        TextField(
+          "Refresh interval (minutes)",
+          value: Binding(
+            get: { store.automaticRepositoryRefreshInterval / 60 },
+            set: { store.automaticRepositoryRefreshInterval = max(1, $0) * 60 }
+          ),
+          format: .number
+        )
+        .disabled(!store.automaticRepositoryRefreshEnabled)
       }
       Section("Clean-up") {
         Picker(
