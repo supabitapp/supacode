@@ -357,65 +357,53 @@ struct CommandPaletteFeature {
   /// The "Customize Appearance" actions for the current selection. A folder or
   /// non-main worktree customizes its own row; a git selection also offers
   /// repository-level appearance (the sidebar exposes it on the section header,
-  /// so from any worktree the palette is the way to reach it). Subtitles echo
-  /// the sidebar's custom title and tint for each target.
+  /// so from any worktree the palette is the way to reach it). Which targets
+  /// apply is decided by `RepositoriesFeature.State.customizeAppearanceRowTarget`
+  /// and `customizeAppearanceRepositoryTarget`, shared with the menu-bar
+  /// shortcut; this only renders them. Subtitles echo the sidebar's custom
+  /// title and tint for each target.
   static func customizeAppearanceItems(from repositories: RepositoriesFeature.State) -> [CommandPaletteItem] {
-    guard let selectedWorktreeID = repositories.selectedWorktreeID,
-      let selectedRow = repositories.sidebarItems[id: selectedWorktreeID],
-      let selectedRepositoryID = repositories.repositoryID(containing: selectedWorktreeID)
-    else {
-      return []
-    }
-    let section = repositories.sidebar.sections[selectedRepositoryID]
-    let isGitRepository = repositories.repositories[id: selectedRepositoryID]?.isGitRepository == true
-
     var items: [CommandPaletteItem] = []
-    // The selected row itself, unless it's a git main worktree (that maps to the
-    // repository entry below). Folders are checked first since a folder row is
-    // also its repository's root. Pending rows have no stable target yet,
-    // mirroring the sidebar's `!lifecycle.isPending` gate.
-    if selectedRow.isFolder {
-      // A loaded folder row renders (and the customization sheet edits) its
-      // per-row bucket, so prefer that; the section is a fallback for a remote
-      // folder whose row hasn't loaded yet.
-      let folderName = Repository.sidebarDisplayName(
-        custom: selectedRow.customTitle ?? section?.title,
-        fallback: selectedRow.name
-      )
-      items.append(
-        CommandPaletteItem(
-          id: CommandPaletteItemID.customizeWorktreeAppearance(selectedWorktreeID),
-          title: "Customize Appearance",
-          subtitle: folderName,
-          kind: .customizeWorktreeAppearance(selectedWorktreeID, selectedRepositoryID),
-          subtitleTint: selectedRow.customTint ?? section?.color
+    if case .worktree(let worktreeID, let repositoryID) = repositories.customizeAppearanceRowTarget,
+      let selectedRow = repositories.sidebarItems[id: worktreeID]
+    {
+      let section = repositories.sidebar.sections[repositoryID]
+      let subtitle: String
+      let subtitleTint: RepositoryColor?
+      if selectedRow.isFolder {
+        // A loaded folder row renders (and the customization sheet edits) its
+        // per-row bucket, so prefer that; the section is a fallback for a remote
+        // folder whose row hasn't loaded yet.
+        subtitle = Repository.sidebarDisplayName(
+          custom: selectedRow.customTitle ?? section?.title,
+          fallback: selectedRow.name
         )
-      )
-    } else if !selectedRow.isMainWorktree, !selectedRow.lifecycle.isPending {
-      let worktreeDisplayName =
-        SidebarDisplayName.resolved(custom: selectedRow.customTitle, fallback: selectedRow.name)
-        ?? selectedRow.name
+        subtitleTint = selectedRow.customTint ?? section?.color
+      } else {
+        subtitle =
+          SidebarDisplayName.resolved(custom: selectedRow.customTitle, fallback: selectedRow.name)
+          ?? selectedRow.name
+        subtitleTint = selectedRow.customTint
+      }
       items.append(
         CommandPaletteItem(
-          id: CommandPaletteItemID.customizeWorktreeAppearance(selectedWorktreeID),
+          id: CommandPaletteItemID.customizeWorktreeAppearance(worktreeID),
           title: "Customize Appearance",
-          subtitle: worktreeDisplayName,
-          kind: .customizeWorktreeAppearance(selectedWorktreeID, selectedRepositoryID),
-          subtitleTint: selectedRow.customTint
+          subtitle: subtitle,
+          kind: .customizeWorktreeAppearance(worktreeID, repositoryID),
+          subtitleTint: subtitleTint
         )
       )
     }
-    // Repository-level appearance for git repos (folder repos have no section
-    // header to tint). Hidden mid-removal, matching the disabled sidebar entry.
-    if isGitRepository, repositories.removingRepositoryIDs[selectedRepositoryID] == nil {
-      let repositoryName = repositories.repositoryName(for: selectedRepositoryID) ?? "Repository"
+    if case .repository(let repositoryID) = repositories.customizeAppearanceRepositoryTarget {
+      let repositoryName = repositories.repositoryName(for: repositoryID) ?? "Repository"
       items.append(
         CommandPaletteItem(
-          id: CommandPaletteItemID.customizeRepositoryAppearance(selectedRepositoryID),
+          id: CommandPaletteItemID.customizeRepositoryAppearance(repositoryID),
           title: "Customize Repository Appearance",
           subtitle: repositoryName,
-          kind: .customizeRepositoryAppearance(selectedRepositoryID),
-          subtitleTint: section?.color
+          kind: .customizeRepositoryAppearance(repositoryID),
+          subtitleTint: repositories.sidebar.sections[repositoryID]?.color
         )
       )
     }

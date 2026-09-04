@@ -10,7 +10,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case toggleLeftSidebar, revealInSidebar
   case expandAllSidebarGroups, collapseAllSidebarGroups
   case newWorktree, refreshWorktrees, archivedWorktrees, archiveWorktree
-  case deleteWorktree, confirmWorktreeAction
+  case deleteWorktree, confirmWorktreeAction, customizeAppearance
   case selectNextWorktree, selectPreviousWorktree
   case worktreeHistoryBack, worktreeHistoryForward
   case selectWorktree(Int)
@@ -60,6 +60,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .archiveWorktree: "archiveWorktree"
     case .deleteWorktree: "deleteWorktree"
     case .confirmWorktreeAction: "confirmWorktreeAction"
+    case .customizeAppearance: "customizeAppearance"
     case .selectNextWorktree: "selectNextWorktree"
     case .selectPreviousWorktree: "selectPreviousWorktree"
     case .worktreeHistoryBack: "worktreeHistoryBack"
@@ -118,6 +119,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "archiveWorktree": .archiveWorktree,
     "deleteWorktree": .deleteWorktree,
     "confirmWorktreeAction": .confirmWorktreeAction,
+    "customizeAppearance": .customizeAppearance,
     "selectNextWorktree": .selectNextWorktree,
     "selectPreviousWorktree": .selectPreviousWorktree,
     "worktreeHistoryBack": .worktreeHistoryBack,
@@ -193,6 +195,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .archiveWorktree: "Archive Worktree"
     case .deleteWorktree: "Delete Worktree"
     case .confirmWorktreeAction: "Confirm Worktree Action"
+    case .customizeAppearance: "Customize Appearance"
     case .selectNextWorktree: "Select Next Worktree"
     case .selectPreviousWorktree: "Select Previous Worktree"
     case .worktreeHistoryBack: "Back in Worktree History"
@@ -483,6 +486,12 @@ public enum AppShortcuts {
     id: .confirmWorktreeAction,
     keyEquivalent: .return, ghosttyKeyName: "enter", modifiers: .command
   )
+  // Opens the Customize Appearance sheet for the sidebar selection so a worktree
+  // can be renamed from the keyboard. Ships off: the chord is a suggestion the
+  // user opts into from Settings, not a default claimed from the terminal.
+  public static let customizeAppearance = AppShortcut(
+    id: .customizeAppearance, key: "r", modifiers: [.command, .control], isEnabledByDefault: false
+  )
   public static let selectNextWorktree = AppShortcut(
     id: .selectNextWorktree,
     keyEquivalent: .downArrow, ghosttyKeyName: "arrow_down", modifiers: [.command, .control]
@@ -649,7 +658,8 @@ public enum AppShortcuts {
       category: .worktrees,
       shortcuts: [
         newWorktree, refreshWorktrees, archivedWorktrees, archiveWorktree,
-        deleteWorktree, confirmWorktreeAction, selectNextWorktree, selectPreviousWorktree,
+        deleteWorktree, confirmWorktreeAction, customizeAppearance,
+        selectNextWorktree, selectPreviousWorktree,
         worktreeHistoryBack, worktreeHistoryForward,
       ]
     ),
