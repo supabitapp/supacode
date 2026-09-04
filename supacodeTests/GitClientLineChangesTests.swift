@@ -1,3 +1,4 @@
+import ComposableArchitecture
 import Foundation
 import Testing
 
@@ -32,7 +33,8 @@ struct GitClientLineChangesTests {
     let calls = await store.calls
     #expect(calls.count == 1)
     let args = calls[0]
-    #expect(args.first == "git")
+    #expect(args.contains("GIT_OPTIONAL_LOCKS=0"))
+    #expect(args.contains("git"))
     #expect(args.contains("diff"))
     #expect(args.contains("HEAD"))
     #expect(args.contains("--shortstat"))
@@ -78,6 +80,52 @@ struct GitClientLineChangesTests {
 
     #expect(changes?.added == 0)
     #expect(changes?.removed == 0)
+  }
+
+  @Test func lineChangesPassesOptionalLocksAndFsmonitorWhenSupported() async throws {
+    let recorded = LockIsolated<[String]>([])
+    let shell = ShellClient(
+      run: { _, arguments, _ in
+        recorded.setValue(arguments)
+        if arguments.contains("--version") {
+          return ShellOutput(stdout: "git version 2.39.5", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: " 1 file changed, 3 insertions(+), 1 deletion(-)\n", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { _, _, _, _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) },
+      runLoginStreamImpl: { _, _, _, _ in AsyncThrowingStream { $0.finish() } }
+    )
+    let capabilities = GitCapabilities(shell: shell)
+    let client = GitClient(shell: shell, capabilities: capabilities)
+
+    let changes = await client.lineChanges(at: URL(fileURLWithPath: "/tmp/wt"))
+
+    #expect(changes?.added == 3)
+    #expect(changes?.removed == 1)
+    let args = recorded.value
+    #expect(args.contains("GIT_OPTIONAL_LOCKS=0"))
+    #expect(args.contains("core.fsmonitor=true"))
+  }
+
+  @Test func lineChangesOmitsFsmonitorWhenUnsupported() async throws {
+    let recorded = LockIsolated<[String]>([])
+    let shell = ShellClient(
+      run: { _, arguments, _ in
+        recorded.setValue(arguments)
+        if arguments.contains("--version") {
+          return ShellOutput(stdout: "git version 2.30.0", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { _, _, _, _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) },
+      runLoginStreamImpl: { _, _, _, _ in AsyncThrowingStream { $0.finish() } }
+    )
+    let client = GitClient(shell: shell, capabilities: GitCapabilities(shell: shell))
+
+    _ = await client.lineChanges(at: URL(fileURLWithPath: "/tmp/wt"))
+
+    #expect(recorded.value.contains("GIT_OPTIONAL_LOCKS=0"))
+    #expect(!recorded.value.contains("core.fsmonitor=true"))
   }
 
   @Test func lineChangesSkipsWhenIndexLocked() async throws {

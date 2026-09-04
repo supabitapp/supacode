@@ -89,10 +89,12 @@ struct GitClient {
   }
 
   private let shell: ShellClient
+  private let capabilities: GitCapabilities
   private let referenceQueries: GitReferenceQueries
 
-  nonisolated init(shell: ShellClient = .live) {
+  nonisolated init(shell: ShellClient = .live, capabilities: GitCapabilities = .shared) {
     self.shell = shell
+    self.capabilities = capabilities
     self.referenceQueries = GitReferenceQueries(shell: shell)
   }
 
@@ -1151,9 +1153,11 @@ struct GitClient {
     }
     let path = worktreeURL.path(percentEncoded: false)
     do {
+      let fsmonitorArgs = await capabilities.supportsFsmonitor() ? ["-c", "core.fsmonitor=true"] : []
       let diff = try await runGit(
         operation: .lineChanges,
-        arguments: ["-C", path, "diff", "HEAD", "--shortstat"]
+        gitArguments: fsmonitorArgs + ["-C", path, "diff", "HEAD", "--shortstat"],
+        environment: ["GIT_OPTIONAL_LOCKS=0"]
       )
       let changes = parseShortstat(diff)
       return (added: changes.added, removed: changes.removed)
