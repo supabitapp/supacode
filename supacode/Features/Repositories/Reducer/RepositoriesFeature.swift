@@ -4895,10 +4895,20 @@ struct RepositoriesFeature {
         await send(.repositoryPullRequestRefreshCompleted(repositoryID))
         return
       }
+      // A PR whose head is the repository's default branch is always a sync PR
+      // (e.g. `main -> dev`), never the default-branch worktree's own work, so it
+      // must not badge that worktree — the head=default branch persists after
+      // merge, leaving a stale merged PR permanently matched to it (#695). Fetch
+      // defensively: an unknown default branch falls back to today's behavior
+      // rather than dropping every worktree's badge on a transient `gh` failure.
+      let defaultBranch = try? await githubCLI.defaultBranch(repositoryRootURL)
       do {
         let prsByBranch = try await forge.fetchSummaries(project, branches)
         var pullRequestsByWorktreeID: [Worktree.ID: ForgePullRequest?] = [:]
         for worktree in worktrees {
+          if worktree.name == defaultBranch {
+            continue
+          }
           pullRequestsByWorktreeID[worktree.id] = prsByBranch[worktree.name]
         }
         await send(
