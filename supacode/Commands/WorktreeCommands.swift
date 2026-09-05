@@ -51,6 +51,7 @@ private struct WorktreeMainMenu: Commands {
     let openWorktree = AppShortcuts.openWorktree.effective(from: overrides)
     let revealInFinder = AppShortcuts.revealInFinder.effective(from: overrides)
     let openPR = AppShortcuts.openPullRequest.effective(from: overrides)
+    let customize = AppShortcuts.customizeAppearance.effective(from: overrides)
     let newWt = AppShortcuts.newWorktree.effective(from: overrides)
     let archived = AppShortcuts.archivedWorktrees.effective(from: overrides)
     let refresh = AppShortcuts.refreshWorktrees.effective(from: overrides)
@@ -88,6 +89,12 @@ private struct WorktreeMainMenu: Commands {
       .appKeyboardShortcut(openPR)
       .help("Open Pull Request, re-checking for a new one (\(openPR?.display ?? "none"))")
       .disabled(!snapshot.hasSelectedGitWorktree || !snapshot.githubIntegrationEnabled)
+      Button("Customize Appearance…", systemImage: "paintbrush") {
+        store.send(.repositories(.requestCustomizeSelectedAppearance))
+      }
+      .appKeyboardShortcut(customize)
+      .help("Customize the sidebar title and color of the selection (\(customize?.display ?? "none"))")
+      .disabled(!snapshot.canCustomizeSelectedAppearance)
       Divider()
       Button("Refresh Worktrees", systemImage: "arrow.clockwise") {
         store.send(.refreshWorktreesRequested)

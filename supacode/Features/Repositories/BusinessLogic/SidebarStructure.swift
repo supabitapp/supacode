@@ -627,7 +627,7 @@ extension RepositoriesFeature.Action {
       .fileExplorer,
       .delayedPullRequestRefresh,
       .openRepositorySettings, .requestCustomizeRepository,
-      .requestCustomizeWorktree,
+      .requestCustomizeWorktree, .requestCustomizeSelectedAppearance,
       .requestRenameBranch,
       .contextMenuOpenWorktree,
       .worktreeCreationPrompt,
