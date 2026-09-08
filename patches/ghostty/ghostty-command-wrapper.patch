@@ -1,8 +1,8 @@
 diff --git a/include/ghostty.h b/include/ghostty.h
-index 3c4002abc..362fb232d 100644
+index 72bbb57a8..bcbd9d1fe 100644
 --- a/include/ghostty.h
 +++ b/include/ghostty.h
-@@ -455,6 +455,9 @@ typedef struct {
+@@ -477,6 +477,9 @@ typedef struct {
    const char* initial_input;
    bool wait_after_command;
    ghostty_surface_context_e context;
@@ -13,10 +13,10 @@ index 3c4002abc..362fb232d 100644
  
  typedef struct {
 diff --git a/src/Surface.zig b/src/Surface.zig
-index c8055cfee..def042ba0 100644
+index 2c4edc497..e55fe6677 100644
 --- a/src/Surface.zig
 +++ b/src/Surface.zig
-@@ -635,6 +635,7 @@ pub fn init(
+@@ -648,6 +648,7 @@ pub fn init(
          // Initialize our IO backend
          var io_exec = try termio.Exec.init(alloc, .{
              .command = command,
@@ -25,10 +25,10 @@ index c8055cfee..def042ba0 100644
              .env_override = config.env,
              .shell_integration = config.@"shell-integration",
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index 0d5a4f8da..ba385db02 100644
+index 7310159cc..77c5fcdca 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
-@@ -460,6 +460,19 @@ pub const Surface = struct {
+@@ -462,6 +462,19 @@ pub const Surface = struct {
  
          /// Context for the new surface
          context: apprt.surface.NewSurfaceContext = .window,
@@ -48,7 +48,7 @@ index 0d5a4f8da..ba385db02 100644
      };
  
      pub fn init(self: *Surface, app: *App, opts: Options) !void {
-@@ -534,6 +547,25 @@ pub const Surface = struct {
+@@ -536,6 +549,25 @@ pub const Surface = struct {
              }
          }
  
@@ -75,10 +75,10 @@ index 0d5a4f8da..ba385db02 100644
          if (opts.env_var_count > 0) {
              const alloc = config.arenaAlloc();
 diff --git a/src/config/Config.zig b/src/config/Config.zig
-index 13f78eea6..fb13433e5 100644
+index 4db4a5cf5..7c716992c 100644
 --- a/src/config/Config.zig
 +++ b/src/config/Config.zig
-@@ -1197,6 +1197,22 @@ command: ?Command = null,
+@@ -1185,6 +1185,22 @@ command: ?Command = null,
  ///     manually.
  @"initial-command": ?Command = null,
  
@@ -102,10 +102,10 @@ index 13f78eea6..fb13433e5 100644
  /// three options:
  ///
 diff --git a/src/termio/Exec.zig b/src/termio/Exec.zig
-index 0f35b5787..06aff655f 100644
+index 0894f87b1..54fd6aaf8 100644
 --- a/src/termio/Exec.zig
 +++ b/src/termio/Exec.zig
-@@ -559,6 +559,7 @@ pub const ThreadData = struct {
+@@ -562,6 +562,7 @@ pub const ThreadData = struct {
  
  pub const Config = struct {
      command: ?configpkg.Command = null,
@@ -113,7 +113,7 @@ index 0f35b5787..06aff655f 100644
      env: EnvMap,
      env_override: configpkg.RepeatableStringMap = .{},
      shell_integration: configpkg.Config.ShellIntegration = .detect,
-@@ -815,7 +816,7 @@ const Subprocess = struct {
+@@ -818,7 +819,7 @@ const Subprocess = struct {
          }
  
          // Build our args list
@@ -122,7 +122,7 @@ index 0f35b5787..06aff655f 100644
              alloc,
              shell_command,
              internal_os.passwd,
-@@ -840,6 +841,24 @@ const Subprocess = struct {
+@@ -843,6 +844,24 @@ const Subprocess = struct {
              error.SystemError => return err,
          };
  

@@ -1,8 +1,8 @@
 diff --git a/src/Surface.zig b/src/Surface.zig
-index c8055cfee..9d4aac5ef 100644
+index de87a8eb9..be931ddc0 100644
 --- a/src/Surface.zig
 +++ b/src/Surface.zig
-@@ -3433,11 +3433,12 @@ pub fn scrollCallback(
+@@ -3493,11 +3493,12 @@ pub fn scrollCallback(
          // We scroll by the number of rows in the offset and save the remainder
          const amount = poff / cell_size;
          assert(@abs(amount) >= 1);
@@ -17,7 +17,7 @@ index c8055cfee..9d4aac5ef 100644
  
          break :y .{ .delta = delta };
      };
-@@ -3458,9 +3459,9 @@ pub fn scrollCallback(
+@@ -3518,9 +3519,9 @@ pub fn scrollCallback(
  
          const amount = poff / cell_size;
          assert(@abs(amount) >= 1);

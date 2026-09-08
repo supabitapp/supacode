@@ -1,8 +1,8 @@
 diff --git a/include/ghostty.h b/include/ghostty.h
-index 3c4002abc..626c96876 100644
+index bcbd9d1fe..3756b5a64 100644
 --- a/include/ghostty.h
 +++ b/include/ghostty.h
-@@ -641,6 +641,13 @@ typedef struct {
+@@ -666,6 +666,13 @@ typedef struct {
    const char* body;
  } ghostty_action_desktop_notification_s;
  
@@ -16,7 +16,7 @@ index 3c4002abc..626c96876 100644
  // apprt.action.SetTitle.C
  typedef struct {
    const char* title;
-@@ -926,6 +933,7 @@ typedef enum {
+@@ -952,6 +959,7 @@ typedef enum {
    GHOSTTY_ACTION_SEARCH_SELECTED,
    GHOSTTY_ACTION_READONLY,
    GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD,
@@ -24,7 +24,7 @@ index 3c4002abc..626c96876 100644
  } ghostty_action_tag_e;
  
  typedef union {
-@@ -942,6 +950,7 @@ typedef union {
+@@ -968,6 +976,7 @@ typedef union {
    ghostty_action_scrollbar_s scrollbar;
    ghostty_action_inspector_e inspector;
    ghostty_action_desktop_notification_s desktop_notification;
@@ -33,10 +33,10 @@ index 3c4002abc..626c96876 100644
    ghostty_action_set_title_s set_tab_title;
    ghostty_action_prompt_title_e prompt_title;
 diff --git a/src/Surface.zig b/src/Surface.zig
-index c8055cfee..be18a3b6a 100644
+index e55fe6677..de87a8eb9 100644
 --- a/src/Surface.zig
 +++ b/src/Surface.zig
-@@ -1073,6 +1073,16 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
+@@ -1088,6 +1088,16 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
              try self.showDesktopNotification(title, body);
          },
  
@@ -54,10 +54,10 @@ index c8055cfee..be18a3b6a 100644
  
          .scrollbar => |scrollbar| self.updateScrollbar(scrollbar),
 diff --git a/src/apprt/action.zig b/src/apprt/action.zig
-index f6865af83..e7180a2d2 100644
+index 4728d73ce..14960bd91 100644
 --- a/src/apprt/action.zig
 +++ b/src/apprt/action.zig
-@@ -343,6 +343,10 @@ pub const Action = union(Key) {
+@@ -347,6 +347,10 @@ pub const Action = union(Key) {
      /// otherwise the terminal-set title.
      copy_title_to_clipboard,
  
@@ -68,7 +68,7 @@ index f6865af83..e7180a2d2 100644
      /// Sync with: ghostty_action_tag_e
      pub const Key = enum(c_int) {
          quit,
-@@ -410,6 +414,7 @@ pub const Action = union(Key) {
+@@ -415,6 +419,7 @@ pub const Action = union(Key) {
          search_selected,
          readonly,
          copy_title_to_clipboard,
@@ -76,7 +76,7 @@ index f6865af83..e7180a2d2 100644
  
          test "ghostty.h Action.Key" {
              try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
-@@ -771,6 +776,28 @@ pub const DesktopNotification = struct {
+@@ -776,6 +781,28 @@ pub const DesktopNotification = struct {
      }
  };
  
@@ -130,11 +130,26 @@ index 3cb0016fa..296e70bc9 100644
      /// Health status change for the renderer.
      renderer_health: renderer.Health,
  
+diff --git a/src/terminal/osc.zig b/src/terminal/osc.zig
+index 26ce12672..1502fe9a9 100644
+--- a/src/terminal/osc.zig
++++ b/src/terminal/osc.zig
+@@ -593,7 +593,9 @@ pub const Parser = struct {
+             },
+ 
+             .@"3008" => switch (c) {
+-                ';' => self.captureTrailing(.fixed),
++                // Supacode: allocating (like OSC 52) so an over-2048 notify keeps its
++                // title/earlier fields instead of being discarded whole (body may drop).
++                ';' => self.captureTrailing(.allocating),
+                 else => self.state = .invalid,
+             },
+ 
 diff --git a/src/terminal/stream.zig b/src/terminal/stream.zig
-index 9771334f9..4187bcbfb 100644
+index efb06ecdc..7345bbc93 100644
 --- a/src/terminal/stream.zig
 +++ b/src/terminal/stream.zig
-@@ -125,6 +125,7 @@ pub const Action = union(Key) {
+@@ -127,6 +127,7 @@ pub const Action = union(Key) {
      kitty_color_report: kitty.color.OSC,
      color_operation: ColorOperation,
      semantic_prompt: SemanticPrompt,
@@ -142,7 +157,7 @@ index 9771334f9..4187bcbfb 100644
  
      pub const Key = lib.Enum(
          lib.target,
-@@ -222,6 +223,7 @@ pub const Action = union(Key) {
+@@ -226,6 +227,7 @@ pub const Action = union(Key) {
              "kitty_color_report",
              "color_operation",
              "semantic_prompt",
@@ -150,7 +165,7 @@ index 9771334f9..4187bcbfb 100644
          },
      );
  
-@@ -348,6 +350,26 @@ pub const Action = union(Key) {
+@@ -386,6 +388,26 @@ pub const Action = union(Key) {
          }
      };
  
@@ -177,7 +192,7 @@ index 9771334f9..4187bcbfb 100644
      pub const StartHyperlink = struct {
          uri: []const u8,
          id: ?[]const u8,
-@@ -2047,6 +2069,21 @@ pub fn Stream(comptime H: type) type {
+@@ -2364,6 +2386,21 @@ pub fn Stream(comptime H: type) type {
                      self.handler.vt(.progress_report, v);
                  },
  
@@ -199,31 +214,31 @@ index 9771334f9..4187bcbfb 100644
                  .conemu_sleep,
                  .conemu_show_message_box,
                  .conemu_change_tab_title,
-@@ -2058,7 +2095,6 @@ pub fn Stream(comptime H: type) type {
-                 .conemu_run_process,
+@@ -2376,7 +2413,6 @@ pub fn Stream(comptime H: type) type {
                  .kitty_text_sizing,
                  .kitty_clipboard_protocol,
+                 .kitty_dnd_protocol,
 -                .context_signal,
                  => {
                      log.debug("unimplemented OSC callback: {}", .{cmd});
                  },
 diff --git a/src/terminal/stream_terminal.zig b/src/terminal/stream_terminal.zig
-index 8e0f91110..93712be0d 100644
+index 1e4dc24be..33285f50c 100644
 --- a/src/terminal/stream_terminal.zig
 +++ b/src/terminal/stream_terminal.zig
-@@ -259,6 +259,7 @@ pub const Handler = struct {
+@@ -336,6 +336,7 @@ pub const Handler = struct {
+ 
              // Have no terminal-modifying effect
-             .report_pwd,
              .show_desktop_notification,
 +            .context_signal,
              .progress_report,
-             .clipboard_contents,
              .title_push,
+             .title_pop,
 diff --git a/src/termio/stream_handler.zig b/src/termio/stream_handler.zig
-index fb3a6b3ff..08084ca69 100644
+index 91dcb7d3e..a9c562c43 100644
 --- a/src/termio/stream_handler.zig
 +++ b/src/termio/stream_handler.zig
-@@ -327,6 +327,7 @@ pub const StreamHandler = struct {
+@@ -320,6 +320,7 @@ pub const StreamHandler = struct {
              .window_title => try self.windowTitle(value.title),
              .report_pwd => try self.reportPwd(value.url),
              .show_desktop_notification => try self.showDesktopNotification(value.title, value.body),
@@ -231,7 +246,7 @@ index fb3a6b3ff..08084ca69 100644
              .progress_report => self.progressReport(value),
              .start_hyperlink => try self.startHyperlink(value.uri, value.id),
              .clipboard_contents => try self.clipboardContents(value.kind, value.data),
-@@ -1447,6 +1448,41 @@ pub const StreamHandler = struct {
+@@ -1411,6 +1412,41 @@ pub const StreamHandler = struct {
          self.surfaceMessageWriter(message);
      }
  
@@ -273,18 +288,3 @@ index fb3a6b3ff..08084ca69 100644
      /// Send a report to the pty.
      pub fn sendSizeReport(self: *StreamHandler, style: terminal.SizeReportStyle) void {
          switch (style) {
-diff --git a/src/terminal/osc.zig b/src/terminal/osc.zig
-index 36cfd7f82..f610bf4e2 100644
---- a/src/terminal/osc.zig
-+++ b/src/terminal/osc.zig
-@@ -583,7 +583,9 @@ pub const Parser = struct {
-             },
- 
-             .@"3008" => switch (c) {
--                ';' => self.captureTrailing(.fixed),
-+                // Supacode: allocating (like OSC 52) so an over-2048 notify keeps its
-+                // title/earlier fields instead of being discarded whole (body may drop).
-+                ';' => self.captureTrailing(.allocating),
-                 else => self.state = .invalid,
-             },
- 
