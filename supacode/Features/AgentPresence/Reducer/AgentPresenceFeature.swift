@@ -72,9 +72,15 @@ struct AgentPresenceFeature {
   // `nonisolated` is load-bearing here. Without it the @Reducer macro
   // propagates main-actor isolation onto CancelID's Hashable witness, which
   // then can't satisfy the Sendable requirement in `.cancellable(id:)`.
-  nonisolated enum CancelID: Hashable, Sendable { case livenessSweep }
+  nonisolated enum CancelID: Hashable, Sendable {
+    case agentDiscoveryRequest
+    case agentDiscoveryTimer
+    case livenessSweep
+  }
 
   enum Action {
+    case agentDiscoveryTick
+    case codexProcessesDiscovered([UUID: Set<pid_t>])
     case delegate(Delegate)
     case hookEventReceived(AgentHookEvent)
     case livenessSweepTick
@@ -113,11 +119,27 @@ struct AgentPresenceFeature {
   /// with the system process count. `nonisolated` so the Reduce closure can
   /// read it without crossing main-actor isolation.
   nonisolated static let livenessSweepInterval: Duration = .seconds(2)
+  nonisolated static let agentDiscoveryInterval: Duration = .seconds(5)
 
   var body: some Reducer<State, Action> {
     Reduce { state, action in
       @Dependency(\.continuousClock) var clock
+      @Dependency(\.zmxClient) var zmxClient
       switch action {
+      case .agentDiscoveryTick:
+        return .run { send in
+          guard
+            let processes = await zmxClient.discoverCodexProcesses(),
+            !processes.isEmpty
+          else { return }
+          await send(.codexProcessesDiscovered(processes))
+        }
+        .cancellable(id: CancelID.agentDiscoveryRequest, cancelInFlight: true)
+
+      case .codexProcessesDiscovered(let processes):
+        let changed = Self.applyDiscoveredCodexProcesses(processes, into: &state)
+        return Self.surfacesChangedEffect(changed)
+
       case .delegate:
         return .none
 
@@ -141,15 +163,28 @@ struct AgentPresenceFeature {
         return Self.surfacesChangedEffect(changed)
 
       case .start:
-        return .run { send in
-          for await _ in clock.timer(interval: Self.livenessSweepInterval) {
-            await send(.livenessSweepTick)
+        return .merge(
+          .run { send in
+            await send(.agentDiscoveryTick)
+            for await _ in clock.timer(interval: Self.agentDiscoveryInterval) {
+              await send(.agentDiscoveryTick)
+            }
           }
-        }
-        .cancellable(id: CancelID.livenessSweep, cancelInFlight: true)
+          .cancellable(id: CancelID.agentDiscoveryTimer, cancelInFlight: true),
+          .run { send in
+            for await _ in clock.timer(interval: Self.livenessSweepInterval) {
+              await send(.livenessSweepTick)
+            }
+          }
+          .cancellable(id: CancelID.livenessSweep, cancelInFlight: true)
+        )
 
       case .stop:
-        return .cancel(id: CancelID.livenessSweep)
+        return .merge(
+          .cancel(id: CancelID.agentDiscoveryRequest),
+          .cancel(id: CancelID.agentDiscoveryTimer),
+          .cancel(id: CancelID.livenessSweep)
+        )
 
       case .surfaceClosed(let id):
         Self.drop(surfaces: [id], from: &state)
@@ -309,6 +344,24 @@ struct AgentPresenceFeature {
   private static func drop(surfaces: Set<UUID>, from state: inout State) {
     for id in surfaces { state.bySurface.removeValue(forKey: id) }
     state.records = state.records.filter { !surfaces.contains($0.key.surfaceID) }
+  }
+
+  private static func applyDiscoveredCodexProcesses(
+    _ processes: [UUID: Set<pid_t>],
+    into state: inout State
+  ) -> Set<UUID> {
+    var dirtySurfaces: Set<UUID> = []
+    for (surfaceID, pids) in processes where !pids.isEmpty {
+      let key = PresenceKey(agent: .codex, surfaceID: surfaceID)
+      var record = state.records[key] ?? PresenceRecord(pids: [])
+      let originalPids = record.pids
+      record.pids.formUnion(pids)
+      guard record.pids != originalPids else { continue }
+      state.records[key] = record
+      dirtySurfaces.insert(surfaceID)
+    }
+    for surfaceID in dirtySurfaces { rebuildPresence(forSurface: surfaceID, in: &state) }
+    return dirtySurfaces
   }
 
   /// Pure liveness check; returns only keys whose alive subset diverges from the snapshot.

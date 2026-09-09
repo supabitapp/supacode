@@ -9,6 +9,7 @@ struct ZmxSessionIDTests {
   @Test func makeProducesStablePrefixAndLowercaseUUID() {
     let surface = UUID(uuidString: "DEADBEEF-DEAD-BEEF-DEAD-BEEFDEADBEEF")!
     #expect(ZmxSessionID.make(surfaceID: surface) == "supa-deadbeef-dead-beef-dead-beefdeadbeef")
+    #expect(ZmxSessionID.surfaceID(from: ZmxSessionID.make(surfaceID: surface)) == surface)
   }
 
   @Test func makeFitsWithinDefaultSocketBudget() {
@@ -192,29 +193,29 @@ struct ZmxResolveLaunchTests {
 struct ZmxSessionListParserTests {
   @Test func parsesClientsZero() {
     let entries = ZmxSessionListParser.parse("name=supa-abc\tpid=123\tclients=0\tcreated=0\n")
-    #expect(entries == [.init(name: "supa-abc", clients: 0)])
+    #expect(entries == [.init(name: "supa-abc", clients: 0, pid: 123)])
   }
 
   @Test func parsesClientsPositive() {
     let entries = ZmxSessionListParser.parse("name=supa-abc\tpid=123\tclients=2\tcreated=0\n")
-    #expect(entries == [.init(name: "supa-abc", clients: 2)])
+    #expect(entries == [.init(name: "supa-abc", clients: 2, pid: 123)])
   }
 
   @Test func errOrStatusLineYieldsNilClients() {
     let entries = ZmxSessionListParser.parse(
       "name=supa-abc\terr=ConnectionRefused\tstatus=cleaning up\n"
     )
-    #expect(entries == [.init(name: "supa-abc", clients: nil)])
+    #expect(entries == [.init(name: "supa-abc", clients: nil, pid: nil)])
   }
 
   @Test func stripsCurrentSessionArrowPrefix() {
     let entries = ZmxSessionListParser.parse("→ name=supa-abc\tpid=1\tclients=1\tcreated=0\n")
-    #expect(entries == [.init(name: "supa-abc", clients: 1)])
+    #expect(entries == [.init(name: "supa-abc", clients: 1, pid: 1)])
   }
 
   @Test func stripsLeadingIndentOnNonCurrentSessions() {
     let entries = ZmxSessionListParser.parse("  name=supa-abc\tclients=0\tpid=1\tcreated=0\n")
-    #expect(entries == [.init(name: "supa-abc", clients: 0)])
+    #expect(entries == [.init(name: "supa-abc", clients: 0, pid: 1)])
   }
 
   @Test func filtersNonSupaSessions() {
@@ -224,7 +225,7 @@ struct ZmxSessionListParserTests {
       name=supa-abc\tpid=2\tclients=0\tcreated=0
       """
     )
-    #expect(entries == [.init(name: "supa-abc", clients: 0)])
+    #expect(entries == [.init(name: "supa-abc", clients: 0, pid: 2)])
   }
 
   @Test func dropsBlankAndMalformedLines() {
@@ -236,7 +237,53 @@ struct ZmxSessionListParserTests {
 
       """
     )
-    #expect(entries == [.init(name: "supa-keep", clients: 3)])
+    #expect(entries == [.init(name: "supa-keep", clients: 3, pid: 9)])
+  }
+}
+
+@MainActor
+struct ZmxAgentProcessDiscoveryTests {
+  @Test func mapsNestedCodexProcessesToTheirSurfaces() {
+    let firstSurface = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+    let secondSurface = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+    let sessions = [
+      ZmxSessionListParser.Entry(
+        name: ZmxSessionID.make(surfaceID: firstSurface), clients: 1, pid: 100),
+      ZmxSessionListParser.Entry(
+        name: ZmxSessionID.make(surfaceID: secondSurface), clients: 0, pid: 200),
+    ]
+    let processes = """
+        101   100 /usr/bin/login
+        102   101 -/bin/zsh
+        103   102 codex
+        104   103 caffeinate
+        201   200 /usr/bin/login
+        202   201 /Applications/Codex Tools/codex
+        300     1 /usr/local/bin/codex
+        301   101 codex-helper
+      """
+
+    let discovered = ZmxAgentProcessDiscovery.codexProcesses(
+      sessions: sessions,
+      processOutput: processes
+    )
+
+    #expect(discovered == [firstSurface: [103], secondSurface: [202]])
+  }
+
+  @Test func ignoresSessionsWithoutAValidSurfaceOrRootPid() {
+    let sessions = [
+      ZmxSessionListParser.Entry(name: "supa-not-a-uuid", clients: 1, pid: 100),
+      ZmxSessionListParser.Entry(
+        name: ZmxSessionID.make(surfaceID: UUID()), clients: 1, pid: nil),
+    ]
+
+    let discovered = ZmxAgentProcessDiscovery.codexProcesses(
+      sessions: sessions,
+      processOutput: "101 100 codex"
+    )
+
+    #expect(discovered.isEmpty)
   }
 }
 

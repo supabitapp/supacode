@@ -35,6 +35,9 @@ struct ZmxClient: Sendable {
   /// a successful empty listing. A `clients` of nil marks a session whose count
   /// is unknown (err/status line), which the reaper must also spare.
   var listSessionsWithClients: @Sendable () async -> [ZmxSessionListParser.Entry]?
+  /// Finds Codex clients whose hooks run in a shared remote daemon and therefore
+  /// cannot emit presence through the terminal that launched the client.
+  var discoverCodexProcesses: @Sendable () async -> [UUID: Set<pid_t>]? = { [:] }
 }
 
 /// Cached probe result so we log the bypass reason exactly once per process
@@ -243,6 +246,27 @@ extension ZmxClient {
         // exit); preserve it so the reaper never kills against a failed probe.
         guard let stdout = await runZmx(["ls"], captureStdout: true) else { return nil }
         return ZmxSessionListParser.parse(stdout)
+      },
+      discoverCodexProcesses: {
+        guard let sessionOutput = await runZmx(["ls"], captureStdout: true) else { return nil }
+        let sessions = ZmxSessionListParser.parse(sessionOutput)
+        guard sessions.contains(where: { $0.pid != nil }) else { return [:] }
+        guard
+          let processOutput = await runProcess(
+            invocation: (
+              executableURL: URL(fileURLWithPath: "/bin/ps"),
+              arguments: ["-axo", "pid=,ppid=,comm="],
+            ),
+            environment: nil,
+            timeout: subprocessTimeout,
+            commandLabel: "ps process tree",
+            captureStdout: true
+          )
+        else { return nil }
+        return ZmxAgentProcessDiscovery.codexProcesses(
+          sessions: sessions,
+          processOutput: processOutput
+        )
       }
     )
   }()
@@ -252,7 +276,8 @@ extension ZmxClient {
     isBundled: { false },
     killSession: { _ in },
     killRemoteSession: { _, _ in },
-    listSessionsWithClients: { [] }
+    listSessionsWithClients: { [] },
+    discoverCodexProcesses: { [:] }
   )
 }
 
@@ -295,6 +320,7 @@ nonisolated enum ZmxSessionListParser {
     var name: String
     /// nil when the count is unknown (err/status line); the reaper spares these.
     var clients: Int?
+    var pid: pid_t? = nil
   }
 
   static func parse(_ stdout: String) -> [Entry] {
@@ -321,8 +347,58 @@ nonisolated enum ZmxSessionListParser {
         guard let name = values["name"], name.hasPrefix(ZmxSessionID.prefix) else { return nil }
         // Absent `clients=` (err/status line) maps to nil = unknown, not zero.
         let clients = values["clients"].flatMap { Int($0) }
-        return Entry(name: String(name), clients: clients)
+        let pid = values["pid"].flatMap { pid_t($0) }
+        return Entry(name: String(name), clients: clients, pid: pid)
       }
+  }
+}
+
+nonisolated enum ZmxAgentProcessDiscovery {
+  private struct ProcessEntry: Sendable {
+    let pid: pid_t
+    let parentPID: pid_t
+    let executable: String
+  }
+
+  static func codexProcesses(
+    sessions: [ZmxSessionListParser.Entry],
+    processOutput: String
+  ) -> [UUID: Set<pid_t>] {
+    let processes =
+      processOutput
+      .split(whereSeparator: \.isNewline)
+      .compactMap(parseProcess)
+    let children = Dictionary(grouping: processes, by: \.parentPID)
+    var result: [UUID: Set<pid_t>] = [:]
+
+    for session in sessions {
+      guard
+        let rootPID = session.pid,
+        let surfaceID = ZmxSessionID.surfaceID(from: session.name)
+      else { continue }
+
+      var pending = children[rootPID] ?? []
+      var visited: Set<pid_t> = []
+      while let process = pending.popLast() {
+        guard visited.insert(process.pid).inserted else { continue }
+        if URL(fileURLWithPath: process.executable).lastPathComponent == "codex" {
+          result[surfaceID, default: []].insert(process.pid)
+        }
+        pending.append(contentsOf: children[process.pid] ?? [])
+      }
+    }
+
+    return result
+  }
+
+  private static func parseProcess(_ line: Substring) -> ProcessEntry? {
+    let fields = line.split(maxSplits: 2, whereSeparator: \.isWhitespace)
+    guard
+      fields.count == 3,
+      let pid = pid_t(fields[0]), pid > 0,
+      let parentPID = pid_t(fields[1]), parentPID >= 0
+    else { return nil }
+    return ProcessEntry(pid: pid, parentPID: parentPID, executable: String(fields[2]))
   }
 }
 
@@ -334,6 +410,11 @@ nonisolated enum ZmxSessionID {
 
   static func make(surfaceID: UUID) -> String {
     prefix + surfaceID.uuidString.lowercased()
+  }
+
+  static func surfaceID(from sessionID: String) -> UUID? {
+    guard sessionID.hasPrefix(prefix) else { return nil }
+    return UUID(uuidString: String(sessionID.dropFirst(prefix.count)))
   }
 }
 

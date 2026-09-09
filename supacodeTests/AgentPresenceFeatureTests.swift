@@ -480,6 +480,33 @@ struct AgentPresenceFeatureTests {
 
   // MARK: - Liveness.
 
+  @Test func discoveredCodexProcessRegistersTheSurface() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let pid = getpid()
+
+    harness.send(.codexProcessesDiscovered([surfaceID: [pid]]))
+
+    let key = AgentPresenceFeature.PresenceKey(agent: .codex, surfaceID: surfaceID)
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == [.codex])
+    #expect(harness.state.records[key] == .init(activity: .idle, pids: [pid]))
+  }
+
+  @Test func discoveredCodexProcessPreservesHookActivity() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let hookPid = getpid()
+    let discoveredPid: pid_t = 12_345
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceID, pid: hookPid)))
+    harness.send(.hookEventReceived(makeEvent(.awaitingInput, agent: .codex, surfaceID: surfaceID)))
+
+    harness.send(.codexProcessesDiscovered([surfaceID: [discoveredPid]]))
+
+    let key = AgentPresenceFeature.PresenceKey(agent: .codex, surfaceID: surfaceID)
+    #expect(harness.state.records[key]?.activity == .awaitingInput)
+    #expect(harness.state.records[key]?.pids == [hookPid, discoveredPid])
+  }
+
   @Test func livenessSweepEvictsRecordsForDeadPid() {
     var harness = Harness()
     let surfaceID = UUID()
