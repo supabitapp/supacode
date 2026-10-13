@@ -178,21 +178,20 @@ private struct HotkeyCell: View {
         // No terminal check: the app unbinds every recorded chord inside
         // Ghostty, so a terminal binding is claimable, not a conflict.
         conflictChecker: { proposed in
-          let proposedDisplay = proposed.displayString
           // The hardcoded close chord has no row of its own to explain a
           // bare "System" refusal.
-          guard proposedDisplay != AppShortcuts.closeTab.display else {
+          guard proposed.chord != AppShortcuts.closeTab.chord else {
             return AppShortcuts.closeTab.displayName
           }
           // Check system-reserved shortcuts.
-          guard !AppShortcutOverride.allReservedDisplayStrings().contains(proposedDisplay) else {
+          guard !AppShortcutOverride.allReservedChords().contains(proposed.chord) else {
             return "System"
           }
           // Check other app shortcuts.
           let overrides = store.shortcutOverrides
           for other in AppShortcuts.all where other.id != shortcut.id {
             guard let effective = other.effective(from: overrides) else { continue }
-            guard effective.display == proposedDisplay else { continue }
+            guard effective.chord == proposed.chord else { continue }
             return other.displayName
           }
           return nil

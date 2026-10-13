@@ -499,8 +499,17 @@ struct AppShortcutsTests {
 
   // MARK: - Reserved chords.
 
-  @Test func appKitReservedStringsIncludeTheHardcodedCloseChord() {
-    #expect(AppShortcutOverride.appKitReservedDisplayStrings == ["⌘Q", "⌘H", "⌘M", "⌘W"])
+  @Test func appKitReservedChordsCoverTheFourHardcodedChords() {
+    // ⌘Q, ⌘H, ⌘M, ⌘W — one reserved chord per hardcoded AppKit convention. The
+    // key codes track the active layout, so only their count and modifiers pin.
+    let chords = AppShortcutOverride.appKitReservedChords
+    #expect(chords.count == 4)
+    #expect(
+      chords.allSatisfy { chord in
+        guard case .keyCode(_, let modifiers) = chord else { return false }
+        return modifiers == [.command]
+      }
+    )
   }
 
   @Test func rebindingOntoCloseTabChordIsFlaggedAsAConflict() {
@@ -508,6 +517,52 @@ struct AppShortcutsTests {
     let warnings = AppShortcuts.conflictWarnings(from: [.runScript: override])
     #expect(warnings[.runScript]?.contains("Close Tab") == true)
     #expect(warnings[.closeTab]?.contains("Run Script") == true)
+  }
+
+  @Test func conflictsCompareChordsNotRenderedLabels() {
+    // The keypad digit and its main-row twin print the same character on
+    // layouts that map both, so a display-string comparison would report a
+    // false conflict between chords that fire on different physical keys.
+    let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_Keypad1), modifiers: [.command])
+    let warnings = AppShortcuts.conflictWarnings(from: [.newWorktree: override])
+    #expect(warnings[.newWorktree] == nil)
+    #expect(warnings[.selectTab(1)] == nil)
+  }
+
+  @Test func conflictsMatchTheRecordedPhysicalKey() {
+    // An override binds a physical key: rebinding onto ⌘1's key conflicts with
+    // the default ⌘1 chord no matter how either label renders.
+    let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_1), modifiers: [.command])
+    let warnings = AppShortcuts.conflictWarnings(from: [.openWorktree: override])
+    #expect(warnings[.openWorktree]?.contains("Select Tab 1") == true)
+    #expect(warnings[.selectTab(1)]?.contains("Open Worktree") == true)
+  }
+
+  @Test func samePhysicalKeyWithDifferentModifiersDoesNotConflict() {
+    let override = AppShortcutOverride(
+      keyCode: UInt16(kVK_ANSI_1), modifiers: [.command, .shift]
+    )
+    let warnings = AppShortcuts.conflictWarnings(from: [.openWorktree: override])
+    #expect(warnings[.openWorktree] == nil)
+    #expect(warnings[.selectTab(1)] == nil)
+  }
+
+  @Test func closeTabChordStaysReservedOnEveryLayout() {
+    // The ⌘W reservation resolves through the same path as Close Tab's 'w', so
+    // the chord stays reserved no matter which physical key produces 'w' here.
+    #expect(AppShortcutOverride.allReservedChords().contains(AppShortcuts.closeTab.chord))
+  }
+
+  @Test func chordFallsBackToTheKeyEquivalentWhenNoKeyCodeResolves() {
+    // A shortcut on a key equivalent no key code can resolve keeps the literal
+    // character as its firing identity; it can only collide with an identical
+    // unresolvable equivalent, never with a key-code chord.
+    let shortcut = AppShortcut(
+      id: .newWorktree, keyEquivalent: KeyEquivalent("🐞"), ghosttyKeyName: "bug",
+      modifiers: [.command, .shift]
+    )
+    #expect(shortcut.chord == .keyEquivalent("🐞", modifiers: [.command, .shift]))
+    #expect(shortcut.chord != .keyCode(UInt16(kVK_ANSI_B), modifiers: [.command, .shift]))
   }
 
   @Test func defaultShortcutChordsAreUnique() {

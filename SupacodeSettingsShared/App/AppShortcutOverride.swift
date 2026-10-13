@@ -32,6 +32,26 @@ public nonisolated struct AppShortcutOverride: Codable, Equatable, Hashable, Sen
 
 }
 
+// MARK: - Conflict identity.
+
+// The firing identity of a chord: the key and modifier set that triggers it.
+// Unlike a rendered display string, it is stable across keyboard layouts —
+// some layouts print the same character for two distinct keys — so this is
+// what conflict detection compares.
+public nonisolated enum AppShortcutChord: Hashable, Sendable {
+  // A physical key code.
+  case keyCode(UInt16, modifiers: AppShortcutOverride.ModifierFlags)
+  // A literal key equivalent, for chords no key code can resolve.
+  case keyEquivalent(Character, modifiers: AppShortcutOverride.ModifierFlags)
+}
+
+extension AppShortcutOverride {
+  // This override's firing identity: the recorded physical key and modifiers.
+  public var chord: AppShortcutChord {
+    .keyCode(keyCode, modifiers: modifiers)
+  }
+}
+
 // MARK: - SwiftUI conversions.
 
 extension AppShortcutOverride {
@@ -90,38 +110,55 @@ extension AppShortcutOverride {
 // MARK: - System hotkeys.
 
 extension AppShortcutOverride {
-  // Well-known macOS app conventions always reserved by AppKit (not in the symbolic hotkeys plist).
-  // ⌘W included: it is hardcoded to Close Tab, so the recorder must refuse it.
-  public static let appKitReservedDisplayStrings: Set<String> = ["⌘Q", "⌘H", "⌘M", "⌘W"]
-
-  // Reads macOS system symbolic hotkeys at runtime and returns their display strings,
-  // combined with well-known AppKit reserved shortcuts.
-  public static func allReservedDisplayStrings() -> Set<String> {
-    systemReservedDisplayStrings().union(appKitReservedDisplayStrings)
+  // Reads macOS system symbolic hotkeys and the AppKit conventions, and
+  // returns their firing identities for layout-independent comparison.
+  public static func allReservedChords() -> Set<AppShortcutChord> {
+    systemReservedChords().union(appKitReservedChords)
   }
 
-  // Reads macOS system symbolic hotkeys at runtime and returns their display strings.
-  public static func systemReservedDisplayStrings() -> Set<String> {
+  // Reads macOS system symbolic hotkeys at runtime and returns their firing identities.
+  public static func systemReservedChords() -> Set<AppShortcutChord> {
+    Set(systemHotkeyOverrides().map(\.chord))
+  }
+
+  // Well-known macOS app conventions always reserved by AppKit (not in the
+  // symbolic hotkeys plist), expressed as chords resolved like a default
+  // shortcut's character so the identity tracks the current layout.
+  // ⌘W included: it is hardcoded to Close Tab, so the recorder must refuse it.
+  public static var appKitReservedChords: Set<AppShortcutChord> {
+    let characters: [Character] = ["q", "h", "m", "w"]
+    return Set(
+      characters.compactMap { character -> AppShortcutChord? in
+        guard let code = keyCode(forDisplayedKeyEquivalent: character) ?? keyCode(for: character)
+        else { return nil }
+        return .keyCode(code, modifiers: .command)
+      }
+    )
+  }
+
+  // Every enabled symbolic hotkey as an override carrying its key code and
+  // modifier flags straight from the plist, before any rendering.
+  private static func systemHotkeyOverrides() -> [AppShortcutOverride] {
     guard let defaults = UserDefaults(suiteName: "com.apple.symbolichotkeys"),
       let hotkeys = defaults.dictionary(forKey: "AppleSymbolicHotKeys")
     else {
       shortcutLogger.warning("Could not read system symbolic hotkeys; conflict detection will be incomplete.")
       return []
     }
-    var result: Set<String> = []
+    var result: [AppShortcutOverride] = []
     for (_, value) in hotkeys {
       guard let entry = value as? [String: Any],
         entry["enabled"] as? Bool == true,
         let params = (entry["value"] as? [String: Any])?["parameters"] as? [Any],
         params.count >= 3,
         let keyCode = params[1] as? Int,
-        let modifierFlags = params[2] as? Int
+        let modifierFlags = params[2] as? Int,
+        let code = UInt16(exactly: keyCode)
       else {
         continue
       }
       let flags = Self.modifierFlags(fromSymbolicHotkeyMask: modifierFlags)
-      let override = AppShortcutOverride(keyCode: UInt16(keyCode), modifiers: flags)
-      result.insert(override.displayString)
+      result.append(AppShortcutOverride(keyCode: code, modifiers: flags))
     }
     return result
   }

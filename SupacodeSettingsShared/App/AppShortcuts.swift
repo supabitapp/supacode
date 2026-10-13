@@ -328,6 +328,19 @@ public struct AppShortcut: Identifiable {
     return keyboardShortcut.displaySymbols
   }
 
+  // The chord the matcher fires on, resolved like `matches(_:)`: an override's
+  // recorded physical key, otherwise the code behind the key equivalent under
+  // the current layout. Conflict detection compares chords — never `display`,
+  // which collapses distinct keys that print the same character. A shortcut
+  // whose key code cannot resolve at all keeps its literal key equivalent as
+  // the identity, which cannot collide with a key-code chord.
+  public var chord: AppShortcutChord {
+    if let code = resolvedKeyCode {
+      return .keyCode(code, modifiers: rawModifierFlags)
+    }
+    return .keyEquivalent(keyEquivalent.character, modifiers: rawModifierFlags)
+  }
+
   // Resolves the effective shortcut considering user overrides. Returns `nil`
   // when the user disabled it, or when it is disabled by default and unset.
   // Non-customizable shortcuts ignore overrides entirely.
@@ -711,24 +724,27 @@ public enum AppShortcuts {
   // MARK: - Conflict detection.
 
   // Computes conflict warnings for all shortcuts given the current overrides.
+  // Chords are compared by firing identity: comparing the rendered display
+  // string instead would report conflicts between distinct keys that happen to
+  // print the same character under the active layout.
   public static func conflictWarnings(
     from overrides: [AppShortcutID: AppShortcutOverride]
   ) -> [AppShortcutID: String] {
-    let reserved = AppShortcutOverride.allReservedDisplayStrings()
-    var displayToIDs: [String: [AppShortcutID]] = [:]
+    let reserved = AppShortcutOverride.allReservedChords()
+    var chordToIDs: [AppShortcutChord: [AppShortcutID]] = [:]
     var warnings: [AppShortcutID: String] = [:]
 
     for shortcut in all {
       guard let effective = shortcut.effective(from: overrides) else { continue }
-      let display = effective.display
-      displayToIDs[display, default: []].append(shortcut.id)
+      let chord = effective.chord
+      chordToIDs[chord, default: []].append(shortcut.id)
 
-      if reserved.contains(display) {
-        warnings[shortcut.id] = "\(display) is reserved by the system."
+      if reserved.contains(chord) {
+        warnings[shortcut.id] = "\(effective.display) is reserved by the system."
       }
     }
 
-    for (_, ids) in displayToIDs where ids.count > 1 {
+    for (_, ids) in chordToIDs where ids.count > 1 {
       for id in ids {
         let others = ids.filter { $0 != id }
         let otherLabels = others.compactMap { otherID in
