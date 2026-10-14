@@ -519,19 +519,19 @@ struct AppShortcutsTests {
     #expect(warnings[.closeTab]?.contains("Run Script") == true)
   }
 
-  @Test func conflictsCompareChordsNotRenderedLabels() {
-    // The keypad digit and its main-row twin print the same character on
-    // layouts that map both, so a display-string comparison would report a
-    // false conflict between chords that fire on different physical keys.
+  @Test func conflictsWarnWhenRebindsShareAMenuEquivalent() {
+    // ⌘keypad-1 and ⌘1 are different physical keys but install the same "1"
+    // menu equivalent, which AppKit can only dispatch to one item — a real
+    // conflict worth warning about.
     let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_Keypad1), modifiers: [.command])
     let warnings = AppShortcuts.conflictWarnings(from: [.newWorktree: override])
-    #expect(warnings[.newWorktree] == nil)
-    #expect(warnings[.selectTab(1)] == nil)
+    #expect(warnings[.newWorktree]?.contains("Select Tab 1") == true)
+    #expect(warnings[.selectTab(1)]?.contains("New Worktree") == true)
   }
 
-  @Test func conflictsMatchTheRecordedPhysicalKey() {
-    // An override binds a physical key: rebinding onto ⌘1's key conflicts with
-    // the default ⌘1 chord no matter how either label renders.
+  @Test func rebindingOntoAnExistingChordWarns() {
+    // Rebinding onto ⌘1's key conflicts with the default ⌘1 chord no matter
+    // how either label renders.
     let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_1), modifiers: [.command])
     let warnings = AppShortcuts.conflictWarnings(from: [.openWorktree: override])
     #expect(warnings[.openWorktree]?.contains("Select Tab 1") == true)
@@ -547,15 +547,32 @@ struct AppShortcutsTests {
     #expect(warnings[.selectTab(1)] == nil)
   }
 
+  @Test func unresolvableKeysDoNotCollapseIntoOneChord() {
+    // Keys with no printable equivalent (function keys fall back to "?" or a
+    // private-use glyph) keep distinct chords — their recorded key codes differ.
+    let f13 = AppShortcutOverride(keyCode: UInt16(kVK_F13), modifiers: [.command])
+    let f14 = AppShortcutOverride(keyCode: UInt16(kVK_F14), modifiers: [.command])
+    #expect(f13.chord != f14.chord)
+    let warnings = AppShortcuts.conflictWarnings(
+      from: [.newWorktree: f13, .openWorktree: f14]
+    )
+    #expect(warnings[.newWorktree] == nil)
+    #expect(warnings[.openWorktree] == nil)
+  }
+
   @Test func closeTabChordStaysReservedOnEveryLayout() {
     // The ⌘W reservation resolves through the same path as Close Tab's 'w', so
     // the chord stays reserved no matter which physical key produces 'w' here.
-    #expect(AppShortcutOverride.allReservedChords().contains(AppShortcuts.closeTab.chord))
+    guard let physicalChord = AppShortcuts.closeTab.physicalChord else {
+      Issue.record("closeTab has no resolvable physical chord")
+      return
+    }
+    #expect(AppShortcutOverride.allReservedChords().contains(physicalChord))
   }
 
   @Test func chordFallsBackToTheKeyEquivalentWhenNoKeyCodeResolves() {
     // A shortcut on a key equivalent no key code can resolve keeps the literal
-    // character as its firing identity; it can only collide with an identical
+    // equivalent as its menu identity; it can only collide with an identical
     // unresolvable equivalent, never with a key-code chord.
     let shortcut = AppShortcut(
       id: .newWorktree, keyEquivalent: KeyEquivalent("🐞"), ghosttyKeyName: "bug",
@@ -565,9 +582,20 @@ struct AppShortcutsTests {
     #expect(shortcut.chord != .keyCode(UInt16(kVK_ANSI_B), modifiers: [.command, .shift]))
   }
 
+  @Test func reservedChordsArePhysicalKeyCodes() {
+    // Symbolic hotkeys and the AppKit conventions all resolve to key codes —
+    // comparing them against menu equivalents would never match.
+    #expect(
+      AppShortcutOverride.allReservedChords().allSatisfy { chord in
+        guard case .keyCode = chord else { return false }
+        return true
+      }
+    )
+  }
+
   @Test func defaultShortcutChordsAreUnique() {
-    let displays = AppShortcuts.all.compactMap { $0.effective(from: [:])?.display }
-    #expect(Set(displays).count == displays.count)
+    let chords = AppShortcuts.all.compactMap { $0.effective(from: [:])?.chord }
+    #expect(Set(chords).count == chords.count)
   }
 
   // MARK: - Disabled-by-default round trip.

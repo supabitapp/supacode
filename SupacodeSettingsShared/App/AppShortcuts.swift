@@ -328,17 +328,27 @@ public struct AppShortcut: Identifiable {
     return keyboardShortcut.displaySymbols
   }
 
-  // The chord the matcher fires on, resolved like `matches(_:)`: an override's
-  // recorded physical key, otherwise the code behind the key equivalent under
-  // the current layout. Conflict detection compares chords — never `display`,
-  // which collapses distinct keys that print the same character. A shortcut
-  // whose key code cannot resolve at all keeps its literal key equivalent as
-  // the identity, which cannot collide with a key-code chord.
+  // The chord AppKit displays and dispatches on: the key equivalent plus
+  // modifiers. For a default this is the stored character — stable on every
+  // layout — so conflict detection compares chords, never `display`, which can
+  // collapse distinct keys that print the same character. A rebind whose key
+  // resolves no printable equivalent ("?") keeps its physical identity instead.
   public var chord: AppShortcutChord {
-    if let code = resolvedKeyCode {
+    if keyEquivalent.character == "?", let code = resolvedKeyCode {
       return .keyCode(code, modifiers: rawModifierFlags)
     }
-    return .keyEquivalent(keyEquivalent.character, modifiers: rawModifierFlags)
+    // AppKit matches key equivalents case-insensitively, so chords normalize to
+    // lowercase: a "P" binding still conflicts with a "p" one.
+    return .keyEquivalent(
+      Character(String(keyEquivalent.character).lowercased()),
+      modifiers: rawModifierFlags
+    )
+  }
+
+  // The physical chord the matcher fires on, resolved like `matches(_:)`, for
+  // comparing against key-code reservations such as system symbolic hotkeys.
+  public var physicalChord: AppShortcutChord? {
+    resolvedKeyCode.map { .keyCode($0, modifiers: rawModifierFlags) }
   }
 
   // Resolves the effective shortcut considering user overrides. Returns `nil`
@@ -739,7 +749,7 @@ public enum AppShortcuts {
       let chord = effective.chord
       chordToIDs[chord, default: []].append(shortcut.id)
 
-      if reserved.contains(chord) {
+      if let physicalChord = effective.physicalChord, reserved.contains(physicalChord) {
         warnings[shortcut.id] = "\(effective.display) is reserved by the system."
       }
     }

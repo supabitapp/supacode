@@ -184,7 +184,7 @@ private struct HotkeyCell: View {
             return AppShortcuts.closeTab.displayName
           }
           // Check system-reserved shortcuts.
-          guard !AppShortcutOverride.allReservedChords().contains(proposed.chord) else {
+          guard !AppShortcutOverride.allReservedChords().contains(proposed.physicalChord) else {
             return "System"
           }
           // Check other app shortcuts.

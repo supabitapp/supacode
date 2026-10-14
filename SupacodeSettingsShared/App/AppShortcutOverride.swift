@@ -39,15 +39,27 @@ public nonisolated struct AppShortcutOverride: Codable, Equatable, Hashable, Sen
 // some layouts print the same character for two distinct keys — so this is
 // what conflict detection compares.
 public nonisolated enum AppShortcutChord: Hashable, Sendable {
-  // A physical key code.
-  case keyCode(UInt16, modifiers: AppShortcutOverride.ModifierFlags)
-  // A literal key equivalent, for chords no key code can resolve.
+  // The menu-level identity: the key equivalent AppKit displays and dispatches
+  // on. For a default this is the stored character — stable on every layout.
   case keyEquivalent(Character, modifiers: AppShortcutOverride.ModifierFlags)
+  // The physical key identity: system reservations fire on key codes, and keys
+  // with no printable equivalent keep this so distinct keys cannot collapse.
+  case keyCode(UInt16, modifiers: AppShortcutOverride.ModifierFlags)
 }
 
 extension AppShortcutOverride {
-  // This override's firing identity: the recorded physical key and modifiers.
+  // This override's firing identity: the menu equivalent it installs, or the
+  // recorded physical key when the key has no printable equivalent ("?" is the
+  // unresolved fallback — two of them must not collapse into one chord).
   public var chord: AppShortcutChord {
+    if keyEquivalent.character == "?" {
+      return .keyCode(keyCode, modifiers: modifiers)
+    }
+    return .keyEquivalent(Character(String(keyEquivalent.character).lowercased()), modifiers: modifiers)
+  }
+
+  // The recorded physical key and modifiers, for key-code reservations.
+  public var physicalChord: AppShortcutChord {
     .keyCode(keyCode, modifiers: modifiers)
   }
 }
@@ -116,9 +128,10 @@ extension AppShortcutOverride {
     systemReservedChords().union(appKitReservedChords)
   }
 
-  // Reads macOS system symbolic hotkeys at runtime and returns their firing identities.
-  public static func systemReservedChords() -> Set<AppShortcutChord> {
-    Set(systemHotkeyOverrides().map(\.chord))
+  // Reads macOS system symbolic hotkeys at runtime and returns their physical
+  // key-code identities — Carbon hotkeys fire on key codes, not characters.
+  private static func systemReservedChords() -> Set<AppShortcutChord> {
+    Set(systemHotkeyOverrides().map(\.physicalChord))
   }
 
   // Well-known macOS app conventions always reserved by AppKit (not in the
