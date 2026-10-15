@@ -35,12 +35,34 @@ nonisolated struct WorktreeFileEventFilter {
   private func isRelevantPath(_ path: String) -> Bool {
     guard path.hasPrefix(gitDirectoryPrefix) else { return true }
     let components = path.dropFirst(gitDirectoryPrefix.count).split(separator: "/")
-    let name =
+    let metadataComponents =
       if components.first == "worktrees", components.count >= 3 {
-        components[2]
+        components.dropFirst(2)
       } else {
-        components.first
+        components[...]
       }
-    return name != "fsmonitor--daemon" && name != "fsmonitor--daemon.ipc"
+    if let name = metadataComponents.first, Self.isDaemonName(name) { return false }
+    guard metadataComponents.first == "modules" else { return true }
+    return !metadataComponents.indices.contains { index in
+      guard Self.isDaemonName(components[index]) else { return false }
+      let directory = gitDirectoryPrefix + components[..<index].joined(separator: "/")
+      return Self.isGitDirectory(directory)
+    }
+  }
+
+  private static func isDaemonName(_ name: Substring) -> Bool {
+    name == "fsmonitor--daemon" || name == "fsmonitor--daemon.ipc" || name == "fsmonitor--daemon.ipc.lock"
+  }
+
+  private static func isGitDirectory(_ path: String) -> Bool {
+    let fileManager = FileManager.default
+    var isDirectory = ObjCBool(false)
+    guard fileManager.fileExists(atPath: path + "/HEAD", isDirectory: &isDirectory), !isDirectory.boolValue else {
+      return false
+    }
+    if fileManager.fileExists(atPath: path + "/objects", isDirectory: &isDirectory), isDirectory.boolValue {
+      return true
+    }
+    return fileManager.fileExists(atPath: path + "/commondir", isDirectory: &isDirectory) && !isDirectory.boolValue
   }
 }

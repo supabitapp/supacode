@@ -10,6 +10,7 @@ struct WorktreeFileEventFilterTests {
     "fsmonitor--daemon/cookies",
     "fsmonitor--daemon/cookies/1234-1",
     "fsmonitor--daemon.ipc",
+    "fsmonitor--daemon.ipc.lock",
     "worktrees/feature/fsmonitor--daemon/cookies/1234-1",
     "worktrees/feature/fsmonitor--daemon.ipc",
   ])
@@ -48,10 +49,52 @@ struct WorktreeFileEventFilterTests {
     "/repo/.git/worktrees/fsmonitor--daemon/index",
     "/repo/.git/fsmonitor--daemon-backup",
     "/repo/.git/fsmonitor--daemon.ipc-backup",
+    "/repo/.git/fsmonitor--daemon.ipc.lock-backup",
   ])
   func preservesWorkingTreeAndGitStateChanges(path: String) {
     let filter = WorktreeFileEventFilter(gitDirectoryURL: URL(fileURLWithPath: "/repo/.git"))
     #expect(filter.shouldRefresh(paths: [path], flags: [0]))
+  }
+
+  @Test(arguments: [
+    "modules/vendor/child",
+    "modules/vendor/child/modules/nested",
+    "modules/vendor/child/worktrees/feature",
+    "modules/fsmonitor--daemon",
+    "worktrees/feature/modules/vendor/child",
+  ])
+  func ignoresSubmoduleDaemonActivityButPreservesGitState(relativePath: String) throws {
+    let root = URL(fileURLWithPath: "/private/tmp").appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let gitDirectory = root.appending(path: ".git")
+    let submoduleDirectory = gitDirectory.appending(path: relativePath)
+    try FileManager.default.createDirectory(at: submoduleDirectory, withIntermediateDirectories: true)
+    if relativePath.hasSuffix("/worktrees/feature") {
+      try "../..\n".write(to: submoduleDirectory.appending(path: "commondir"), atomically: true, encoding: .utf8)
+    } else {
+      try FileManager.default.createDirectory(
+        at: submoduleDirectory.appending(path: "objects"), withIntermediateDirectories: true)
+    }
+    try "ref: refs/heads/main\n".write(
+      to: submoduleDirectory.appending(path: "HEAD"), atomically: true, encoding: .utf8)
+    let filter = WorktreeFileEventFilter(gitDirectoryURL: gitDirectory)
+    let path = submoduleDirectory.path(percentEncoded: false)
+    for suffix in ["fsmonitor--daemon/cookies/1234-1", "fsmonitor--daemon.ipc", "fsmonitor--daemon.ipc.lock"] {
+      #expect(!filter.shouldRefresh(paths: [path + "/" + suffix], flags: [0]))
+    }
+    for suffix in ["index", "HEAD", "refs/heads/fsmonitor--daemon", "logs/HEAD"] {
+      #expect(filter.shouldRefresh(paths: [path + "/" + suffix], flags: [0]))
+    }
+    #expect(
+      filter.shouldRefresh(
+        paths: [path + "/fsmonitor--daemon/cookies/1234-1"],
+        flags: [FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs)]))
+  }
+
+  @Test func preservesSubmoduleNamesThatResembleDaemonPaths() {
+    let filter = WorktreeFileEventFilter(gitDirectoryURL: URL(fileURLWithPath: "/repo/.git"))
+    #expect(filter.shouldRefresh(paths: ["/repo/.git/modules/fsmonitor--daemon/cookies/index"], flags: [0]))
+    #expect(filter.shouldRefresh(paths: ["/repo/.git/modules/vendor/fsmonitor--daemon/HEAD"], flags: [0]))
   }
 
   @Test func refreshesMixedBatchesInEitherOrder() {
