@@ -7927,6 +7927,93 @@ struct RepositoriesFeatureTests {
     await store.finish()
   }
 
+  // A worktree on the repository's default branch must never show a PR badge: any
+  // PR whose head is the default branch is a sync PR (e.g. `main -> dev`), not that
+  // worktree's own work, and it persists after merge as a stale match (#695).
+  @Test func repositoryPullRequestRefreshSkipsDefaultBranchWorktree() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.githubIntegrationAvailability = .available
+    state.reconcileSidebarForTesting()
+    // The newest merged `head=main` sync PR is what the matcher would otherwise pin to `main`.
+    let mergedMainPullRequest = makePullRequest(state: "MERGED", headRefName: "main", number: 320)
+    let featurePullRequest = makePullRequest(state: "OPEN", headRefName: "feature", number: 5)
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.remoteInfo = { _ in GithubRemoteInfo(host: "github.com", owner: "o", repo: "r") }
+      $0.githubCLI.defaultBranch = { _ in "main" }
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in
+        ["main": mergedMainPullRequest, "feature": featurePullRequest]
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .worktreeInfoEvent(
+        .repositoryPullRequestRefresh(
+          repositoryRootURL: URL(fileURLWithPath: repoRoot),
+          worktreeIDs: [mainWorktree.id, featureWorktree.id]
+        )
+      )
+    )
+    await store.receive(\.repositoryPullRequestRefreshCompleted)
+    await store.finish()
+
+    #expect(store.state.sidebarItems[id: mainWorktree.id]?.pullRequest == nil)
+    #expect(store.state.sidebarItems[id: featureWorktree.id]?.pullRequest == featurePullRequest)
+  }
+
+  // Guard the defensive fetch: if the default-branch lookup fails, the refresh must
+  // fall back to today's behavior (assign by branch name) rather than dropping every
+  // worktree's badge, so a transient `gh` failure never regresses the whole repo (#695).
+  @Test func repositoryPullRequestRefreshAssignsWhenDefaultBranchLookupFails() async {
+    let repoRoot = "/tmp/repo"
+    let mainWorktree = makeWorktree(id: repoRoot, name: "main", repoRoot: repoRoot)
+    let featureWorktree = makeWorktree(
+      id: "\(repoRoot)/feature",
+      name: "feature",
+      repoRoot: repoRoot
+    )
+    let repository = makeRepository(id: repoRoot, worktrees: [mainWorktree, featureWorktree])
+    var state = makeState(repositories: [repository])
+    state.githubIntegrationAvailability = .available
+    state.reconcileSidebarForTesting()
+    let mainPullRequest = makePullRequest(state: "OPEN", headRefName: "main", number: 320)
+    let featurePullRequest = makePullRequest(state: "OPEN", headRefName: "feature", number: 5)
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.remoteInfo = { _ in GithubRemoteInfo(host: "github.com", owner: "o", repo: "r") }
+      $0.githubCLI.defaultBranch = { _ in throw GithubCLIError.commandFailed("boom") }
+      $0.githubCLI.batchPullRequests = { _, _, _, _ in
+        ["main": mainPullRequest, "feature": featurePullRequest]
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .worktreeInfoEvent(
+        .repositoryPullRequestRefresh(
+          repositoryRootURL: URL(fileURLWithPath: repoRoot),
+          worktreeIDs: [mainWorktree.id, featureWorktree.id]
+        )
+      )
+    )
+    await store.receive(\.repositoryPullRequestRefreshCompleted)
+    await store.finish()
+
+    #expect(store.state.sidebarItems[id: mainWorktree.id]?.pullRequest == mainPullRequest)
+    #expect(store.state.sidebarItems[id: featureWorktree.id]?.pullRequest == featurePullRequest)
+  }
+
   @Test func unarchiveWorktreeNoopsWhenNotArchived() async {
     let worktree = makeWorktree(id: "/tmp/wt", name: "owl")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
