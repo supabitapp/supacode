@@ -170,16 +170,19 @@ struct GhosttySurfaceViewTests {
     #expect(GhosttySurfaceView.forwardableMenuItem(for: Self.optionCommandH(), in: menu) == nil)
   }
 
-  @Test func imageOnlyCommandVRoutesForClaudeImagePaste() {
-    #expect(
-      GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
-        event: Self.commandV(),
-        pasteboardTypes: [.tiff],
-        imagePasteAgents: [.claude],
-        keySequenceActive: false,
-        keyTableDepth: 0
+  @Test func imageOnlyCommandVRoutesForCtrlVImagePasteAgents() {
+    // Claude Code and Devin CLI both paste images on the Ctrl+V chord.
+    for agents: Set<SkillAgent> in [[.claude], [.devin]] {
+      #expect(
+        GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+          event: Self.commandV(),
+          pasteboardTypes: [.tiff],
+          imagePasteAgents: agents,
+          keySequenceActive: false,
+          keyTableDepth: 0
+        )
       )
-    )
+    }
   }
 
   @Test func imageCommandVDoesNotOverrideTextOrFilePaste() {
