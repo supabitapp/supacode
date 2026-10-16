@@ -1,3 +1,4 @@
+import AppKit
 import ComposableArchitecture
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
@@ -117,6 +118,28 @@ private struct WorktreeCreationFooter: View {
 private struct WorktreeBaseRefField: View {
   @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
 
+  private var browseTopRows: [WorktreeRefBrowseTopRow<String?>] {
+    var rows = [
+      WorktreeRefBrowseTopRow<String?>(
+        title: store.automaticBaseRef.isEmpty ? "Auto" : store.automaticBaseRef,
+        detail: store.automaticBaseRef.isEmpty ? nil : "Auto",
+        selection: nil,
+        isSelected: store.selectedBaseRef == nil
+      )
+    ]
+    if let defaultBranch = store.defaultBranch {
+      rows.append(
+        WorktreeRefBrowseTopRow(
+          title: defaultBranch,
+          detail: "Local",
+          selection: defaultBranch,
+          isSelected: store.selectedBaseRef == defaultBranch
+        )
+      )
+    }
+    return rows
+  }
+
   var body: some View {
     WorktreeRefPickerField(
       title: "Base ref",
@@ -125,14 +148,32 @@ private struct WorktreeBaseRefField: View {
       branchMenu: store.branchMenu,
       remoteNames: store.remoteNames,
       selectedRef: store.selectedBaseRef,
+      browseTopRows: browseTopRows,
       onSelect: { store.send(.baseRefSelected($0)) },
-      topRows: { WorktreeBaseRefTopRows(store: store) }
+      onSelectBrowseTopRow: { store.send(.baseRefSelected($0)) }
     )
   }
 }
 
 private struct WorktreeUpstreamField: View {
   @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
+
+  private var browseTopRows: [WorktreeRefBrowseTopRow<WorktreeUpstreamPreference>] {
+    [
+      WorktreeRefBrowseTopRow(
+        title: "Auto",
+        detail: nil,
+        selection: .automatic,
+        isSelected: store.selectedUpstream == .automatic
+      ),
+      WorktreeRefBrowseTopRow(
+        title: "None",
+        detail: nil,
+        selection: .unset,
+        isSelected: store.selectedUpstream == .unset
+      ),
+    ]
+  }
 
   var body: some View {
     WorktreeRefPickerField(
@@ -142,23 +183,25 @@ private struct WorktreeUpstreamField: View {
       branchMenu: store.upstreamBranchMenu,
       remoteNames: store.remoteNames,
       selectedRef: store.selectedUpstreamBranch,
+      browseTopRows: browseTopRows,
       onSelect: { store.send(.upstreamSelected(.branch($0))) },
-      topRows: { WorktreeUpstreamTopRows(store: store) }
+      onSelectBrowseTopRow: { store.send(.upstreamSelected($0)) }
     )
   }
 }
 
-/// Shared search + browse picker over the branch inventory; the callers inject
-/// the non-branch top rows (Auto / None / quick picks) and the selection action.
-private struct WorktreeRefPickerField<TopRows: View>: View {
+/// Shared search + browse picker over the branch inventory; the callers inject the
+/// non-branch top rows (Auto / None / quick picks) and their selection action.
+private struct WorktreeRefPickerField<TopSelection: Hashable>: View {
   let title: String
   let caption: String
   let menuLabel: String
   let branchMenu: BaseRefBranchMenu?
   let remoteNames: [String]
   let selectedRef: String?
+  let browseTopRows: [WorktreeRefBrowseTopRow<TopSelection>]
   let onSelect: (String) -> Void
-  @ViewBuilder let topRows: TopRows
+  let onSelectBrowseTopRow: (TopSelection) -> Void
 
   private var isLoading: Bool {
     branchMenu == nil
@@ -201,30 +244,14 @@ private struct WorktreeRefPickerField<TopRows: View>: View {
           .onKeyPress(.upArrow) { moveHighlight(by: -1) }
           .onKeyPress(.return) { commitHighlighted() }
         // Browse: the hierarchical menu, kept for when you don't know the branch name up front.
-        Menu {
-          topRows
-
-          Divider()
-
-          if let branchMenu {
-            if !branchMenu.localBranches.isEmpty {
-              Menu("Local") {
-                ForEach(branchMenu.localBranches) { node in
-                  WorktreeBranchNodeMenu(node: node, selectedRef: selectedRef, onSelect: select)
-                }
-              }
-            }
-            ForEach(branchMenu.remotes) { remote in
-              WorktreeRemoteBranchMenu(remote: remote, selectedRef: selectedRef, onSelect: select)
-            }
-          } else {
-            Text("Loading branches…")
-          }
-        } label: {
-          Text(menuLabel)
-            .lineLimit(1)
-            .truncationMode(.middle)
-        }
+        WorktreeRefBrowseMenu(
+          menuLabel: menuLabel,
+          branchMenu: branchMenu,
+          selectedRef: selectedRef,
+          topRows: browseTopRows,
+          onSelectBranch: select,
+          onSelectTopRow: selectBrowseTopRow
+        )
         // Cap and pin trailing so a long ref can't crowd the search field yet still grazes the right edge.
         .frame(maxWidth: 160, alignment: .trailing)
         .layoutPriority(1)
@@ -279,6 +306,191 @@ private struct WorktreeRefPickerField<TopRows: View>: View {
   private func select(_ ref: String) {
     onSelect(ref)
     query = ""
+  }
+
+  private func selectBrowseTopRow(_ selection: TopSelection) {
+    onSelectBrowseTopRow(selection)
+    query = ""
+  }
+}
+
+private struct WorktreeRefBrowseTopRow<Selection: Hashable>: Hashable {
+  let title: String
+  let detail: String?
+  let selection: Selection
+  let isSelected: Bool
+}
+
+/// Owns the AppKit menu so unrelated SwiftUI updates cannot replace an open submenu.
+private struct WorktreeRefBrowseMenu<TopSelection: Hashable>: NSViewRepresentable {
+  let menuLabel: String
+  let branchMenu: BaseRefBranchMenu?
+  let selectedRef: String?
+  let topRows: [WorktreeRefBrowseTopRow<TopSelection>]
+  let onSelectBranch: (String) -> Void
+  let onSelectTopRow: (TopSelection) -> Void
+
+  struct Snapshot: Equatable {
+    let menuLabel: String
+    let branchMenu: BaseRefBranchMenu?
+    let selectedRef: String?
+    let topRows: [WorktreeRefBrowseTopRow<TopSelection>]
+  }
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator()
+  }
+
+  func makeNSView(context: Context) -> NSPopUpButton {
+    let button = NSPopUpButton(frame: .zero, pullsDown: true)
+    button.setContentHuggingPriority(.required, for: .horizontal)
+    return button
+  }
+
+  func updateNSView(_ button: NSPopUpButton, context: Context) {
+    context.coordinator.update(
+      button,
+      snapshot: Snapshot(
+        menuLabel: menuLabel,
+        branchMenu: branchMenu,
+        selectedRef: selectedRef,
+        topRows: topRows
+      ),
+      onSelectBranch: onSelectBranch,
+      onSelectTopRow: onSelectTopRow
+    )
+  }
+
+  final class Coordinator: NSObject {
+    private var snapshot: Snapshot?
+    private var topRows: [WorktreeRefBrowseTopRow<TopSelection>] = []
+    private var onSelectBranch: (String) -> Void = { _ in }
+    private var onSelectTopRow: (TopSelection) -> Void = { _ in }
+
+    func update(
+      _ button: NSPopUpButton,
+      snapshot: Snapshot,
+      onSelectBranch: @escaping (String) -> Void,
+      onSelectTopRow: @escaping (TopSelection) -> Void
+    ) {
+      self.topRows = snapshot.topRows
+      self.onSelectBranch = onSelectBranch
+      self.onSelectTopRow = onSelectTopRow
+      button.toolTip = snapshot.menuLabel
+      button.setAccessibilityLabel(snapshot.menuLabel)
+
+      guard snapshot != self.snapshot else { return }
+      button.menu = makeMenu(for: snapshot)
+      self.snapshot = snapshot
+    }
+
+    private func makeMenu(for snapshot: Snapshot) -> NSMenu {
+      let menu = NSMenu()
+      menu.autoenablesItems = false
+      menu.addItem(NSMenuItem(title: snapshot.menuLabel, action: nil, keyEquivalent: ""))
+
+      for (index, row) in snapshot.topRows.enumerated() {
+        let item = NSMenuItem(
+          title: row.title,
+          action: #selector(selectTopRow(_:)),
+          keyEquivalent: ""
+        )
+        item.attributedTitle = attributedTitle(row.title, detail: row.detail)
+        item.state = row.isSelected ? .on : .off
+        item.target = self
+        item.tag = index
+        menu.addItem(item)
+      }
+
+      menu.addItem(.separator())
+      guard let branchMenu = snapshot.branchMenu else {
+        let loadingItem = NSMenuItem(title: "Loading branches…", action: nil, keyEquivalent: "")
+        loadingItem.isEnabled = false
+        menu.addItem(loadingItem)
+        return menu
+      }
+
+      if !branchMenu.localBranches.isEmpty {
+        let localItem = NSMenuItem(title: "Local", action: nil, keyEquivalent: "")
+        let localMenu = NSMenu()
+        for node in branchMenu.localBranches {
+          if let item = branchItem(for: node, selectedRef: snapshot.selectedRef) {
+            localMenu.addItem(item)
+          }
+        }
+        localItem.submenu = localMenu
+        menu.addItem(localItem)
+      }
+
+      for remote in branchMenu.remotes {
+        let remoteItem = NSMenuItem(title: remote.name, action: nil, keyEquivalent: "")
+        remoteItem.attributedTitle = attributedTitle(remote.name, detail: "Remote")
+        let remoteMenu = NSMenu()
+        for node in remote.branches {
+          if let item = branchItem(for: node, selectedRef: snapshot.selectedRef) {
+            remoteMenu.addItem(item)
+          }
+        }
+        remoteItem.submenu = remoteMenu
+        menu.addItem(remoteItem)
+      }
+      return menu
+    }
+
+    private func branchItem(for node: BranchMenuNode, selectedRef: String?) -> NSMenuItem? {
+      guard !node.children.isEmpty else {
+        guard let ref = node.ref else { return nil }
+        return branchLeaf(title: node.name, ref: ref, selectedRef: selectedRef)
+      }
+
+      let item = NSMenuItem(title: node.name, action: nil, keyEquivalent: "")
+      let submenu = NSMenu()
+      if let ref = node.ref {
+        submenu.addItem(branchLeaf(title: node.name, ref: ref, selectedRef: selectedRef))
+      }
+      for child in node.children {
+        if let childItem = branchItem(for: child, selectedRef: selectedRef) {
+          submenu.addItem(childItem)
+        }
+      }
+      item.submenu = submenu
+      return item
+    }
+
+    private func branchLeaf(title: String, ref: String, selectedRef: String?) -> NSMenuItem {
+      let item = NSMenuItem(
+        title: title,
+        action: #selector(selectBranch(_:)),
+        keyEquivalent: ""
+      )
+      item.state = selectedRef == ref ? .on : .off
+      item.target = self
+      item.representedObject = ref
+      return item
+    }
+
+    private func attributedTitle(_ title: String, detail: String?) -> NSAttributedString {
+      let attributedTitle = NSMutableAttributedString(string: title)
+      if let detail {
+        attributedTitle.append(
+          NSAttributedString(
+            string: " \(detail)",
+            attributes: [.foregroundColor: NSColor.secondaryLabelColor]
+          )
+        )
+      }
+      return attributedTitle
+    }
+
+    @objc private func selectBranch(_ sender: NSMenuItem) {
+      guard let ref = sender.representedObject as? String else { return }
+      onSelectBranch(ref)
+    }
+
+    @objc private func selectTopRow(_ sender: NSMenuItem) {
+      guard topRows.indices.contains(sender.tag) else { return }
+      onSelectTopRow(topRows[sender.tag].selection)
+    }
   }
 }
 
@@ -361,124 +573,5 @@ private struct WorktreeRefResultRow: View {
     .buttonStyle(.plain)
     .background(isHighlighted ? Color.accentColor.opacity(0.18) : .clear, in: .rect(cornerRadius: 5))
     .help(ref)
-  }
-}
-
-/// Non-branch rows atop the base-ref browse menu: the Auto ref and the
-/// matching local default branch quick pick.
-private struct WorktreeBaseRefTopRows: View {
-  @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
-
-  var body: some View {
-    WorktreeRefMenuItem(
-      isSelected: store.selectedBaseRef == nil,
-      label: store.automaticBaseRef.isEmpty
-        ? Text("Auto")
-        : Text("\(store.automaticBaseRef) \(Text("Auto").foregroundStyle(.secondary))")
-    ) {
-      store.send(.baseRefSelected(nil))
-    }
-    if let defaultBranch = store.defaultBranch {
-      // Tagged "Local" to distinguish it from the remote-tracking Auto ref above.
-      WorktreeRefMenuItem(
-        isSelected: store.selectedBaseRef == defaultBranch,
-        label: Text("\(defaultBranch) \(Text("Local").foregroundStyle(.secondary))")
-      ) {
-        store.send(.baseRefSelected(defaultBranch))
-      }
-    }
-  }
-}
-
-/// Non-branch rows atop the upstream browse menu: Git's automatic tracking and
-/// an explicit no-upstream choice.
-private struct WorktreeUpstreamTopRows: View {
-  @Bindable var store: StoreOf<WorktreeCreationPromptFeature>
-
-  var body: some View {
-    WorktreeRefMenuItem(
-      isSelected: store.selectedUpstream == .automatic,
-      label: Text("Auto")
-    ) {
-      store.send(.upstreamSelected(.automatic))
-    }
-    WorktreeRefMenuItem(
-      isSelected: store.selectedUpstream == .unset,
-      label: Text("None")
-    ) {
-      store.send(.upstreamSelected(.unset))
-    }
-  }
-}
-
-private struct WorktreeRemoteBranchMenu: View {
-  let remote: BaseRefBranchMenu.Remote
-  let selectedRef: String?
-  let onSelect: (String) -> Void
-
-  var body: some View {
-    Menu {
-      ForEach(remote.branches) { node in
-        WorktreeBranchNodeMenu(node: node, selectedRef: selectedRef, onSelect: onSelect)
-      }
-    } label: {
-      Text("\(remote.name) \(Text("Remote").foregroundStyle(.secondary))")
-    }
-  }
-}
-
-private struct WorktreeBranchNodeMenu: View {
-  let node: BranchMenuNode
-  let selectedRef: String?
-  let onSelect: (String) -> Void
-
-  var body: some View {
-    if node.children.isEmpty {
-      WorktreeBranchNodeMenuItem(node: node, selectedRef: selectedRef, onSelect: onSelect)
-    } else {
-      Menu(node.name) {
-        // A namespace segment that is also a branch (rare) stays selectable;
-        // the item renders nothing for a ref-less segment.
-        WorktreeBranchNodeMenuItem(node: node, selectedRef: selectedRef, onSelect: onSelect)
-        ForEach(node.children) { child in
-          WorktreeBranchNodeMenu(node: child, selectedRef: selectedRef, onSelect: onSelect)
-        }
-      }
-    }
-  }
-}
-
-private struct WorktreeBranchNodeMenuItem: View {
-  let node: BranchMenuNode
-  let selectedRef: String?
-  let onSelect: (String) -> Void
-
-  var body: some View {
-    if let ref = node.ref {
-      WorktreeRefMenuItem(isSelected: selectedRef == ref, label: Text(node.name)) {
-        onSelect(ref)
-      }
-    }
-  }
-}
-
-private struct WorktreeRefMenuItem: View {
-  let isSelected: Bool
-  let label: Text
-  let action: () -> Void
-
-  var body: some View {
-    Button(action: action) {
-      if isSelected {
-        Label {
-          label
-        } icon: {
-          Image(systemName: "checkmark")
-            .accessibilityHidden(true)
-        }
-      } else {
-        label
-      }
-    }
   }
 }
