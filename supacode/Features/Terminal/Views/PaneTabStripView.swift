@@ -28,6 +28,10 @@ nonisolated struct PaneTabDragPayload: Codable, Sendable, Transferable {
   var sourceTabID: TabID?
   var spanTarget: SpanTarget?
 
+  /// True while a tab drag is in flight. The pane split zones use this to
+  /// stay out of hit testing otherwise, so file drags reach the terminal.
+  var isTabDragActive: Bool { sourceTabID != nil }
+
   struct SpanTarget: Equatable {
     let anchorPaneID: PaneID
     let direction: SplitTree<PaneID>.NewDirection

@@ -681,8 +681,14 @@ final class WorktreeContentHost {
         }
       }
     }
-    // Re-assert AppKit focus only when a terminal already held it.
-    if let focusTarget, let window = focusTarget.window, window.firstResponder is GhosttySurfaceView {
+    // Re-assert AppKit focus when the focused surface is live and nothing
+    // else owns typing. AppKit parks firstResponder on the window after a
+    // split rebuild, which otherwise leaves Cmd+V with no terminal target
+    // until the next click. Never steals from non-terminal responders.
+    if let focusTarget, let window = focusTarget.window,
+      Self.shouldReassertFirstResponder(
+        responder: window.firstResponder, window: window, candidate: focusTarget)
+    {
       window.makeFirstResponder(focusTarget)
     }
     // Land a latched launch/restore focus now that the surface may be live and
@@ -800,6 +806,23 @@ final class WorktreeContentHost {
   /// Whether a content may claim AppKit first responder.
   func shouldClaimFocus(_ surfaceID: UUID) -> Bool {
     focusedContentID == surfaceID
+  }
+
+  /// Whether the host may move AppKit focus to the focused surface.
+  /// True only when nothing else owns typing: no owner, the window itself
+  /// (where AppKit parks firstResponder after a split rebuild), or another
+  /// terminal. Mirrors the reclaim guard in the surface's
+  /// `viewDidMoveToWindow`, so palette and rename fields never lose focus.
+  /// Pure so unit tests can pin the parked-on-window case without a window.
+  static func shouldReassertFirstResponder(
+    responder: AnyObject?,
+    window: AnyObject?,
+    candidate: AnyObject
+  ) -> Bool {
+    guard responder !== candidate else { return false }
+    if responder == nil { return true }
+    if let window, responder === window { return true }
+    return responder is GhosttySurfaceView
   }
 
   /// Cross-tab focus by content id (deeplinks, unread jumps): wake and select

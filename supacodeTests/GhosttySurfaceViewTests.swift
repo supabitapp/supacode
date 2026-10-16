@@ -217,6 +217,20 @@ struct GhosttySurfaceViewTests {
       !GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
         event: Self.commandV(),
         pasteboardTypes: [.tiff],
+        imagePasteAgents: [.copilot],
+        keySequenceActive: false,
+        keyTableDepth: 0
+      )
+    )
+  }
+
+  // OpenCode attaches clipboard images on Ctrl+V like Claude does, so its
+  // image-only paste takes the native route instead of the text clipboard.
+  @Test func imageOnlyCommandVRoutesForOpencodeImagePaste() {
+    #expect(
+      GhosttySurfaceView.shouldRouteCommandPasteToNativeImagePaste(
+        event: Self.commandV(),
+        pasteboardTypes: [.png],
         imagePasteAgents: [.opencode],
         keySequenceActive: false,
         keyTableDepth: 0
@@ -586,5 +600,49 @@ struct GhosttySurfaceViewTests {
     // Idempotent: the surface is already gone, so this must not double-free.
     surfaceView.closeSurface()
     #expect(surfaceView.surface == nil)
+  }
+
+  // #836: a Finder image-file drop resolves to its escaped path, matching
+  // the pre-regression shell behavior for dragged files with spaces.
+  @Test func droppedContentEscapesAnImageFilePath() {
+    let url = URL(fileURLWithPath: "/tmp/My Photo (1).png")
+
+    #expect(
+      GhosttySurfaceView.droppedContent(urlString: nil, fileURLs: [url], string: nil)
+        == "/tmp/My\\ Photo\\ \\(1\\).png"
+    )
+  }
+
+  // #836: a multi-file drop joins escaped paths with single spaces.
+  @Test func droppedContentJoinsMultipleFilePaths() {
+    let first = URL(fileURLWithPath: "/tmp/a.png")
+    let second = URL(fileURLWithPath: "/tmp/b c.png")
+
+    #expect(
+      GhosttySurfaceView.droppedContent(urlString: nil, fileURLs: [first, second], string: nil)
+        == "/tmp/a.png /tmp/b\\ c.png"
+    )
+  }
+
+  // A URL string keeps priority over file URLs and plain text, as before.
+  @Test func droppedContentPrefersURLStringOverFilesAndText() {
+    let file = URL(fileURLWithPath: "/tmp/a.png")
+
+    #expect(
+      GhosttySurfaceView.droppedContent(
+        urlString: "https://example.com/x", fileURLs: [file], string: "text")
+        == "https://example.com/x"
+    )
+  }
+
+  // Plain text drops still insert raw, and an empty drop resolves to nil.
+  @Test func droppedContentFallsBackToRawString() {
+    #expect(
+      GhosttySurfaceView.droppedContent(urlString: nil, fileURLs: [], string: "hello")
+        == "hello"
+    )
+    #expect(
+      GhosttySurfaceView.droppedContent(urlString: nil, fileURLs: [], string: nil) == nil
+    )
   }
 }

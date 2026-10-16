@@ -1865,4 +1865,15 @@ struct LayoutFeatureTests {
     }
     #expect(harness.store.state.layout.isConsistent)
   }
+
+  // #836: split zones only hit-test during a tab drag, so idle file drags
+  // reach the terminal beneath instead of the overlay.
+  @Test func tabDragActivityTracksTheInFlightTabDrag() {
+    let dragModel = PaneTabDragModel()
+    #expect(!dragModel.isTabDragActive)
+    dragModel.startDrag(from: TabID())
+    #expect(dragModel.isTabDragActive)
+    dragModel.reset()
+    #expect(!dragModel.isTabDragActive)
+  }
 }

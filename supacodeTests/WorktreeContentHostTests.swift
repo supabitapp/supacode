@@ -193,6 +193,57 @@ struct WorktreeContentHostTests {
     #expect(content.terminalChrome.reportedTitle == "~/project")
     #expect(persistenceRearms == 1)
   }
+
+  private func makeSurface() -> GhosttySurfaceView {
+    GhosttySurfaceView(
+      id: UUID(),
+      runtime: GhosttyRuntime(),
+      workingDirectory: nil,
+      initialGeometry: .fallback,
+      context: GHOSTTY_SURFACE_CONTEXT_TAB
+    )
+  }
+
+  // #836: after a split rebuild AppKit parks firstResponder on the window,
+  // leaving Cmd+V with no terminal target until the next click.
+  @Test func focusReassertClaimsFromNoOwnerOrParkedWindow() {
+    let candidate = makeSurface()
+    defer { candidate.closeSurface() }
+    let window = NSObject()
+
+    #expect(
+      WorktreeContentHost.shouldReassertFirstResponder(
+        responder: nil, window: window, candidate: candidate)
+    )
+    #expect(
+      WorktreeContentHost.shouldReassertFirstResponder(
+        responder: window, window: window, candidate: candidate)
+    )
+  }
+
+  // #836: switching between panes still re-asserts onto the newly focused
+  // surface, but the already-focused surface and non-terminal responders
+  // (palette, rename field) never lose focus to a re-assert.
+  @Test func focusReassertMovesBetweenTerminalsWithoutStealing() {
+    let candidate = makeSurface()
+    defer { candidate.closeSurface() }
+    let sibling = makeSurface()
+    defer { sibling.closeSurface() }
+    let window = NSObject()
+
+    #expect(
+      WorktreeContentHost.shouldReassertFirstResponder(
+        responder: sibling, window: window, candidate: candidate)
+    )
+    #expect(
+      !WorktreeContentHost.shouldReassertFirstResponder(
+        responder: candidate, window: window, candidate: candidate)
+    )
+    #expect(
+      !WorktreeContentHost.shouldReassertFirstResponder(
+        responder: NSTextField(), window: window, candidate: candidate)
+    )
+  }
 }
 
 /// Pins the render-host claim invariants the steal-proof mount depends on.

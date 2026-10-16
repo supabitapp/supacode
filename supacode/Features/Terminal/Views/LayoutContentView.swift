@@ -399,10 +399,13 @@ struct PaneStripView: View {
         }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      // On the whole content region, so a dormant pane still takes drops.
+      // Tab split zones over the whole content region, so a dormant pane
+      // still takes tab drops. They only hit-test during a tab drag, so file
+      // drags reach the terminal beneath the rest of the time.
       .overlay {
         if context == .embedded, let dragModel {
           PaneSplitDropZones(pane: pane, store: store, dragModel: dragModel)
+            .allowsHitTesting(dragModel.isTabDragActive)
         }
       }
       // Focus-follows-mouse. Click-through sensor over the content region only,
