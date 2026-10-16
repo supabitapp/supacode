@@ -328,6 +328,29 @@ public struct AppShortcut: Identifiable {
     return keyboardShortcut.displaySymbols
   }
 
+  // The chord AppKit displays and dispatches on: the key equivalent plus
+  // modifiers. For a default this is the stored character — stable on every
+  // layout — so conflict detection compares chords, never `display`, which can
+  // collapse distinct keys that print the same character. A rebind whose key
+  // resolves no printable equivalent ("?") keeps its physical identity instead.
+  public var chord: AppShortcutChord {
+    if keyEquivalent.character == "?", let code = resolvedKeyCode {
+      return .keyCode(code, modifiers: rawModifierFlags)
+    }
+    // AppKit matches key equivalents case-insensitively, so chords normalize to
+    // lowercase: a "P" binding still conflicts with a "p" one.
+    return .keyEquivalent(
+      Character(String(keyEquivalent.character).lowercased()),
+      modifiers: rawModifierFlags
+    )
+  }
+
+  // The physical chord the matcher fires on, resolved like `matches(_:)`, for
+  // comparing against key-code reservations such as system symbolic hotkeys.
+  public var physicalChord: AppShortcutChord? {
+    resolvedKeyCode.map { .keyCode($0, modifiers: rawModifierFlags) }
+  }
+
   // Resolves the effective shortcut considering user overrides. Returns `nil`
   // when the user disabled it, or when it is disabled by default and unset.
   // Non-customizable shortcuts ignore overrides entirely.
@@ -711,24 +734,27 @@ public enum AppShortcuts {
   // MARK: - Conflict detection.
 
   // Computes conflict warnings for all shortcuts given the current overrides.
+  // Chords are compared by firing identity: comparing the rendered display
+  // string instead would report conflicts between distinct keys that happen to
+  // print the same character under the active layout.
   public static func conflictWarnings(
     from overrides: [AppShortcutID: AppShortcutOverride]
   ) -> [AppShortcutID: String] {
-    let reserved = AppShortcutOverride.allReservedDisplayStrings()
-    var displayToIDs: [String: [AppShortcutID]] = [:]
+    let reserved = AppShortcutOverride.allReservedChords()
+    var chordToIDs: [AppShortcutChord: [AppShortcutID]] = [:]
     var warnings: [AppShortcutID: String] = [:]
 
     for shortcut in all {
       guard let effective = shortcut.effective(from: overrides) else { continue }
-      let display = effective.display
-      displayToIDs[display, default: []].append(shortcut.id)
+      let chord = effective.chord
+      chordToIDs[chord, default: []].append(shortcut.id)
 
-      if reserved.contains(display) {
-        warnings[shortcut.id] = "\(display) is reserved by the system."
+      if let physicalChord = effective.physicalChord, reserved.contains(physicalChord) {
+        warnings[shortcut.id] = "\(effective.display) is reserved by the system."
       }
     }
 
-    for (_, ids) in displayToIDs where ids.count > 1 {
+    for (_, ids) in chordToIDs where ids.count > 1 {
       for id in ids {
         let others = ids.filter { $0 != id }
         let otherLabels = others.compactMap { otherID in
