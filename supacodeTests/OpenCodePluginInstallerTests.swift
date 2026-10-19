@@ -189,7 +189,7 @@ struct OpenCodePluginInstallerTests {
 
   // MARK: - Generated sources.
 
-  private static let sources = [OpenCodePluginContent.serverSource(), OpenCodePluginContent.tuiSource()]
+  nonisolated private static let sources = [OpenCodePluginContent.serverSource(), OpenCodePluginContent.tuiSource()]
 
   @Test(arguments: sources)
   func sourceCarriesOwnershipMarker(source: String) {
