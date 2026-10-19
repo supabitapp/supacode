@@ -10,9 +10,19 @@ private final class PluginRuntime {
   private static let host = """
     globalThis.setTimeout = () => 0
     globalThis.clearTimeout = () => {}
+    const intervals = new Set()
+    globalThis.setInterval = (tick) => intervals.add(tick) && tick
+    globalThis.clearInterval = (tick) => intervals.delete(tick)
     const emitted = []
     const listeners = new Map()
     const parents = {}
+    const running = new Set()
+    const pending = { permission: {}, form: {} }
+    const listed = (kind) => ({ list: (id) => pending[kind][id] })
+    const hold = (kind, sessionID, id) => (pending[kind][sessionID] ??= []).push({ id, sessionID })
+    const release = (kind, sessionID, id) => {
+      pending[kind][sessionID] = (pending[kind][sessionID] ?? []).filter((prompt) => prompt.id !== id)
+    }
     let route = { type: "home" }
     const record = (command) => {
       for (const match of command.matchAll(/3008;(?:start|end)=opencode;event=([a-z_]+)/g)) emitted.push(match[1])
@@ -31,11 +41,24 @@ private final class PluginRuntime {
           listeners.set(type, handler)
           return () => listeners.delete(type)
         },
-        session: { root: (id) => parents[id] ?? id },
+        session: {
+          root: (id) => parents[id] ?? id,
+          status: (id) => (running.has(id) ? "running" : "idle"),
+          permission: listed("permission"),
+          form: listed("form"),
+        },
       },
       ui: { router: { current: () => route } },
     }
-    const dispatch = (type, data) => listeners.get(type)?.({ type, data })
+    const dispatch = (type, data) => {
+      if (type === "session.execution.started") running.add(data?.sessionID)
+      else if (type.startsWith("session.execution.")) running.delete(data?.sessionID)
+      else if (type === "permission.asked") hold("permission", data?.sessionID, data?.id)
+      else if (type === "permission.replied") release("permission", data?.sessionID, data?.requestID)
+      else if (type === "form.created") hold("form", data?.form?.sessionID, data?.form?.id)
+      else if (type === "form.replied" || type === "form.cancelled") release("form", data?.sessionID, data?.id)
+      listeners.get(type)?.({ type, data })
+    }
     """
 
   private static let importLine = #"import { spawn } from "node:child_process""#
@@ -69,6 +92,20 @@ private final class PluginRuntime {
 
   func setParent(of child: String, to parent: String) {
     evaluate(#"parents["\#(child)"] = "\#(parent)""#)
+  }
+
+  /// A session the service already runs when this TUI connects and hydrates.
+  func markRunning(_ sessionID: String) {
+    evaluate(#"running.add("\#(sessionID)")"#)
+  }
+
+  /// A question the session was already blocked on when this TUI hydrated.
+  func markPendingQuestion(_ formID: String, in sessionID: String) {
+    evaluate(#"hold("form", "\#(sessionID)", "\#(formID)")"#)
+  }
+
+  func tick() {
+    evaluate("intervals.forEach((tick) => tick())")
   }
 
   func send(_ type: String, _ data: String) {
@@ -210,6 +247,47 @@ struct OpenCodeTUIPluginBehaviorTests {
     tui.send("permission.replied", #"{ "requestID": "p", "sessionID": "child", "reply": "once" }"#)
     tui.send("session.execution.succeeded", #"{ "sessionID": "child" }"#)
     #expect(tui.drain() == ["busy", "busy", "busy", "awaiting_input", "busy", "idle"])
+  }
+
+  @Test func adoptsATurnThatStartedBeforeThisTUIOpenedIt() throws {
+    let tui = try start()
+    tui.markRunning("S")
+    tui.route(to: "S")
+    tui.tick()
+    tui.tick()
+    tui.send("session.execution.succeeded", #"{ "sessionID": "S" }"#)
+    tui.tick()
+    #expect(tui.drain() == ["busy", "idle"])
+  }
+
+  @Test func adoptsAQuestionThatWasPendingBeforeThisTUIOpenedIt() throws {
+    let tui = try start()
+    tui.markRunning("S")
+    tui.markPendingQuestion("f", in: "S")
+    tui.route(to: "S")
+    tui.tick()
+    tui.send("form.replied", #"{ "id": "f", "sessionID": "S" }"#)
+    tui.tick()
+    tui.send("session.execution.succeeded", #"{ "sessionID": "S" }"#)
+    #expect(tui.drain() == ["awaiting_input", "busy", "idle"])
+  }
+
+  @Test func doesNotAdoptSessionsThisTUIIsNotShowing() throws {
+    let tui = try start()
+    tui.markRunning("other")
+    tui.tick()
+    tui.route(to: "S")
+    tui.tick()
+    #expect(tui.drain().isEmpty)
+  }
+
+  @Test func cleanupStopsAdoptingRunningSessions() throws {
+    let tui = try start()
+    tui.evaluate("cleanup()")
+    tui.markRunning("S")
+    tui.route(to: "S")
+    tui.tick()
+    #expect(tui.drain() == ["session_end", "idle"])
   }
 
   @Test func malformedPayloadsAreIgnoredWithoutThrowing() throws {

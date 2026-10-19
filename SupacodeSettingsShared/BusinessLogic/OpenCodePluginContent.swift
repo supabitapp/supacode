@@ -90,8 +90,9 @@ nonisolated enum OpenCodePluginContent {
   /// The TUI receives events for every session the shared service knows about,
   /// including other terminals' sessions, and session tabs are shared between
   /// TUIs in the same directory. So it owns an execution only when its root
-  /// session is routed in this TUI or already executing here, and derives one
-  /// surface state from every execution and prompt it owns.
+  /// session is routed in this TUI or already executing here, adopts a routed
+  /// session that is already running, and derives one surface state from every
+  /// execution and prompt it owns.
   static func tuiSource() -> String {
     """
     // \(ownershipMarker)
@@ -172,8 +173,31 @@ nonisolated enum OpenCodePluginContent {
           return true
         }
         const answered = (id) => prompts.delete(id)
+        // The service keeps a turn running after its TUI exits, so a TUI can open
+        // a session whose execution, and the prompt blocking it, started before
+        // it was there to see them.
+        const adoptRouted = () => {
+          try {
+            const route = ui.router.current()
+            if (route.type !== "session") return
+            const id = route.sessionID
+            let changed = false
+            if (!executions.has(id)) {
+              if (data.session.status(id) !== "running") return
+              changed = started({ sessionID: id })
+            }
+            const pending = [...(data.session.permission.list(id) ?? []), ...(data.session.form.list(id) ?? [])]
+            for (const prompt of pending) {
+              if (prompts.has(prompt.id)) continue
+              prompts.set(prompt.id, executions.get(id))
+              changed = true
+            }
+            if (changed) report()
+          } catch {}
+        }
 
         await emit(\(jsString(command(for: [.sessionStart]))))
+        const adoption = setInterval(adoptRouted, 1000)
         const subscriptions = [
           on("session.execution.started", started),
           on("session.execution.succeeded", ended),
@@ -187,6 +211,7 @@ nonisolated enum OpenCodePluginContent {
         ]
 
         return async () => {
+          clearInterval(adoption)
           subscriptions.forEach((unsubscribe) => unsubscribe())
           await emit(\(jsString(command(for: [.sessionEnd, .idle]))))
         }
