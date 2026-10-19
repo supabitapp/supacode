@@ -1,12 +1,13 @@
 import Foundation
 
-/// Installs (and removes) the Supacode presence plugin for OpenCode.
+/// Installs (and removes) the Supacode presence plugins for OpenCode.
 ///
 /// Unlike the Claude/Kiro JSON-merge installers, OpenCode loads plugins as
 /// files from `~/.config/opencode/plugins/`, so this mirrors `CLISkillInstaller`
-/// (write / remove a single owned file) rather than `ClaudeSettingsInstaller`
+/// (write / remove owned files) rather than `ClaudeSettingsInstaller`
 /// (prune-append into a shared JSON object). There is no foreign config to
-/// preserve and no schema to satisfy.
+/// preserve and no schema to satisfy. Two entrypoints cover both OpenCode
+/// generations: the 1.x server plugin and the 2.x TUI plugin.
 nonisolated enum OpenCodePluginInstallerError: Error {
   case pluginNotManaged
 }
@@ -25,16 +26,18 @@ nonisolated struct OpenCodePluginInstaller {
     self.fileManager = fileManager
   }
 
-  /// `.installed` only on a byte-for-byte match, so an older Supacode version's
-  /// plugin reports `.outdated` and the next install upgrades it in place. A
-  /// file Supacode does NOT own (no ownership marker) reports `.notInstalled`,
-  /// symmetric with `uninstall`. That alone does not stop an unattended
-  /// overwrite (the aggregate can still be `.outdated` via another component),
-  /// so `install` also refuses to clobber an unowned file.
+  /// `.installed` only when every entrypoint matches byte-for-byte, so an older
+  /// Supacode version's plugin (including the 1.x-only single file) reports
+  /// `.outdated` and the next install upgrades it in place. Files Supacode does
+  /// NOT own (no ownership marker) report `.notInstalled`, symmetric with
+  /// `uninstall`. That alone does not stop an unattended overwrite (the aggregate
+  /// can still be `.outdated` via another component), so `install` also refuses
+  /// to clobber an unowned file.
   func installState() throws -> ComponentInstallState {
-    guard let contents = try AgentFileProbe.text(at: pluginFileURL) else { return .notInstalled }
-    if contents == OpenCodePluginContent.source() { return .installed }
-    return contents.contains(OpenCodePluginContent.ownershipMarker) ? .outdated : .notInstalled
+    let contents = try entrypoints.map { try AgentFileProbe.text(at: $0.url) }
+    if contents == entrypoints.map(\.source) { return .installed }
+    return contents.contains { $0?.contains(OpenCodePluginContent.ownershipMarker) == true }
+      ? .outdated : .notInstalled
   }
 
   func install() throws {
@@ -42,36 +45,56 @@ nonisolated struct OpenCodePluginInstaller {
     // unattended when the aggregate integration goes `.outdated`, which the
     // per-component `.notInstalled` alone does not prevent. Reading through the
     // probe means an unreadable file aborts rather than reading as "no marker".
-    if let contents = try AgentFileProbe.text(at: pluginFileURL),
-      !contents.contains(OpenCodePluginContent.ownershipMarker)
-    {
-      throw OpenCodePluginInstallerError.pluginNotManaged
+    for entrypoint in entrypoints {
+      if let contents = try AgentFileProbe.text(at: entrypoint.url),
+        !contents.contains(OpenCodePluginContent.ownershipMarker)
+      {
+        throw OpenCodePluginInstallerError.pluginNotManaged
+      }
     }
-    try fileManager.createDirectory(at: pluginDirectoryURL, withIntermediateDirectories: true)
-    try OpenCodePluginContent.source().write(to: pluginFileURL, atomically: true, encoding: .utf8)
+    for entrypoint in entrypoints {
+      try fileManager.createDirectory(
+        at: entrypoint.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try entrypoint.source.write(to: entrypoint.url, atomically: true, encoding: .utf8)
+    }
   }
 
   func uninstall() throws {
-    // Only remove a file Supacode owns — never clobber a user plugin that
-    // happens to share the name. An unreadable plugin throws instead of
-    // reporting a removal that never happened.
-    guard let contents = try AgentFileProbe.text(at: pluginFileURL) else { return }
-    guard contents.contains(OpenCodePluginContent.ownershipMarker) else { return }
-    try fileManager.removeItem(at: pluginFileURL)
+    // Only remove files Supacode owns — never clobber a user plugin that
+    // happens to share the name. Every entrypoint is probed before anything is
+    // removed, so an unreadable one throws instead of reporting a removal that
+    // never happened.
+    let owned = try entrypoints.filter {
+      try AgentFileProbe.text(at: $0.url)?.contains(OpenCodePluginContent.ownershipMarker) == true
+    }
+    for entrypoint in owned {
+      try fileManager.removeItem(at: entrypoint.url)
+    }
+    if (try? fileManager.contentsOfDirectory(atPath: tuiDirectoryURL.path))?.isEmpty == true {
+      try fileManager.removeItem(at: tuiDirectoryURL)
+    }
   }
 
-  var pluginFileURL: URL {
-    pluginDirectoryURL.appendingPathComponent(OpenCodePluginContent.pluginFileName, isDirectory: false)
+  var serverPluginFileURL: URL {
+    pluginsDirectoryURL.appending(path: OpenCodePluginContent.serverFileName, directoryHint: .notDirectory)
   }
 
-  private var pluginDirectoryURL: URL {
+  var tuiPluginFileURL: URL {
+    tuiDirectoryURL.appending(path: OpenCodePluginContent.tuiFileName, directoryHint: .notDirectory)
+  }
+
+  private var entrypoints: [(url: URL, source: String)] {
+    [
+      (serverPluginFileURL, OpenCodePluginContent.serverSource()),
+      (tuiPluginFileURL, OpenCodePluginContent.tuiSource()),
+    ]
+  }
+
+  private var tuiDirectoryURL: URL {
+    pluginsDirectoryURL.appending(path: OpenCodePluginContent.tuiDirectoryName, directoryHint: .isDirectory)
+  }
+
+  private var pluginsDirectoryURL: URL {
     configDirectoryURL.appending(path: "plugins", directoryHint: .isDirectory)
-  }
-
-  static func pluginDirectoryURL(homeDirectoryURL: URL) -> URL {
-    homeDirectoryURL
-      .appendingPathComponent(".config", isDirectory: true)
-      .appendingPathComponent("opencode", isDirectory: true)
-      .appendingPathComponent("plugins", isDirectory: true)
   }
 }
