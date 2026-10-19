@@ -6,10 +6,10 @@ import Foundation
 ///
 /// The rule can't take a prompt at face value: agents nest their own OSC 133
 /// marks inside the shell's command. So the store counts command depth
-/// (C minus D) and stamps each record with the depth it arrived at; only a
-/// prompt below that depth means the shell got control back from the
-/// reporter. Lost or extra marks can only miss a drop, never drop a live
-/// program's record.
+/// (C minus D) and stamps each record with the depth it arrived at, keeping
+/// the shallower one when a live record is refreshed; only a prompt below
+/// that depth means the shell got control back from the reporter. Lost or
+/// extra marks can only miss a drop, never drop a live program's record.
 nonisolated struct ProgramStatusRecordStore: Equatable, Sendable {
   /// The protocol's upper bound; terminals must keep at least 64.
   static let capacity = 256
@@ -60,7 +60,11 @@ nonisolated struct ProgramStatusRecordStore: Equatable, Sendable {
     switch event {
     case .report(let report):
       updateCount += 1
-      records[report.id] = Record(report: report, commandDepth: commandDepth, updateOrder: updateCount)
+      var depth = commandDepth
+      if let previous = records[report.id], previous.report.state.endsWithProgram {
+        depth = min(depth, previous.commandDepth)
+      }
+      records[report.id] = Record(report: report, commandDepth: depth, updateOrder: updateCount)
       if records.count > Self.capacity,
         let oldest = records.min(by: { $0.value.updateOrder < $1.value.updateOrder })
       {

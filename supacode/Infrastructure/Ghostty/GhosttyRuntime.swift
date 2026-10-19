@@ -630,7 +630,11 @@ final class GhosttyRuntime {
     // Tier 4: app-owned overrides, always last so nothing can override them.
     loadAppOwnedOverrides(into: config, shortcutOverrides: settingsFile.global.shortcutOverrides)
     if let overrides {
-      loadTestOverrides(overrides, into: config)
+      do {
+        try loadGeneratedConfig(overrides, named: "test-overrides", into: config)
+      } catch {
+        logger.error("Test config overrides not delivered: \(error.localizedDescription)")
+      }
     }
     ghostty_config_finalize(config)
     logDiagnostics(of: config)
@@ -716,16 +720,27 @@ final class GhosttyRuntime {
     return candidates.lazy.compactMap { $0 as? String }.first { !$0.isEmpty }
   }
 
+  /// Ghostty only loads config from files, so generated config goes through a
+  /// uniquely named temporary file that's removed once loaded.
+  private static func loadGeneratedConfig(
+    _ contents: String,
+    named name: String,
+    into config: ghostty_config_t
+  ) throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("supacode-\(name)-\(UUID().uuidString).conf")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try contents.write(to: url, atomically: true, encoding: .utf8)
+    url.path.withCString { ghostty_config_load_file(config, $0) }
+  }
+
   private static func loadBundledOverrides(into config: ghostty_config_t) {
-    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("supacode-defaults.conf")
     do {
-      try bundledOverridesString.write(to: tempURL, atomically: true, encoding: .utf8)
+      try loadGeneratedConfig(bundledOverridesString, named: "defaults", into: config)
     } catch {
       logger.error(
         "Bundled overrides not delivered; the terminal loses its cosmetic defaults: \(error.localizedDescription)")
-      return
     }
-    tempURL.path.withCString { ghostty_config_load_file(config, $0) }
   }
 
   /// Writes the app-owned overrides (close predicate, TERM_PROGRAM, keybind
@@ -742,29 +757,13 @@ final class GhosttyRuntime {
     .filter { !$0.isEmpty }
     .joined(separator: "\n")
     guard !contents.isEmpty else { return }
-    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("supacode-app-overrides.conf")
     do {
-      try contents.write(to: tempURL, atomically: true, encoding: .utf8)
+      try loadGeneratedConfig(contents, named: "app-overrides", into: config)
     } catch {
       // Losing this file leaves app chords bound and behavioral invariants unset.
       logger.error(
         "App-owned overrides not delivered; the terminal keeps the app's chords: \(error.localizedDescription)")
-      return
     }
-    tempURL.path.withCString { ghostty_config_load_file(config, $0) }
-  }
-
-  private static func loadTestOverrides(_ overrides: String, into config: ghostty_config_t) {
-    let tempURL = FileManager.default.temporaryDirectory
-      .appendingPathComponent("supacode-test-overrides-\(UUID().uuidString).conf")
-    defer { try? FileManager.default.removeItem(at: tempURL) }
-    do {
-      try overrides.write(to: tempURL, atomically: true, encoding: .utf8)
-    } catch {
-      logger.error("Test config overrides not delivered: \(error.localizedDescription)")
-      return
-    }
-    tempURL.path.withCString { ghostty_config_load_file(config, $0) }
   }
 
   /// Surfaces parse rejections that Ghostty otherwise records silently; a
@@ -795,14 +794,11 @@ final class GhosttyRuntime {
       background-opacity = 0.9
       background-blur = true
       """
-    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("supacode-theme.conf")
     do {
-      try contents.write(to: tempURL, atomically: true, encoding: .utf8)
+      try loadGeneratedConfig(contents, named: "theme", into: config)
     } catch {
       logger.warning("Failed to write bundled theme config: \(error.localizedDescription)")
-      return
     }
-    tempURL.path.withCString { ghostty_config_load_file(config, $0) }
   }
 
   func keyboardShortcut(for action: String) -> KeyboardShortcut? {

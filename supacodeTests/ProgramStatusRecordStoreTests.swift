@@ -103,6 +103,37 @@ struct ProgramStatusRecordStoreTests {
     #expect(store.summary.state == .working)
   }
 
+  @Test func aRefreshInsideTheAgentsOwnCommandKeepsTheOuterLifetime() {
+    let store = store(
+      .commandStart,
+      report(.working, app: "omp"),
+      .commandStart,
+      report(.blocked, kind: .permission),
+      .commandEnd,
+      .promptStart
+    )
+
+    var exited = store
+    exited.apply(.commandEnd)
+    exited.apply(.promptStart)
+
+    #expect(store.summary.state == .blocked)
+    #expect(exited.records.isEmpty)
+  }
+
+  @Test func aReportAfterADoneRecordStartsANewLifetime() {
+    let store = store(
+      report(.done, id: "build"),
+      .commandStart,
+      .commandStart,
+      report(.working, id: "build"),
+      .commandEnd,
+      .promptStart
+    )
+
+    #expect(store.records.isEmpty)
+  }
+
   @Test func withoutShellIntegrationAPromptNeverDropsALiveRecord() {
     let store = store(report(.working, app: "codex"), .promptStart, .commandStart, .commandEnd, .promptStart)
 

@@ -73,7 +73,7 @@ index f9d1ea330..ffd6ef046 100644
    ghostty_action_set_title_s set_tab_title;
    ghostty_action_prompt_title_e prompt_title;
 diff --git a/src/Surface.zig b/src/Surface.zig
-index 4a652e96f..f78f64897 100644
+index 4a652e96f..f24a3e21d 100644
 --- a/src/Surface.zig
 +++ b/src/Surface.zig
 @@ -29,6 +29,7 @@ const termio = @import("termio.zig");
@@ -84,14 +84,22 @@ index 4a652e96f..f78f64897 100644
  const configpkg = @import("config.zig");
  const Duration = configpkg.Config.Duration;
  const input = @import("input.zig");
-@@ -942,6 +943,68 @@ pub fn needsConfirmQuit(self: *Surface) bool {
+@@ -942,6 +943,70 @@ pub fn needsConfirmQuit(self: *Surface) bool {
      };
  }
  
-+/// Decode a program status report (OSC 7501), or forward a shell
-+/// integration mark, and hand it to the apprt as an action. The apprt keeps
-+/// the records; `data` is the validated body.
-+fn programStatus(self: *Surface, msg: Message.ProgramStatus) !void {
++/// Hand a program status report (OSC 7501) or shell integration mark to the
++/// apprt, which keeps the records.
++fn programStatus(self: *Surface, value: apprt.action.ProgramStatus.Report) !void {
++    _ = try self.rt_app.performAction(
++        .{ .surface = self },
++        .program_status,
++        .{ .report = &value },
++    );
++}
++
++/// Decode a report's validated body for the apprt.
++fn programStatusReport(self: *Surface, msg: Message.ProgramStatus.Report) !void {
 +    const state = msg.state;
 +    const report: terminal.osc.Command.ProgramStatus.Report = .{
 +        .state = state,
@@ -110,7 +118,6 @@ index 4a652e96f..f78f64897 100644
 +    try report.writeText(.msg, &msg_writer);
 +
 +    const value: apprt.action.ProgramStatus.Report = .{
-+        .event = msg.event,
 +        .state = switch (state) {
 +            .idle => .idle,
 +            .working => .working,
@@ -130,12 +137,7 @@ index 4a652e96f..f78f64897 100644
 +        .title = terminateZ(&title_buf, title_writer.buffered().len),
 +        .message = terminateZ(&msg_buf, msg_writer.buffered().len),
 +    };
-+
-+    _ = try self.rt_app.performAction(
-+        .{ .surface = self },
-+        .program_status,
-+        .{ .report = &value },
-+    );
++    try self.programStatus(value);
 +}
 +
 +/// Copy `src` into `buf` and null-terminate it. `buf` must be longer.
@@ -153,13 +155,19 @@ index 4a652e96f..f78f64897 100644
  /// Called from the app thread to handle mailbox messages to our specific
  /// surface.
  pub fn handleMessage(self: *Surface, msg: Message) !void {
-@@ -1084,6 +1147,11 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
+@@ -1084,6 +1149,17 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
              );
          },
  
-+        .program_status => |v| {
-+            defer v.data.deinit();
-+            try self.programStatus(v);
++        .program_status => |v| switch (v) {
++            .report => |report| {
++                defer report.data.deinit();
++                try self.programStatusReport(report);
++            },
++            .prompt_start,
++            .command_start,
++            .command_end,
++            => try self.programStatus(.{ .event = v }),
 +        },
 +
          .renderer_health => |health| self.updateRendererHealth(health),
@@ -283,27 +291,34 @@ index e7180a2d2..68d333f05 100644
      trigger: input.Trigger,
      end,
 diff --git a/src/apprt/surface.zig b/src/apprt/surface.zig
-index 296e70bc9..5c352c7a4 100644
+index 296e70bc9..8c46cd123 100644
 --- a/src/apprt/surface.zig
 +++ b/src/apprt/surface.zig
-@@ -16,6 +16,16 @@ pub const Message = union(enum) {
+@@ -16,6 +16,23 @@ pub const Message = union(enum) {
      /// we want this union to be.
      pub const WriteReq = MessageData(u8, 255);
  
 +    /// A program status report (OSC 7501), or a shell integration mark the
-+    /// apprt needs to apply the protocol's lifetime rules. For a report,
-+    /// `data` is the validated body after `7501;`, copied so the io thread
-+    /// can move on. The surface decodes it, performs the action, and frees it.
-+    pub const ProgramStatus = struct {
-+        event: apprt.action.ProgramStatus.Event = .report,
-+        state: terminal.osc.Command.ProgramStatus.State = .clear,
-+        data: WriteReq = .{ .stable = "" },
++    /// apprt needs to apply the protocol's lifetime rules.
++    pub const ProgramStatus = union(apprt.action.ProgramStatus.Event) {
++        report: Report,
++        prompt_start,
++        command_start,
++        command_end,
++
++        /// `data` is the validated body after `7501;`, copied so the io
++        /// thread can move on. The surface decodes it, performs the action,
++        /// and frees it.
++        pub const Report = struct {
++            state: terminal.osc.Command.ProgramStatus.State,
++            data: WriteReq,
++        };
 +    };
 +
      /// Set the title of the surface.
      /// TODO: we should change this to a "WriteReq" style structure in
      /// the termio message so that we can more efficiently send strings
-@@ -74,6 +84,10 @@ pub const Message = union(enum) {
+@@ -74,6 +91,10 @@ pub const Message = union(enum) {
          metadata: [2047:0]u8,
      },
  
@@ -332,7 +347,7 @@ index fb13433e5..48cfb9953 100644
  ///
  /// This can be set to a specific color, using the same format as
 diff --git a/src/terminal/osc.zig b/src/terminal/osc.zig
-index f9dd7f6ce..b06524196 100644
+index f9dd7f6ce..f4f3c5b04 100644
 --- a/src/terminal/osc.zig
 +++ b/src/terminal/osc.zig
 @@ -19,6 +19,7 @@ const encoding = @import("osc/encoding.zig");
@@ -387,7 +402,22 @@ index f9dd7f6ce..b06524196 100644
              => {},
          }
  
-@@ -693,10 +706,26 @@ pub const Parser = struct {
+@@ -541,6 +554,14 @@ pub const Parser = struct {
+         // If a writer has been initialized, we just accumulate the rest of the
+         // OSC sequence in the writer's buffer and skip the state machine.
+         if (self.capture) |*cap| {
++            // OSC 7501 bounds its sequences, so stop at the limit instead of
++            // buffering an unterminated flood.
++            if (self.state == .@"7501" and
++                cap.writer.buffered().len >= parsers.program_status.max_body_bytes)
++            {
++                self.state = .invalid;
++                return;
++            }
+             cap.writer.writeByte(c) catch |err| switch (err) {
+                 // We have overflowed our buffer or had some other error, set the
+                 // state to invalid so that we discard any further input.
+@@ -693,10 +714,26 @@ pub const Parser = struct {
  
              .@"7" => switch (c) {
                  ';' => self.captureTrailing(.fixed),
@@ -414,7 +444,7 @@ index f9dd7f6ce..b06524196 100644
              .@"77" => switch (c) {
                  '7' => self.state = .@"777",
                  else => self.state = .invalid,
-@@ -807,6 +836,12 @@ pub const Parser = struct {
+@@ -807,6 +844,12 @@ pub const Parser = struct {
  
              .@"66" => parsers.kitty_text_sizing.parse(self, terminator_ch),
  
@@ -541,10 +571,10 @@ index a56b38e88..9657b607c 100644
  pub const semantic_prompt = @import("parsers/semantic_prompt.zig");
 diff --git a/src/terminal/osc/parsers/program_status.zig b/src/terminal/osc/parsers/program_status.zig
 new file mode 100644
-index 000000000..26108b7c7
+index 000000000..abd382f9d
 --- /dev/null
 +++ b/src/terminal/osc/parsers/program_status.zig
-@@ -0,0 +1,796 @@
+@@ -0,0 +1,808 @@
 +//! OSC 7501: Program Status Protocol
 +//!
 +//! Specification: https://www.superlogical.com/rex/docs/build/program-status
@@ -1330,6 +1360,18 @@ index 000000000..26108b7c7
 +    }
 +}
 +
++test "OSC 7501: an unterminated sequence stops buffering at the limit" {
++    const testing = std.testing;
++
++    var p: Parser = .init(testing.allocator);
++    defer p.deinit();
++
++    nextSlice(&p, "7501;state=idle:");
++    for (0..max_sequence_bytes * 4) |_| p.next('x');
++    try testing.expectEqual(max_body_bytes, p.capture.?.trailing().len);
++    try testing.expect(p.end('\x1b') == null);
++}
++
 +test "OSC 7501: no allocator" {
 +    const testing = std.testing;
 +
@@ -1422,7 +1464,7 @@ index f05379077..451a68780 100644
          .default_cursor_style = opts.config.cursor_style,
          .default_cursor_blink = opts.config.cursor_blink,
 diff --git a/src/termio/stream_handler.zig b/src/termio/stream_handler.zig
-index 6be625f67..8921e3c7f 100644
+index 6be625f67..d07f118fa 100644
 --- a/src/termio/stream_handler.zig
 +++ b/src/termio/stream_handler.zig
 @@ -56,6 +56,9 @@ pub const StreamHandler = struct {
@@ -1451,29 +1493,32 @@ index 6be625f67..8921e3c7f 100644
              .start_hyperlink => try self.startHyperlink(value.uri, value.id),
              .clipboard_contents => try self.clipboardContents(value.kind, value.data),
              .semantic_prompt => try self.semanticPrompt(value),
-@@ -956,6 +961,9 @@ pub const StreamHandler = struct {
+@@ -956,6 +961,12 @@ pub const StreamHandler = struct {
  
          // Clear the progress bar
          self.progressReport(.{ .state = .remove });
 +
 +        // A full reset removes every program status record.
-+        self.surfaceMessageWriter(.{ .program_status = .{ .state = .clear } });
++        self.surfaceMessageWriter(.{ .program_status = .{ .report = .{
++            .state = .clear,
++            .data = .{ .stable = "" },
++        } } });
      }
  
      pub fn queryKittyKeyboard(self: *StreamHandler) !void {
-@@ -1079,6 +1087,7 @@ pub const StreamHandler = struct {
+@@ -1079,6 +1090,7 @@ pub const StreamHandler = struct {
          switch (cmd.action) {
              .end_input_start_output => {
                  self.surfaceMessageWriter(.start_command);
-+                self.surfaceMessageWriter(.{ .program_status = .{ .event = .command_start } });
++                self.surfaceMessageWriter(.{ .program_status = .command_start });
              },
  
              .end_command => {
-@@ -1091,15 +1100,20 @@ pub const StreamHandler = struct {
+@@ -1091,15 +1103,20 @@ pub const StreamHandler = struct {
                  };
  
                  self.surfaceMessageWriter(.{ .stop_command = code });
-+                self.surfaceMessageWriter(.{ .program_status = .{ .event = .command_end } });
++                self.surfaceMessageWriter(.{ .program_status = .command_end });
              },
  
 +            // The apprt drops transient program status records at a new
@@ -1481,7 +1526,7 @@ index 6be625f67..8921e3c7f 100644
 +            .fresh_line_new_prompt,
 +            .new_command,
 +            .prompt_start,
-+            => self.surfaceMessageWriter(.{ .program_status = .{ .event = .prompt_start } }),
++            => self.surfaceMessageWriter(.{ .program_status = .prompt_start }),
 +
              // Handled by Terminal, no special handling by us
              .end_prompt_start_input,
@@ -1493,7 +1538,7 @@ index 6be625f67..8921e3c7f 100644
              => {},
          }
  
-@@ -1589,4 +1603,31 @@ pub const StreamHandler = struct {
+@@ -1589,4 +1606,31 @@ pub const StreamHandler = struct {
      fn progressReport(self: *StreamHandler, report: terminal.osc.Command.ProgressReport) void {
          self.surfaceMessageWriter(.{ .progress_report = report });
      }
@@ -1518,10 +1563,10 @@ index 6be625f67..8921e3c7f 100644
 +
 +            // The report points into the parser buffer, so copy it
 +            // before this returns.
-+            .report => |report| self.surfaceMessageWriter(.{ .program_status = .{
++            .report => |report| self.surfaceMessageWriter(.{ .program_status = .{ .report = .{
 +                .state = report.state,
 +                .data = try apprt.surface.Message.WriteReq.init(self.alloc, report.data),
-+            } }),
++            } } }),
 +        }
 +    }
  };
