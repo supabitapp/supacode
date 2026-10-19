@@ -53,8 +53,10 @@ final class GhosttyRuntime {
   }
   var onConfigChange: (() -> Void)?
 
-  init(initialColorScheme: ColorScheme? = nil) {
-    guard let loaded = Self.loadConfig() else {
+  /// `configOverrides` is a test seam: config lines loaded after every other
+  /// tier at launch only, so a config reload drops them.
+  init(initialColorScheme: ColorScheme? = nil, configOverrides: String? = nil) {
+    guard let loaded = Self.loadConfig(overrides: configOverrides) else {
       preconditionFailure("ghostty_config_new failed")
     }
     self.config = loaded.config
@@ -579,7 +581,9 @@ final class GhosttyRuntime {
     }
   }
 
-  private static func loadConfig() -> (config: ghostty_config_t, userBackgroundOpacity: Double)? {
+  private static func loadConfig(
+    overrides: String? = nil
+  ) -> (config: ghostty_config_t, userBackgroundOpacity: Double)? {
     @Shared(.settingsFile) var settingsFile
     let themeSyncEnabled = settingsFile.global.terminalThemeSyncEnabled
     let supacodeUserConfigURL = SupacodePaths.ghosttyUserConfigURL
@@ -625,6 +629,9 @@ final class GhosttyRuntime {
     }
     // Tier 4: app-owned overrides, always last so nothing can override them.
     loadAppOwnedOverrides(into: config, shortcutOverrides: settingsFile.global.shortcutOverrides)
+    if let overrides {
+      loadTestOverrides(overrides, into: config)
+    }
     ghostty_config_finalize(config)
     logDiagnostics(of: config)
     return (config, userOpacity)
@@ -742,6 +749,19 @@ final class GhosttyRuntime {
       // Losing this file leaves app chords bound and behavioral invariants unset.
       logger.error(
         "App-owned overrides not delivered; the terminal keeps the app's chords: \(error.localizedDescription)")
+      return
+    }
+    tempURL.path.withCString { ghostty_config_load_file(config, $0) }
+  }
+
+  private static func loadTestOverrides(_ overrides: String, into config: ghostty_config_t) {
+    let tempURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("supacode-test-overrides-\(UUID().uuidString).conf")
+    defer { try? FileManager.default.removeItem(at: tempURL) }
+    do {
+      try overrides.write(to: tempURL, atomically: true, encoding: .utf8)
+    } catch {
+      logger.error("Test config overrides not delivered: \(error.localizedDescription)")
       return
     }
     tempURL.path.withCString { ghostty_config_load_file(config, $0) }

@@ -71,9 +71,9 @@ ensure_ghostty_checkout() {
   fi
 }
 
-# Apply our out-of-tree patches to the submodule working tree. Idempotent: a
-# patch that already applies in reverse is treated as present. Fails loudly if
-# a patch no longer applies (e.g. after an upstream bump) so it's never silently
+# Apply our out-of-tree patches to the submodule working tree. Idempotent: the
+# stack is reverted to the pinned tree first, then applied in order. Fails loudly
+# if a patch no longer applies (e.g. after an upstream bump) so it's never silently
 # skipped. The submodule's committed SHA is untouched; `revert_ghostty_patches`
 # restores a pristine working tree on exit.
 # Repo-relative paths a patch touches. Parses the patch itself, not the tree, so
@@ -82,36 +82,38 @@ ghostty_patch_files() {
   git -C "${ghostty_dir}" apply --numstat "$1" 2>/dev/null | awk '{ print $3 }'
 }
 
-# Reset just the files a patch touches back to the pinned SHA. Reads the file
-# list line by line (bash 3.2 compatible) so a path with spaces stays intact.
+# Reset just the files a patch touches back to the pinned SHA, deleting the
+# ones it creates (untracked, so checkout can't restore them and would reject
+# the whole pathspec). Reads the file list line by line (bash 3.2 compatible)
+# so a path with spaces stays intact.
 reset_ghostty_patch_files() {
   local f
   local files=()
   while IFS= read -r f; do
-    [ -n "${f}" ] && files+=("${f}")
+    [ -n "${f}" ] || continue
+    if git -C "${ghostty_dir}" ls-files --error-unmatch -- "${f}" >/dev/null 2>&1; then
+      files+=("${f}")
+    else
+      rm -f "${ghostty_dir}/${f}"
+    fi
   done < <(ghostty_patch_files "$1")
   [ "${#files[@]}" -eq 0 ] || git -C "${ghostty_dir}" checkout -- "${files[@]}" 2>/dev/null || true
 }
 
 apply_ghostty_patches() {
   [ -d "${ghostty_patches_dir}" ] || return 0
+  # A prior build killed mid-apply (SIGKILL / power loss) can leave any prefix
+  # of the stack applied, and patches sharing append points can't be detected
+  # as applied one at a time, so always start from the pinned tree.
+  revert_ghostty_patches
   local patch
   for patch in "${ghostty_patches_dir}"/*.patch; do
     [ -e "${patch}" ] || continue
-    if git -C "${ghostty_dir}" apply --reverse --check "${patch}" 2>/dev/null; then
-      continue # already fully applied
-    fi
     if ! git -C "${ghostty_dir}" apply --check "${patch}" 2>/dev/null; then
-      # Neither pristine nor cleanly applied: most likely a prior build was killed
-      # (SIGKILL / power loss) mid-apply and left the patched files dirty. Reset
-      # just those files to the pinned SHA and retry before blaming an upstream bump.
-      reset_ghostty_patch_files "${patch}"
-      if ! git -C "${ghostty_dir}" apply --check "${patch}" 2>/dev/null; then
-        echo "error: ${patch} does not apply cleanly to ${ghostty_submodule_path}." >&2
-        echo "       The submodule may have been bumped (refresh the patch), or a" >&2
-        echo "       previous build left it dirty: git -C ${ghostty_submodule_path} checkout . && retry." >&2
-        exit 1
-      fi
+      echo "error: ${patch} does not apply cleanly to ${ghostty_submodule_path}." >&2
+      echo "       The submodule may have been bumped (refresh the patch), or it has" >&2
+      echo "       unrelated local edits: git -C ${ghostty_submodule_path} checkout . && retry." >&2
+      exit 1
     fi
     git -C "${ghostty_dir}" apply "${patch}"
   done
@@ -119,9 +121,15 @@ apply_ghostty_patches() {
 
 revert_ghostty_patches() {
   [ -d "${ghostty_patches_dir}" ] || return 0
-  local patch
+  local patch i
+  local patches=()
   for patch in "${ghostty_patches_dir}"/*.patch; do
-    [ -e "${patch}" ] || continue
+    [ -e "${patch}" ] && patches+=("${patch}")
+  done
+  # Newest first: patches stack (they share append points), so each one only
+  # reverses cleanly once every patch applied after it is gone.
+  for ((i = ${#patches[@]} - 1; i >= 0; i--)); do
+    patch="${patches[i]}"
     # Prefer a clean reverse-apply; fall back to resetting just the patched files.
     # The fallback also guards against `set -e` aborting the trap mid-revert if the
     # reverse-apply fails (e.g. a partially-applied tree).
