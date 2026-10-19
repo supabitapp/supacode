@@ -93,7 +93,7 @@ nonisolated enum OpenCodePluginContent {
   /// session is routed in this TUI or already executing here, adopts a routed
   /// session that is already running, and derives one surface state from every
   /// execution and prompt it owns.
-  static func tuiSource() -> String {
+  static func tuiSource() -> String {  // swiftlint:disable:this function_body_length
     """
     // \(ownershipMarker)
     //
