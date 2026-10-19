@@ -17,7 +17,8 @@ import Foundation
 /// TUI plugin instead, which runs inside the terminal's own process.
 nonisolated enum OpenCodePluginContent {
   /// Top-level file under `plugins/`: OpenCode 1.x's server plugin. 2.x also
-  /// loads it as a server plugin, so it carries a no-op 2.x `setup`.
+  /// loads it as a server plugin, so it carries a no-op 2.x `setup`. A default
+  /// export object needs OpenCode 1.3.4+; older loaders call every export.
   static let serverFileName = "supacode-presence.js"
 
   /// Directory under `plugins/` holding the OpenCode 2.x TUI entrypoint. 1.x
@@ -88,9 +89,9 @@ nonisolated enum OpenCodePluginContent {
 
   /// The TUI receives events for every session the shared service knows about,
   /// including other terminals' sessions, and session tabs are shared between
-  /// TUIs in the same directory. So it only claims the root session this TUI has
-  /// routed, and keeps reporting a claimed session until its execution ends,
-  /// even after navigating away from it.
+  /// TUIs in the same directory. So it owns an execution only when its root
+  /// session is routed in this TUI or already executing here, and derives one
+  /// surface state from every execution and prompt it owns.
   static func tuiSource() -> String {
     """
     // \(ownershipMarker)
@@ -104,8 +105,13 @@ nonisolated enum OpenCodePluginContent {
     const run = (command) =>
       new Promise((resolve) => {
         const child = spawn("/bin/sh", ["-c", command], { stdio: "ignore" })
-        child.once("error", resolve)
-        child.once("exit", resolve)
+        const timer = setTimeout(() => child.kill("SIGKILL"), \(AgentHookSettingsCommand.timeoutMilliseconds))
+        const done = () => {
+          clearTimeout(timer)
+          resolve()
+        }
+        child.once("error", done)
+        child.once("exit", done)
       })
 
     const busy = \(jsString(command(for: [.busy])))
@@ -118,38 +124,66 @@ nonisolated enum OpenCodePluginContent {
       async setup({ data, ui }) {
         let queue = Promise.resolve()
         const emit = (command) => (queue = queue.then(() => run(command)))
-        const active = new Set()
-        const routed = () => {
+        const executions = new Map()
+        const prompts = new Map()
+        let outcome = idle
+
+        const executing = (root) => [...executions.values()].includes(root)
+        const routedRoot = () => {
           const route = ui.router.current()
           return route.type === "session" ? data.session.root(route.sessionID) : undefined
         }
-        const claim = (sessionID) => {
-          const root = data.session.root(sessionID)
-          if (routed() === root) active.add(root)
-          return active.has(root)
+        const report = () => {
+          if (executions.size === 0) emit(outcome)
+          else if (prompts.size > 0) emit(awaitingInput)
+          else emit(busy)
         }
-        const report = (type, command, sessionOf = (event) => event.data.sessionID) =>
+        const on = (type, changed) =>
           data.on(type, (event) => {
-            if (claim(sessionOf(event))) emit(command)
+            try {
+              if (changed(event.data)) report()
+            } catch {}
           })
-        const finish = (type, command) =>
-          data.on(type, (event) => {
-            if (!active.delete(event.data.sessionID)) return
-            if (active.size === 0) emit(command)
-          })
+
+        const started = ({ sessionID }) => {
+          const root = data.session.root(sessionID)
+          if (root !== routedRoot() && !executing(root)) return false
+          executions.set(sessionID, root)
+          outcome = idle
+          return true
+        }
+        const ended = ({ sessionID }) => {
+          const root = executions.get(sessionID)
+          if (!executions.delete(sessionID)) return false
+          if (!executing(root)) {
+            for (const [id, owner] of prompts) if (owner === root) prompts.delete(id)
+          }
+          return true
+        }
+        const failed = (event) => {
+          if (!ended(event)) return false
+          outcome = error
+          return true
+        }
+        const asked = ({ id, sessionID }) => {
+          const root = data.session.root(sessionID)
+          if (!executing(root)) return false
+          prompts.set(id, root)
+          return true
+        }
+        const answered = (id) => prompts.delete(id)
 
         await emit(\(jsString(command(for: [.sessionStart]))))
         const subscriptions = [
-          report("session.execution.started", busy),
-          report("session.tool.called", busy),
-          report("permission.replied", busy),
-          report("form.replied", busy),
-          report("form.cancelled", busy),
-          report("permission.asked", awaitingInput),
-          report("form.created", awaitingInput, (event) => event.data.form.sessionID),
-          finish("session.execution.succeeded", idle),
-          finish("session.execution.interrupted", idle),
-          finish("session.execution.failed", error),
+          on("session.execution.started", started),
+          on("session.execution.succeeded", ended),
+          on("session.execution.interrupted", ended),
+          on("session.execution.failed", failed),
+          on("permission.asked", asked),
+          on("form.created", ({ form }) => asked(form)),
+          on("permission.replied", ({ requestID }) => answered(requestID)),
+          on("form.replied", ({ id }) => answered(id)),
+          on("form.cancelled", ({ id }) => answered(id)),
         ]
 
         return async () => {

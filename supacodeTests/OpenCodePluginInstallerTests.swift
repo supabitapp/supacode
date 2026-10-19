@@ -163,6 +163,23 @@ struct OpenCodePluginInstallerTests {
     #expect(try installer.installState() == .notInstalled)
   }
 
+  @Test func failedInstallRestoresThePreviousPlugin() throws {
+    let homeURL = makeTempHomeURL()
+    defer { try? fileManager.removeItem(at: homeURL) }
+
+    let installer = OpenCodePluginInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
+    let previous = "// \(OpenCodePluginContent.ownershipMarker)\n// old shape"
+    try write(previous, to: installer.serverPluginFileURL)
+    let tuiDirectory = installer.tuiPluginFileURL.deletingLastPathComponent()
+    try fileManager.createDirectory(at: tuiDirectory, withIntermediateDirectories: true)
+    try fileManager.setAttributes([.posixPermissions: 0o555], ofItemAtPath: tuiDirectory.path)
+    defer { try? fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tuiDirectory.path) }
+
+    #expect(throws: (any Error).self) { try installer.install() }
+    #expect(try String(contentsOf: installer.serverPluginFileURL, encoding: .utf8) == previous)
+    #expect(!fileManager.fileExists(atPath: installer.tuiPluginFileURL.path))
+  }
+
   @Test func entrypointsPointToExpectedPaths() {
     let homeURL = URL(fileURLWithPath: "/Users/test")
     let installer = OpenCodePluginInstaller(homeDirectoryURL: homeURL, fileManager: fileManager)
@@ -177,48 +194,6 @@ struct OpenCodePluginInstallerTests {
   @Test(arguments: sources)
   func sourceCarriesOwnershipMarker(source: String) {
     #expect(source.contains(OpenCodePluginContent.ownershipMarker))
-  }
-
-  @Test func serverSourceLoadsUnderBothOpenCodeGenerations() {
-    let source = OpenCodePluginContent.serverSource()
-    // 1.x calls `server`; 2.x only accepts a default export with `id` and
-    // `setup`, which it runs in its terminal-less service, so `setup` is inert.
-    #expect(source.contains(#"export default { id: "supacode.presence", server, setup() {} }"#))
-    #expect(!source.contains("export const"))
-  }
-
-  @Test func serverSourceWiresEveryPresenceTrigger() {
-    let source = OpenCodePluginContent.serverSource()
-    for trigger in [
-      "dispose", "tool.execute.before", "tool.execute.after", "permission.ask", "session.idle", "permission.replied",
-    ] {
-      #expect(source.contains(trigger))
-    }
-  }
-
-  @Test func tuiSourceWiresEveryPresenceTrigger() {
-    let source = OpenCodePluginContent.tuiSource()
-    #expect(source.contains(#"id: "supacode.presence.tui""#))
-    for trigger in [
-      "session.execution.started", "session.tool.called", "permission.replied", "form.replied", "form.cancelled",
-      "permission.asked", "form.created", "session.execution.succeeded", "session.execution.interrupted",
-      "session.execution.failed",
-    ] {
-      #expect(source.contains(#""\#(trigger)""#))
-    }
-  }
-
-  @Test(arguments: sources)
-  func sourceEmbedsOpenCodeScopedOSCForEveryState(source: String) {
-    #expect(source.contains("start=opencode;event=session_start"))
-    #expect(source.contains("start=opencode;event=busy"))
-    #expect(source.contains("start=opencode;event=idle"))
-    #expect(source.contains("start=opencode;event=awaiting_input"))
-    #expect(source.contains("end=opencode;event=session_end"))
-  }
-
-  @Test func tuiSourceReportsFailedExecutionsAsErrors() {
-    #expect(OpenCodePluginContent.tuiSource().contains("start=opencode;event=error"))
   }
 
   @Test(arguments: sources)

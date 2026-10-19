@@ -45,17 +45,28 @@ nonisolated struct OpenCodePluginInstaller {
     // unattended when the aggregate integration goes `.outdated`, which the
     // per-component `.notInstalled` alone does not prevent. Reading through the
     // probe means an unreadable file aborts rather than reading as "no marker".
-    for entrypoint in entrypoints {
-      if let contents = try AgentFileProbe.text(at: entrypoint.url),
-        !contents.contains(OpenCodePluginContent.ownershipMarker)
-      {
-        throw OpenCodePluginInstallerError.pluginNotManaged
-      }
+    let previous = try entrypoints.map { try AgentFileProbe.text(at: $0.url) }
+    guard previous.allSatisfy({ $0?.contains(OpenCodePluginContent.ownershipMarker) ?? true }) else {
+      throw OpenCodePluginInstallerError.pluginNotManaged
     }
-    for entrypoint in entrypoints {
-      try fileManager.createDirectory(
-        at: entrypoint.url.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try entrypoint.source.write(to: entrypoint.url, atomically: true, encoding: .utf8)
+    var written: [(url: URL, previous: String?)] = []
+    do {
+      for (entrypoint, previous) in zip(entrypoints, previous) {
+        try fileManager.createDirectory(
+          at: entrypoint.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try entrypoint.source.write(to: entrypoint.url, atomically: true, encoding: .utf8)
+        written.append((entrypoint.url, previous))
+      }
+    } catch {
+      // Best-effort rollback so a partial write never leaves one generation upgraded.
+      for file in written.reversed() {
+        if let previous = file.previous {
+          try? previous.write(to: file.url, atomically: true, encoding: .utf8)
+        } else {
+          try? fileManager.removeItem(at: file.url)
+        }
+      }
+      throw error
     }
   }
 
