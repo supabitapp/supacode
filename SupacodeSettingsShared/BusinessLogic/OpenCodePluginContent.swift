@@ -90,9 +90,9 @@ nonisolated enum OpenCodePluginContent {
   /// The TUI receives events for every session the shared service knows about,
   /// including other terminals' sessions, and session tabs are shared between
   /// TUIs in the same directory. So it owns an execution only when its root
-  /// session is routed in this TUI or already executing here, adopts a routed
-  /// session that is already running, and derives one surface state from every
-  /// execution and prompt it owns.
+  /// session is routed in this TUI or already executing here, adopts the routed
+  /// family's running executions, and reports awaiting input exactly when the
+  /// TUI holds a prompt for a family it owns.
   static func tuiSource() -> String {  // swiftlint:disable:this function_body_length
     """
     // \(ownershipMarker)
@@ -126,73 +126,64 @@ nonisolated enum OpenCodePluginContent {
         let queue = Promise.resolve()
         const emit = (command) => (queue = queue.then(() => run(command)))
         const executions = new Map()
-        const prompts = new Map()
         let outcome = idle
+        let reported = idle
 
-        const executing = (root) => [...executions.values()].includes(root)
+        const owns = (root) => [...executions.values()].includes(root)
         const routedRoot = () => {
           const route = ui.router.current()
           return route.type === "session" ? data.session.root(route.sessionID) : undefined
         }
-        const report = () => {
-          if (executions.size === 0) emit(outcome)
-          else if (prompts.size > 0) emit(awaitingInput)
-          else emit(busy)
+        // The same per-family lists the TUI renders its permission and question prompts from.
+        const prompting = (root) => {
+          const owned = [...executions].filter(([, owner]) => owner === root).map(([id]) => id)
+          return [root, ...data.session.family(root), ...owned].some(
+            (id) => data.session.permission.list(id)?.length > 0 || data.session.form.list(id)?.length > 0,
+          )
         }
-        const on = (type, changed) =>
+        const state = () => {
+          if (executions.size === 0) return outcome
+          return [...new Set(executions.values())].some(prompting) ? awaitingInput : busy
+        }
+        const report = () => {
+          reported = state()
+          emit(reported)
+        }
+        const claim = (sessionID, root) => {
+          executions.set(sessionID, root)
+          outcome = idle
+        }
+        const on = (type, concerns) =>
           data.on(type, (event) => {
             try {
-              if (changed(event.data)) report()
+              if (concerns(event.data)) report()
             } catch {}
           })
 
         const started = ({ sessionID }) => {
           const root = data.session.root(sessionID)
-          if (root !== routedRoot() && !executing(root)) return false
-          executions.set(sessionID, root)
-          outcome = idle
+          if (root !== routedRoot() && !owns(root)) return false
+          claim(sessionID, root)
           return true
         }
-        const ended = ({ sessionID }) => {
-          const root = executions.get(sessionID)
-          if (!executions.delete(sessionID)) return false
-          if (!executing(root)) {
-            for (const [id, owner] of prompts) if (owner === root) prompts.delete(id)
-          }
-          return true
-        }
+        const ended = ({ sessionID }) => executions.delete(sessionID)
         const failed = (event) => {
           if (!ended(event)) return false
           outcome = error
           return true
         }
-        const asked = ({ id, sessionID }) => {
-          const root = data.session.root(sessionID)
-          if (!executing(root)) return false
-          prompts.set(id, root)
-          return true
-        }
-        const answered = (id) => prompts.delete(id)
-        // The service keeps a turn running after its TUI exits, so a TUI can open
-        // a session whose execution, and the prompt blocking it, started before
-        // it was there to see them.
+        const prompted = ({ sessionID }) => owns(data.session.root(sessionID))
+        // The service keeps a turn running after its TUI exits, so a TUI can open a
+        // session family whose executions and prompts began before it was there.
         const adoptRouted = () => {
           try {
-            const route = ui.router.current()
-            if (route.type !== "session") return
-            const id = route.sessionID
-            let changed = false
-            if (!executions.has(id)) {
-              if (data.session.status(id) !== "running") return
-              changed = started({ sessionID: id })
+            const root = routedRoot()
+            if (root !== undefined) {
+              for (const id of [root, ...data.session.family(root)]) {
+                if (!executions.has(id) && data.session.status(id) === "running") claim(id, root)
+              }
             }
-            const pending = [...(data.session.permission.list(id) ?? []), ...(data.session.form.list(id) ?? [])]
-            for (const prompt of pending) {
-              if (prompts.has(prompt.id)) continue
-              prompts.set(prompt.id, executions.get(id))
-              changed = true
-            }
-            if (changed) report()
+            if (state() !== reported) report()
           } catch {}
         }
 
@@ -203,11 +194,11 @@ nonisolated enum OpenCodePluginContent {
           on("session.execution.succeeded", ended),
           on("session.execution.interrupted", ended),
           on("session.execution.failed", failed),
-          on("permission.asked", asked),
-          on("form.created", ({ form }) => asked(form)),
-          on("permission.replied", ({ requestID }) => answered(requestID)),
-          on("form.replied", ({ id }) => answered(id)),
-          on("form.cancelled", ({ id }) => answered(id)),
+          on("permission.asked", prompted),
+          on("permission.replied", prompted),
+          on("form.created", ({ form }) => prompted(form)),
+          on("form.replied", prompted),
+          on("form.cancelled", prompted),
         ]
 
         return async () => {

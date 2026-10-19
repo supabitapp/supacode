@@ -43,6 +43,7 @@ private final class PluginRuntime {
         },
         session: {
           root: (id) => parents[id] ?? id,
+          family: (root) => [root, ...Object.keys(parents).filter((id) => parents[id] === root)],
           status: (id) => (running.has(id) ? "running" : "idle"),
           permission: listed("permission"),
           form: listed("form"),
@@ -205,12 +206,13 @@ struct OpenCodeTUIPluginBehaviorTests {
     #expect(tui.drain() == ["busy", "awaiting_input", "awaiting_input", "awaiting_input"])
   }
 
-  @Test func endingATurnDropsItsPendingPrompts() throws {
+  @Test func interruptingATurnEndsItsQuestion() throws {
     let tui = try start()
     tui.route(to: "S")
     tui.send("session.execution.started", #"{ "sessionID": "S" }"#)
     tui.send("form.created", #"{ "form": { "id": "f", "sessionID": "S" } }"#)
     tui.send("session.execution.interrupted", #"{ "sessionID": "S", "reason": "user" }"#)
+    tui.send("form.cancelled", #"{ "id": "f", "sessionID": "S" }"#)
     tui.send("session.execution.started", #"{ "sessionID": "S" }"#)
     #expect(tui.drain() == ["busy", "awaiting_input", "idle", "busy"])
   }
@@ -270,6 +272,30 @@ struct OpenCodeTUIPluginBehaviorTests {
     tui.tick()
     tui.send("session.execution.succeeded", #"{ "sessionID": "S" }"#)
     #expect(tui.drain() == ["awaiting_input", "busy", "idle"])
+  }
+
+  @Test func adoptsASubagentBlockedOnAQuestionWhenRejoiningItsParent() throws {
+    let tui = try start()
+    tui.setParent(of: "child", to: "S")
+    tui.markRunning("S")
+    tui.markRunning("child")
+    tui.markPendingQuestion("f", in: "child")
+    tui.route(to: "S")
+    tui.tick()
+    tui.send("form.replied", #"{ "id": "f", "sessionID": "child" }"#)
+    #expect(tui.drain() == ["awaiting_input", "busy"])
+  }
+
+  @Test func anAdoptedBackgroundSubagentOutlivesItsParent() throws {
+    let tui = try start()
+    tui.setParent(of: "child", to: "S")
+    tui.markRunning("S")
+    tui.markRunning("child")
+    tui.route(to: "S")
+    tui.tick()
+    tui.send("session.execution.succeeded", #"{ "sessionID": "S" }"#)
+    tui.send("session.execution.succeeded", #"{ "sessionID": "child" }"#)
+    #expect(tui.drain() == ["busy", "busy", "idle"])
   }
 
   @Test func doesNotAdoptSessionsThisTUIIsNotShowing() throws {
