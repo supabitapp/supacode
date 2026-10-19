@@ -8,14 +8,17 @@ private let watcherLogger = SupaLogger("WorktreeInfoWatcher")
 
 private final class WorktreeFileEventMonitor {
   let rootURLs: [URL]
+  private let eventFilter: WorktreeFileEventFilter
   private let onEvent: @MainActor @Sendable () -> Void
   private nonisolated(unsafe) var stream: FSEventStreamRef?
 
   init?(
     rootURLs: [URL],
+    gitDirectoryURL: URL,
     onEvent: @escaping @MainActor @Sendable () -> Void
   ) {
     self.rootURLs = rootURLs
+    eventFilter = WorktreeFileEventFilter(gitDirectoryURL: gitDirectoryURL)
     self.onEvent = onEvent
     guard !rootURLs.isEmpty else {
       return nil
@@ -29,11 +32,16 @@ private final class WorktreeFileEventMonitor {
       copyDescription: nil
     )
     context.info = Unmanaged.passUnretained(self).toOpaque()
-    let callback: FSEventStreamCallback = { _, callbackInfo, _, _, _, _ in
+    let callback: FSEventStreamCallback = { _, callbackInfo, count, eventPaths, eventFlags, _ in
       guard let callbackInfo else { return }
       let monitor = Unmanaged<WorktreeFileEventMonitor>
         .fromOpaque(callbackInfo)
         .takeUnretainedValue()
+      let paths = Unmanaged<NSArray>.fromOpaque(eventPaths).takeUnretainedValue() as? [String]
+      let flags = Array(UnsafeBufferPointer(start: eventFlags, count: count))
+      if let paths, !monitor.eventFilter.shouldRefresh(paths: paths, flags: flags) {
+        return
+      }
       Task { @MainActor in
         monitor.onEvent()
       }
@@ -49,6 +57,7 @@ private final class WorktreeFileEventMonitor {
         kFSEventStreamCreateFlagFileEvents
           | kFSEventStreamCreateFlagNoDefer
           | kFSEventStreamCreateFlagWatchRoot
+          | kFSEventStreamCreateFlagUseCFTypes
       )
     )
     guard let stream else {
@@ -325,11 +334,11 @@ final class WorktreeInfoWatcherManager {
       return
     }
     if let existing = headWatchers[worktree.id], existing.headURL == headURL {
-      configureFileEventMonitor(for: worktree)
+      configureFileEventMonitor(for: worktree, gitDirectoryURL: headURL.deletingLastPathComponent())
       return
     }
     stopWatcher(for: worktree.id)
-    configureFileEventMonitor(for: worktree)
+    configureFileEventMonitor(for: worktree, gitDirectoryURL: headURL.deletingLastPathComponent())
     startWatcher(worktreeID: worktree.id, headURL: headURL)
   }
 
@@ -388,7 +397,7 @@ final class WorktreeInfoWatcherManager {
     return roots
   }
 
-  private func configureFileEventMonitor(for worktree: Worktree) {
+  private func configureFileEventMonitor(for worktree: Worktree, gitDirectoryURL: URL) {
     let roots = fileEventRoots(for: worktree)
     if let existing = fileEventMonitors[worktree.id], existing.rootURLs == roots {
       return
@@ -396,7 +405,8 @@ final class WorktreeInfoWatcherManager {
     // Tear down only the monitor value; keep the failed-set so retries log once.
     fileEventMonitors.removeValue(forKey: worktree.id)?.cancel()
     let monitor = WorktreeFileEventMonitor(
-      rootURLs: roots
+      rootURLs: roots,
+      gitDirectoryURL: gitDirectoryURL
     ) { [weak self] in
       self?.scheduleFilesChanged(worktreeID: worktree.id)
     }

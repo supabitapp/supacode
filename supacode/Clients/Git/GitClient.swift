@@ -1153,7 +1153,7 @@ struct GitClient {
     do {
       let diff = try await runGit(
         operation: .lineChanges,
-        arguments: ["-C", path, "diff", "HEAD", "--shortstat"]
+        arguments: ["-C", path, "--no-optional-locks", "diff", "HEAD", "--shortstat"]
       )
       let changes = parseShortstat(diff)
       return (added: changes.added, removed: changes.removed)
