@@ -105,6 +105,11 @@ private final class PluginRuntime {
     evaluate(#"hold("form", "\#(sessionID)", "\#(formID)")"#)
   }
 
+  /// A permission the TUI's cache lists without this plugin having been asked for it.
+  func markListedPermission(_ permissionID: String, in sessionID: String) {
+    evaluate(#"hold("permission", "\#(sessionID)", "\#(permissionID)")"#)
+  }
+
   func tick() {
     evaluate("intervals.forEach((tick) => tick())")
   }
@@ -296,6 +301,29 @@ struct OpenCodeTUIPluginBehaviorTests {
     tui.send("session.execution.succeeded", #"{ "sessionID": "S" }"#)
     tui.send("session.execution.succeeded", #"{ "sessionID": "child" }"#)
     #expect(tui.drain() == ["busy", "busy", "idle"])
+  }
+
+  @Test func adoptingABlockedFamilyClearsAnEarlierError() throws {
+    let tui = try start()
+    tui.route(to: "A")
+    tui.send("session.execution.started", #"{ "sessionID": "A" }"#)
+    tui.send("session.execution.failed", #"{ "sessionID": "A" }"#)
+    tui.setParent(of: "child", to: "S")
+    tui.markRunning("S")
+    tui.markRunning("child")
+    tui.markPendingQuestion("f", in: "child")
+    tui.route(to: "S")
+    tui.tick()
+    #expect(tui.drain() == ["busy", "error", "busy", "awaiting_input"])
+  }
+
+  @Test func aListedPermissionItWasNotAskedForDoesNotAwaitInput() throws {
+    let tui = try start()
+    tui.route(to: "S")
+    tui.send("session.execution.started", #"{ "sessionID": "S" }"#)
+    tui.markListedPermission("p", in: "S")
+    tui.tick()
+    #expect(tui.drain() == ["busy"])
   }
 
   @Test func doesNotAdoptSessionsThisTUIIsNotShowing() throws {

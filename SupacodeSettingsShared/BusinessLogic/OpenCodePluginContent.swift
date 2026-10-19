@@ -91,8 +91,8 @@ nonisolated enum OpenCodePluginContent {
   /// including other terminals' sessions, and session tabs are shared between
   /// TUIs in the same directory. So it owns an execution only when its root
   /// session is routed in this TUI or already executing here, adopts the routed
-  /// family's running executions, and reports awaiting input exactly when the
-  /// TUI holds a prompt for a family it owns.
+  /// family's running executions, and reports awaiting input while a family it
+  /// owns has a question the TUI renders or a permission it was asked for.
   static func tuiSource() -> String {  // swiftlint:disable:this function_body_length
     """
     // \(ownershipMarker)
@@ -126,6 +126,7 @@ nonisolated enum OpenCodePluginContent {
         let queue = Promise.resolve()
         const emit = (command) => (queue = queue.then(() => run(command)))
         const executions = new Map()
+        const permissions = new Map()
         let outcome = idle
         let reported = idle
 
@@ -134,20 +135,24 @@ nonisolated enum OpenCodePluginContent {
           const route = ui.router.current()
           return route.type === "session" ? data.session.root(route.sessionID) : undefined
         }
-        // The same per-family lists the TUI renders its permission and question prompts from.
+        // Questions come from the per-family lists the TUI always renders them from.
+        // Permissions come from events: the TUI hides listed ones in autoaccept mode,
+        // and the service drops them on interruption without telling the cache.
         const prompting = (root) => {
+          if ([...permissions.values()].includes(root)) return true
           const owned = [...executions].filter(([, owner]) => owner === root).map(([id]) => id)
-          return [root, ...data.session.family(root), ...owned].some(
-            (id) => data.session.permission.list(id)?.length > 0 || data.session.form.list(id)?.length > 0,
-          )
+          return [root, ...data.session.family(root), ...owned].some((id) => data.session.form.list(id)?.length > 0)
         }
         const state = () => {
           if (executions.size === 0) return outcome
           return [...new Set(executions.values())].some(prompting) ? awaitingInput : busy
         }
         const report = () => {
-          reported = state()
-          emit(reported)
+          const next = state()
+          // Supacode holds an error badge until the agent reports busy again.
+          if (reported === error && next === awaitingInput) emit(busy)
+          reported = next
+          emit(next)
         }
         const claim = (sessionID, root) => {
           executions.set(sessionID, root)
@@ -166,13 +171,26 @@ nonisolated enum OpenCodePluginContent {
           claim(sessionID, root)
           return true
         }
-        const ended = ({ sessionID }) => executions.delete(sessionID)
+        const ended = ({ sessionID }) => {
+          const root = executions.get(sessionID)
+          if (!executions.delete(sessionID)) return false
+          if (!owns(root)) {
+            for (const [id, owner] of permissions) if (owner === root) permissions.delete(id)
+          }
+          return true
+        }
         const failed = (event) => {
           if (!ended(event)) return false
           outcome = error
           return true
         }
         const prompted = ({ sessionID }) => owns(data.session.root(sessionID))
+        const permissionAsked = ({ id, sessionID }) => {
+          const root = data.session.root(sessionID)
+          if (!owns(root)) return false
+          permissions.set(id, root)
+          return true
+        }
         // The service keeps a turn running after its TUI exits, so a TUI can open a
         // session family whose executions and prompts began before it was there.
         const adoptRouted = () => {
@@ -194,8 +212,8 @@ nonisolated enum OpenCodePluginContent {
           on("session.execution.succeeded", ended),
           on("session.execution.interrupted", ended),
           on("session.execution.failed", failed),
-          on("permission.asked", prompted),
-          on("permission.replied", prompted),
+          on("permission.asked", permissionAsked),
+          on("permission.replied", ({ requestID }) => permissions.delete(requestID)),
           on("form.created", ({ form }) => prompted(form)),
           on("form.replied", prompted),
           on("form.cancelled", prompted),
