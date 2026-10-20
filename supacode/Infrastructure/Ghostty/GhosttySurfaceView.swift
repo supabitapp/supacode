@@ -1361,7 +1361,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
   ) -> Bool {
     guard event.type == .keyDown else { return false }
     guard !keySequenceActive, keyTableDepth == 0 else { return false }
-    guard imagePasteAgents.contains(.claude) else { return false }
+    // Agents that paste images on the Ctrl+V chord get Cmd+V translated to it.
+    guard !imagePasteAgents.isDisjoint(with: [.claude, .devin]) else { return false }
     guard isExactCommandV(event) else { return false }
     guard let types = pasteboardTypes(), types.contains(where: isImagePasteboardType) else { return false }
     return types.allSatisfy { !isTextOrFilePasteboardType($0) }
