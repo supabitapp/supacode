@@ -2,7 +2,7 @@ import ComposableArchitecture
 import Sparkle
 import SupacodeSettingsShared
 
-struct UpdaterClient {
+nonisolated struct UpdaterClient: Sendable {
   var configure: @MainActor @Sendable (_ checks: Bool, _ downloads: Bool, _ checkInBackground: Bool) -> Void
   var setUpdateChannel: @MainActor @Sendable (UpdateChannel) -> Void
   var checkForUpdates: @MainActor @Sendable () -> Void
@@ -57,8 +57,9 @@ class SparkleUpdateDelegate: NSObject, SPUUpdaterDelegate {
   }
 }
 
-extension UpdaterClient: DependencyKey {
-  static let liveValue: UpdaterClient = {
+nonisolated extension UpdaterClient: DependencyKey {
+  // Resolved on the main actor at launch; Sparkle's controller is main-actor only.
+  static let liveValue: UpdaterClient = MainActor.assumeIsolated {
     let delegate = SparkleUpdateDelegate()
     let controller = SPUStandardUpdaterController(
       startingUpdater: true,
@@ -88,7 +89,7 @@ extension UpdaterClient: DependencyKey {
         updater.checkForUpdates()
       }
     )
-  }()
+  }
 
   static let testValue = UpdaterClient(
     configure: { _, _, _ in },
@@ -97,7 +98,7 @@ extension UpdaterClient: DependencyKey {
   )
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   var updaterClient: UpdaterClient {
     get { self[UpdaterClient.self] }
     set { self[UpdaterClient.self] = newValue }

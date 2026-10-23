@@ -18,7 +18,7 @@ public nonisolated struct ArchivedWorktreeDatesClient: Sendable {
   }
 }
 
-extension ArchivedWorktreeDatesClient: DependencyKey {
+nonisolated extension ArchivedWorktreeDatesClient: DependencyKey {
   /// `unimplemented` surfaces a runtime warning in debug and fails
   /// tests if nobody registered the real reader — the settings
   /// package can't reach `@Shared(.sidebar)` itself, so the app
@@ -35,7 +35,7 @@ extension ArchivedWorktreeDatesClient: DependencyKey {
   )
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   public var archivedWorktreeDatesClient: ArchivedWorktreeDatesClient {
     get { self[ArchivedWorktreeDatesClient.self] }
     set { self[ArchivedWorktreeDatesClient.self] = newValue }

@@ -118,7 +118,7 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
   }
 }
 
-extension Worktree {
+nonisolated extension Worktree {
   /// Base environment variables for Supacode scripts (supplemented per-surface).
   var scriptEnvironment: [String: String] {
     [

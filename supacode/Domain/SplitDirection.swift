@@ -24,7 +24,7 @@ nonisolated enum SplitDirection: Equatable, Sendable {
 
 /// Four-direction split selector used by File menu commands and the tab-bar split menu.
 /// Single source of truth for the binding string, SF Symbol, and user-facing labels.
-enum TerminalSplitMenuDirection: Equatable, Sendable, CaseIterable {
+nonisolated enum TerminalSplitMenuDirection: Equatable, Sendable, CaseIterable {
   case right
   case left
   case down
@@ -81,7 +81,7 @@ enum TerminalSplitMenuDirection: Equatable, Sendable, CaseIterable {
   }
 
   /// The app-owned layout shortcut for this split direction.
-  var appShortcut: AppShortcut {
+  @MainActor var appShortcut: AppShortcut {
     switch self {
     case .right: AppShortcuts.splitRight
     case .left: AppShortcuts.splitLeft
@@ -91,7 +91,7 @@ enum TerminalSplitMenuDirection: Equatable, Sendable, CaseIterable {
   }
 
   /// The app-owned layout shortcut for focusing the neighbor in this direction.
-  var focusAppShortcut: AppShortcut {
+  @MainActor var focusAppShortcut: AppShortcut {
     switch self {
     case .right: AppShortcuts.focusSplitRight
     case .left: AppShortcuts.focusSplitLeft

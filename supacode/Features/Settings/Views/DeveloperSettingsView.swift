@@ -432,7 +432,7 @@ private struct AgentInstallTargetLine: View {
   }
 }
 
-extension AgentIntegrationRowState {
+nonisolated extension AgentIntegrationRowState {
   /// True when the last disk read found the integration present (installed or
   /// outdated), so the default's "add another folder" affordance can show.
   fileprivate var isPresentOnDisk: Bool {

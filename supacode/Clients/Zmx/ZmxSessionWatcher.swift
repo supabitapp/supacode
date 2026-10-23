@@ -343,7 +343,7 @@ extension ZmxSessionWatcherClient: DependencyKey {
   }
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   nonisolated var zmxSessionWatcherClient: ZmxSessionWatcherClient {
     get { self[ZmxSessionWatcherClient.self] }
     set { self[ZmxSessionWatcherClient.self] = newValue }

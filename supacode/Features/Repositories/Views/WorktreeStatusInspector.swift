@@ -1010,7 +1010,7 @@ private struct PrunedNotificationSummaryRow: View {
   }
 }
 
-extension NotificationScope {
+nonisolated extension NotificationScope {
   fileprivate var inspectorTitle: String {
     switch self {
     case .all: "All Notifications"

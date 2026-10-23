@@ -1,7 +1,7 @@
 import ComposableArchitecture
 import SupacodeSettingsShared
 
-struct GithubIntegrationClient: Sendable {
+nonisolated struct GithubIntegrationClient: Sendable {
   var isAvailable: @MainActor @Sendable () async -> Bool
   /// Drops the cached probe so an enablement change re-checks immediately.
   var invalidate: @Sendable () async -> Void
@@ -53,7 +53,7 @@ private let githubIntegrationAvailabilityCache = GithubIntegrationAvailabilityCa
   ttl: .seconds(30)
 )
 
-extension GithubIntegrationClient: DependencyKey {
+nonisolated extension GithubIntegrationClient: DependencyKey {
   static let liveValue = GithubIntegrationClient(
     isAvailable: {
       await githubIntegrationIsAvailable()
@@ -68,7 +68,7 @@ extension GithubIntegrationClient: DependencyKey {
   )
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   var githubIntegration: GithubIntegrationClient {
     get { self[GithubIntegrationClient.self] }
     set { self[GithubIntegrationClient.self] = newValue }

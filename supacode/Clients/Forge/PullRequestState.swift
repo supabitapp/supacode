@@ -37,7 +37,7 @@ nonisolated enum PullRequestState: Equatable, Hashable {
   }
 }
 
-extension PullRequestState: Decodable {
+nonisolated extension PullRequestState: Decodable {
   init(from decoder: Decoder) throws {
     self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
   }

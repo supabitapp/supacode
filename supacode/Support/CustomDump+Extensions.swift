@@ -3,7 +3,7 @@ import Foundation
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
 
-extension Repository: CustomDumpRepresentable {
+nonisolated extension Repository: CustomDumpRepresentable {
   var customDumpValue: Any {
     (
       name: name,
@@ -12,7 +12,7 @@ extension Repository: CustomDumpRepresentable {
   }
 }
 
-extension Worktree: CustomDumpRepresentable {
+nonisolated extension Worktree: CustomDumpRepresentable {
   var customDumpValue: Any {
     (
       id: id,
@@ -63,7 +63,7 @@ extension RepositorySettingsFeature.State: @retroactive CustomDumpRepresentable 
   }
 }
 
-extension ForgePullRequest: CustomDumpRepresentable {
+nonisolated extension ForgePullRequest: CustomDumpRepresentable {
   var customDumpValue: Any {
     (
       number: number,
@@ -79,7 +79,7 @@ extension ForgePullRequest: CustomDumpRepresentable {
   }
 }
 
-extension ForgePullRequestStatusCheckRollup: CustomDumpRepresentable {
+nonisolated extension ForgePullRequestStatusCheckRollup: CustomDumpRepresentable {
   var customDumpValue: Any {
     checks.count
   }

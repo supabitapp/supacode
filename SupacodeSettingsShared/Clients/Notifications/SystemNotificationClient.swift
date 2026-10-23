@@ -95,7 +95,7 @@ public nonisolated struct SystemNotificationClient: Sendable {
   }
 }
 
-extension SystemNotificationClient: DependencyKey {
+nonisolated extension SystemNotificationClient: DependencyKey {
   public static let liveValue = SystemNotificationClient(
     authorizationStatus: {
       let center = configuredNotificationCenter()
@@ -157,7 +157,7 @@ extension SystemNotificationClient: DependencyKey {
   )
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   public var systemNotificationClient: SystemNotificationClient {
     get { self[SystemNotificationClient.self] }
     set { self[SystemNotificationClient.self] = newValue }

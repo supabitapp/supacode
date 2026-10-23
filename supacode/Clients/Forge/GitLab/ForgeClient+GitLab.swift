@@ -2,7 +2,7 @@ import ComposableArchitecture
 import Foundation
 import SupacodeSettingsShared
 
-extension ForgeID {
+nonisolated extension ForgeID {
   nonisolated static let gitlab = ForgeID(rawValue: "gitlab")
 }
 

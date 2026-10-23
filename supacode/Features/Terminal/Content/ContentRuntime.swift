@@ -98,7 +98,7 @@ extension ContentRuntime: DependencyKey {
   nonisolated static var testValue: ContentRuntime { ContentRuntime() }
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   var contentRuntime: ContentRuntime {
     get { self[ContentRuntime.self] }
     set { self[ContentRuntime.self] = newValue }

@@ -20,7 +20,7 @@ public nonisolated struct OpenActionAvailabilityClient: Sendable {
   }
 }
 
-extension OpenActionAvailabilityClient: DependencyKey {
+nonisolated extension OpenActionAvailabilityClient: DependencyKey {
   public static let liveValue = Self(
     installedActions: {
       OpenWorktreeAction.menuOrder.filter { action in
@@ -42,7 +42,7 @@ extension OpenActionAvailabilityClient: DependencyKey {
   public static let previewValue = testValue
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   public var openActionAvailability: OpenActionAvailabilityClient {
     get { self[OpenActionAvailabilityClient.self] }
     set { self[OpenActionAvailabilityClient.self] = newValue }

@@ -5,7 +5,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script_path="${script_dir}/$(basename "${BASH_SOURCE[0]}")"
 srcroot="${SRCROOT:-$(cd "${script_dir}/.." && pwd)}"
 
-# Pin a Zig-linkable Xcode for `zig build`'s SDK lookups (see select-developer-dir.sh).
+# Pin an Xcode for `zig build`'s SDK lookups (see select-developer-dir.sh).
 # Always delegate so an inherited DEVELOPER_DIR is validated, not trusted blindly.
 # Plain assignment, separate export, so a selector failure aborts under set -e.
 DEVELOPER_DIR="$("${script_dir}/select-developer-dir.sh")"
@@ -186,9 +186,12 @@ mkdir -p "$(dirname "${zmx_binary_path}")"
 lipo -create "${slice_paths[@]}" -output "${zmx_binary_path}"
 
 # Defense in depth: -verify_arch fails closed on a partial / thin lipo output, but exits silently.
-if ! lipo "${zmx_binary_path}" -verify_arch x86_64 arm64; then
-  echo "error: zmx universal binary at ${zmx_binary_path} is missing x86_64 or arm64 slice" >&2
-  exit 1
-fi
+# One arch per call: Xcode 27's lipo rejects several.
+for arch in x86_64 arm64; do
+  if ! lipo "${zmx_binary_path}" -verify_arch "${arch}"; then
+    echo "error: zmx universal binary at ${zmx_binary_path} is missing the ${arch} slice" >&2
+    exit 1
+  fi
+done
 
 printf '%s\n' "${fingerprint}" > "${zmx_fingerprint_path}"

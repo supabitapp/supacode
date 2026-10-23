@@ -34,14 +34,14 @@ nonisolated enum RepositoryLocalSettingsStorageKey: DependencyKey {
   static var testValue: RepositoryLocalSettingsStorage { .inMemory() }
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   public nonisolated var repositoryLocalSettingsStorage: RepositoryLocalSettingsStorage {
     get { self[RepositoryLocalSettingsStorageKey.self] }
     set { self[RepositoryLocalSettingsStorageKey.self] = newValue }
   }
 }
 
-extension RepositoryLocalSettingsStorage {
+nonisolated extension RepositoryLocalSettingsStorage {
   nonisolated static func inMemory() -> RepositoryLocalSettingsStorage {
     let storage = InMemoryRepositoryLocalSettingsStorage()
     return RepositoryLocalSettingsStorage(

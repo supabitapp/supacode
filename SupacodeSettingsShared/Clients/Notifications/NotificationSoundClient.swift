@@ -47,7 +47,7 @@ public nonisolated struct NotificationSoundClient: Sendable {
   }
 }
 
-extension NotificationSoundClient: DependencyKey {
+nonisolated extension NotificationSoundClient: DependencyKey {
   public static let liveValue = NotificationSoundClient(
     play: { sound in
       // `.never` resolves to no `NSSound`, so nothing plays.
@@ -60,7 +60,7 @@ extension NotificationSoundClient: DependencyKey {
   )
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   public var notificationSoundClient: NotificationSoundClient {
     get { self[NotificationSoundClient.self] }
     set { self[NotificationSoundClient.self] = newValue }

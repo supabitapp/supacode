@@ -23,7 +23,7 @@ nonisolated struct LicenseClient: Sendable {
   var cancelCreation: @Sendable (LicenseCreationPermit) async -> Void
 }
 
-extension LicenseClient: DependencyKey {
+nonisolated extension LicenseClient: DependencyKey {
   static let liveValue: Self = {
     let session = LicenseSession()
     return Self(

@@ -557,7 +557,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   }
 }
 
-extension GlobalSettings {
+nonisolated extension GlobalSettings {
   /// Effective enablement for one forge integration. GitHub reads the legacy
   /// stored flag so downgraded builds keep their setting.
   public func forgeIntegrationEnabled(forID id: String) -> Bool {

@@ -1,6 +1,6 @@
 import Foundation
 
-extension ShellClient {
+nonisolated extension ShellClient {
   /// Host-aware transport: a `ShellClient` that runs every command on `host`
   /// over SSH instead of locally, by rewriting each call into an `ssh <host>
   /// <remoteCommand>` invocation (the working directory becomes a remote `cd`)

@@ -2,7 +2,7 @@ import ComposableArchitecture
 import Foundation
 import SupacodeSettingsShared
 
-struct DeeplinkClient: Sendable {
+nonisolated struct DeeplinkClient: Sendable {
   var parse: @Sendable (URL) -> Deeplink?
 
   nonisolated static func loggingDescription(_ url: URL) -> String {
@@ -10,12 +10,12 @@ struct DeeplinkClient: Sendable {
   }
 }
 
-extension DeeplinkClient: DependencyKey {
+nonisolated extension DeeplinkClient: DependencyKey {
   static let liveValue = DeeplinkClient { DeeplinkParser.parse($0) }
   static let testValue = DeeplinkClient(parse: unimplemented("DeeplinkClient.parse", placeholder: nil))
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   var deeplinkClient: DeeplinkClient {
     get { self[DeeplinkClient.self] }
     set { self[DeeplinkClient.self] = newValue }

@@ -2,7 +2,7 @@ import AppKit
 import ComposableArchitecture
 import SupacodeSettingsShared
 
-struct AppLifecycleClient {
+nonisolated struct AppLifecycleClient: Sendable {
   var terminate: @MainActor @Sendable () -> Void
   /// Applies the Dock/menu-bar visibility mode. Returns false when AppKit
   /// refuses the switch, which would otherwise leave the app with no surface.
@@ -14,7 +14,7 @@ struct AppLifecycleClient {
   var updateGlobalHotkey: @MainActor @Sendable (AppShortcutOverride?) -> Bool
 }
 
-extension AppLifecycleClient: DependencyKey {
+nonisolated extension AppLifecycleClient: DependencyKey {
   static let liveValue = AppLifecycleClient(
     terminate: { NSApplication.shared.terminate(nil) },
     applyVisibility: { NSApplication.shared.applyActivationPolicy(for: $0) },
@@ -35,7 +35,7 @@ extension AppLifecycleClient: DependencyKey {
   )
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   var appLifecycleClient: AppLifecycleClient {
     get { self[AppLifecycleClient.self] }
     set { self[AppLifecycleClient.self] = newValue }

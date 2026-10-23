@@ -160,7 +160,7 @@ nonisolated enum GitRowDecoration: Equatable, Sendable {
   }
 }
 
-extension GitChangeKind {
+nonisolated extension GitChangeKind {
   fileprivate nonisolated var fileState: GitRowDecoration.FileState {
     switch self {
     case .added: .added
@@ -170,7 +170,7 @@ extension GitChangeKind {
   }
 }
 
-extension GitStatusSnapshot {
+nonisolated extension GitStatusSnapshot {
   /// Parses `git status --porcelain=v2 -z` output into a snapshot. A `2`
   /// (rename) record spans a second NUL token for its original path, so the
   /// loop advances past it rather than treating it as a fresh record.

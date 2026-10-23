@@ -11,7 +11,7 @@ public nonisolated struct DirectoryPickerClient: Sendable {
   }
 }
 
-extension DirectoryPickerClient: DependencyKey {
+nonisolated extension DirectoryPickerClient: DependencyKey {
   public static let liveValue = Self(pickDirectory: { message in
     let panel = NSOpenPanel()
     panel.canChooseDirectories = true
@@ -26,7 +26,7 @@ extension DirectoryPickerClient: DependencyKey {
   public static let testValue = Self(pickDirectory: { _ in nil })
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   public var directoryPicker: DirectoryPickerClient {
     get { self[DirectoryPickerClient.self] }
     set { self[DirectoryPickerClient.self] = newValue }
