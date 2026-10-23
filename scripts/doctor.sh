@@ -42,10 +42,13 @@ missing_sub=()
 [ -f "${repo_root}/ThirdParty/ghostty/build.zig" ] || missing_sub+=("ThirdParty/ghostty")
 [ -f "${repo_root}/ThirdParty/zmx/build.zig" ] || missing_sub+=("ThirdParty/zmx")
 [ -f "${repo_root}/Resources/git-wt/wt" ] || missing_sub+=("Resources/git-wt")
-if [ "${#missing_sub[@]}" -eq 0 ]; then
-  pass "git submodules initialized"
-else
+if [ "${#missing_sub[@]}" -ne 0 ]; then
   fail "git submodules missing: ${missing_sub[*]}" "git submodule update --init --recursive"
+elif git -C "${repo_root}" submodule status 2>/dev/null | grep -q '^+'; then
+  # A `+` prefix is a checkout off its pin, e.g. after a pull that moved it.
+  fail "git submodules out of date" "git submodule sync --recursive && git submodule update --init --recursive"
+else
+  pass "git submodules initialized"
 fi
 
 # 3. Xcode
@@ -53,6 +56,9 @@ developer_dir="$("${script_dir}/select-developer-dir.sh" 2>/dev/null)" || develo
 if [ -n "${developer_dir}" ]; then
   sdk="$(DEVELOPER_DIR="${developer_dir}" xcrun --sdk macosx --show-sdk-path 2>/dev/null)"
   pass "Xcode: ${developer_dir} ($(basename "${sdk:-unknown}"))"
+elif ls -d /Applications/Xcode*.app >/dev/null 2>&1; then
+  fail "Xcode is installed but unusable (license, first launch, or a pre-26 macOS SDK)" \
+    "sudo xcodebuild -license accept && sudo xcodebuild -runFirstLaunch"
 else
   fail "no Xcode found" "install Xcode from the App Store"
 fi

@@ -275,7 +275,7 @@ extension ZmxClient {
   }
 }
 
-extension ZmxClient: DependencyKey {
+nonisolated extension ZmxClient: DependencyKey {
   nonisolated static let liveValue: ZmxClient = .live
   nonisolated static let testValue: ZmxClient = .noop
 }

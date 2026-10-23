@@ -90,7 +90,7 @@ final class ContentRuntime {
   }
 }
 
-extension ContentRuntime: DependencyKey {
+nonisolated extension ContentRuntime: DependencyKey {
   // Stored nonisolated `let` so reducers resolve the shared registry
   // synchronously; the nonisolated init makes the off-actor creation safe.
   nonisolated static let liveValue = ContentRuntime()

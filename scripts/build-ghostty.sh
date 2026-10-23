@@ -59,6 +59,16 @@ EOF
 
 ensure_ghostty_checkout() {
   if [ -f "${ghostty_dir}/build.zig" ]; then
+    # Keep an existing clone's remote in step with .gitmodules, and flag a
+    # checkout behind the staged pin, which the patches do not target.
+    git -C "${repo_root}" submodule sync --quiet -- "${ghostty_submodule_path}"
+    local pinned current
+    pinned="$(git -C "${repo_root}" ls-files --stage -- "${ghostty_submodule_path}" | awk '{print $2}')"
+    current="$(git -C "${ghostty_dir}" rev-parse HEAD)"
+    if [ -n "${pinned}" ] && [ "${current}" != "${pinned}" ]; then
+      echo "warning: ${ghostty_submodule_path} is at ${current}, but the repo pins ${pinned}." >&2
+      echo "         Run: git submodule update --init --recursive -- ${ghostty_submodule_path}" >&2
+    fi
     return
   fi
 

@@ -188,7 +188,7 @@ extension ForgeClient {
   }
 }
 
-extension ForgeClient: DependencyKey {
+nonisolated extension ForgeClient: DependencyKey {
   static let liveValue = ForgeClient.github
   static let testValue = ForgeClient.github
 }

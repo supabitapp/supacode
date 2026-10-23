@@ -333,7 +333,7 @@ struct ZmxSessionWatcherClient: Sendable {
     ) -> ZmxSessionWatching
 }
 
-extension ZmxSessionWatcherClient: DependencyKey {
+nonisolated extension ZmxSessionWatcherClient: DependencyKey {
   nonisolated static let liveValue = ZmxSessionWatcherClient { surfaceID, socketPath, onSequences in
     ZmxSessionWatcher(surfaceID: surfaceID, socketPath: socketPath, onSequences: onSequences)
   }

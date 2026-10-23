@@ -18,7 +18,8 @@ zmx_global_cache_dir="${zmx_build_root}/.zig-global-cache"
 zmx_fingerprint_path="${zmx_build_root}/fingerprint"
 zmx_binary_path="${zmx_build_root}/bin/zmx"
 # Out-of-tree patches applied to the pinned zmx submodule at build time.
-# The submodule pointer stays on the fork's SHA; we never commit into it.
+# The submodule pointer stays on upstream; we never fork or commit into it.
+# Patches apply in lexical order and may stack on one another.
 zmx_patches_dir="${srcroot}/patches/zmx"
 
 # Mirror Xcode's ARCHS_STANDARD for macOS (arm64, x86_64); resync if Configurations/Project.xcconfig pins ARCHS.
@@ -49,6 +50,16 @@ print_fingerprint() {
 
 ensure_zmx_checkout() {
   if [ -f "${zmx_dir}/build.zig" ]; then
+    # Keep an existing clone's remote in step with .gitmodules, and flag a
+    # checkout behind the staged pin, which the patches do not target.
+    git -C "${repo_root}" submodule sync --quiet -- "${zmx_submodule_path}"
+    local pinned current
+    pinned="$(git -C "${repo_root}" ls-files --stage -- "${zmx_submodule_path}" | awk '{print $2}')"
+    current="$(git -C "${zmx_dir}" rev-parse HEAD)"
+    if [ -n "${pinned}" ] && [ "${current}" != "${pinned}" ]; then
+      echo "warning: ${zmx_submodule_path} is at ${current}, but the repo pins ${pinned}." >&2
+      echo "         Run: git submodule update --init --recursive -- ${zmx_submodule_path}" >&2
+    fi
     return
   fi
 
@@ -110,7 +121,8 @@ apply_zmx_patches() {
 revert_zmx_patches() {
   [ -d "${zmx_patches_dir}" ] || return 0
   local patch
-  for patch in "${zmx_patches_dir}"/*.patch; do
+  # Unwind newest first, since stacked patches only reverse in that order.
+  for patch in $(ls -r "${zmx_patches_dir}"/*.patch 2>/dev/null); do
     [ -e "${patch}" ] || continue
     # Prefer a clean reverse-apply; fall back to resetting just the patched files.
     # The fallback also guards against `set -e` aborting the trap mid-revert if the
@@ -162,6 +174,7 @@ if [ -f "${zmx_fingerprint_path}" ] &&
   exit 0
 fi
 
+rm -f "${zmx_fingerprint_path}"
 cd "${zmx_dir}"
 
 slice_paths=()

@@ -33,7 +33,7 @@ struct GitLabCLIClient: Sendable {
   var authenticatedHosts: @Sendable () async -> Set<String>
 }
 
-extension GitLabCLIClient: DependencyKey {
+nonisolated extension GitLabCLIClient: DependencyKey {
   static let liveValue = live()
 
   static func live(

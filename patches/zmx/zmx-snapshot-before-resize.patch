@@ -23,9 +23,9 @@ index 5f95e96..50bac46 100644
  
          // only resize if leader
          if (is_leader) {
-+            // Supacode: resize after the snapshot, as zmx 0.6 did. A surface can
-+            // attach at a transient placeholder size, and a snapshot laid out for
-+            // it would hard-wrap the restored scrollback at that width.
++            // Supacode: snapshot before resizing. A surface can attach at a
++            // transient placeholder size, and a snapshot laid out for it would
++            // hard-wrap the restored scrollback at that width.
 +            try resizeTerm(gpa, term, resize.cols, resize.rows);
              var ws = resize.winsize();
              _ = cross.c.ioctl(pty_fd, cross.c.TIOCSWINSZ, &ws);
