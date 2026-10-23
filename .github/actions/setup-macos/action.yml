@@ -17,9 +17,8 @@ runs:
     - name: Limit mise to the tools CI needs
       shell: bash
       run: echo "MISE_DISABLE_TOOLS=${{ inputs.disable-tools }}" >> "$GITHUB_ENV"
-    # The bundled zig 0.15.2 linker can't link the macOS 26.4+ SDK (ziglang/zig#31658).
-    # Reuse the shared selector so CI and local agree on the Zig-linkable Xcode.
-    - name: Select a Zig-linkable Xcode
+    # Reuse the shared selector so CI and local agree on the Xcode.
+    - name: Select Xcode
       shell: bash
       run: |
         set -euo pipefail

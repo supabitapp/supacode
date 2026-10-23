@@ -1,8 +1,8 @@
 diff --git a/include/ghostty.h b/include/ghostty.h
-index 3c4002abc..626c96876 100644
+index eec655037..23bfd0ca9 100644
 --- a/include/ghostty.h
 +++ b/include/ghostty.h
-@@ -641,6 +641,13 @@ typedef struct {
+@@ -710,6 +710,13 @@ typedef struct {
    const char* body;
  } ghostty_action_desktop_notification_s;
  
@@ -16,30 +16,30 @@ index 3c4002abc..626c96876 100644
  // apprt.action.SetTitle.C
  typedef struct {
    const char* title;
-@@ -926,6 +933,7 @@ typedef enum {
-   GHOSTTY_ACTION_SEARCH_SELECTED,
-   GHOSTTY_ACTION_READONLY,
+@@ -1016,6 +1023,7 @@ typedef enum {
    GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD,
+   GHOSTTY_ACTION_MOVE_TAB_TO_NEW_WINDOW,
+   GHOSTTY_ACTION_RESIZE_WINDOW,
 +  GHOSTTY_ACTION_CONTEXT_SIGNAL,
  } ghostty_action_tag_e;
  
  typedef union {
-@@ -942,6 +950,7 @@ typedef union {
-   ghostty_action_scrollbar_s scrollbar;
+@@ -1034,6 +1042,7 @@ typedef union {
    ghostty_action_inspector_e inspector;
+   ghostty_action_export_terminal_io_s export_terminal_io;
    ghostty_action_desktop_notification_s desktop_notification;
 +  ghostty_action_context_signal_s context_signal;
    ghostty_action_set_title_s set_title;
    ghostty_action_set_title_s set_tab_title;
    ghostty_action_prompt_title_e prompt_title;
 diff --git a/src/Surface.zig b/src/Surface.zig
-index c8055cfee..be18a3b6a 100644
+index b5b0ee4a0..583512485 100644
 --- a/src/Surface.zig
 +++ b/src/Surface.zig
-@@ -1073,6 +1073,16 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
-             try self.showDesktopNotification(title, body);
+@@ -1119,6 +1119,15 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
          },
  
+         .redraw => self.redraw(),
 +        .context_signal => |signal| {
 +            const id = std.mem.sliceTo(&signal.id, 0);
 +            const metadata = std.mem.sliceTo(&signal.metadata, 0);
@@ -49,17 +49,16 @@ index c8055cfee..be18a3b6a 100644
 +                .{ .action = signal.action, .id = id, .metadata = metadata },
 +            );
 +        },
-+
+ 
          .renderer_health => |health| self.updateRendererHealth(health),
  
-         .scrollbar => |scrollbar| self.updateScrollbar(scrollbar),
 diff --git a/src/apprt/action.zig b/src/apprt/action.zig
-index f6865af83..e7180a2d2 100644
+index 54a8faf19..0b2db578e 100644
 --- a/src/apprt/action.zig
 +++ b/src/apprt/action.zig
-@@ -343,6 +343,10 @@ pub const Action = union(Key) {
-     /// otherwise the terminal-set title.
-     copy_title_to_clipboard,
+@@ -364,6 +364,10 @@ pub const Action = union(Key) {
+     /// split or the window is fullscreen.
+     resize_window: ResizeWindow,
  
 +    /// OSC 3008 hierarchical context signal (UAPI spec). A program inside the
 +    /// terminal signalled a context change.
@@ -68,15 +67,15 @@ index f6865af83..e7180a2d2 100644
      /// Sync with: ghostty_action_tag_e
      pub const Key = enum(c_int) {
          quit,
-@@ -410,6 +414,7 @@ pub const Action = union(Key) {
-         search_selected,
-         readonly,
+@@ -436,6 +440,7 @@ pub const Action = union(Key) {
          copy_title_to_clipboard,
+         move_tab_to_new_window,
+         resize_window,
 +        context_signal,
  
          test "ghostty.h Action.Key" {
              try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
-@@ -771,6 +776,28 @@ pub const DesktopNotification = struct {
+@@ -830,6 +835,28 @@ pub const DesktopNotification = struct {
      }
  };
  
@@ -106,12 +105,12 @@ index f6865af83..e7180a2d2 100644
      trigger: input.Trigger,
      end,
 diff --git a/src/apprt/surface.zig b/src/apprt/surface.zig
-index 3cb0016fa..296e70bc9 100644
+index 3b1a04d8a..5b5b0d4a7 100644
 --- a/src/apprt/surface.zig
 +++ b/src/apprt/surface.zig
-@@ -60,6 +60,20 @@ pub const Message = union(enum) {
-         body: [255:0]u8,
-     },
+@@ -109,6 +109,20 @@ pub const Message = union(enum) {
+     /// Show a desktop notification.
+     desktop_notification: DesktopNotification,
  
 +    /// OSC 3008 hierarchical context signal (UAPI spec).
 +    context_signal: struct {
@@ -130,27 +129,42 @@ index 3cb0016fa..296e70bc9 100644
      /// Health status change for the renderer.
      renderer_health: renderer.Health,
  
+diff --git a/src/terminal/osc.zig b/src/terminal/osc.zig
+index 0c218fe46..73376350a 100644
+--- a/src/terminal/osc.zig
++++ b/src/terminal/osc.zig
+@@ -880,7 +880,9 @@ pub const Parser = struct {
+             },
+ 
+             .@"3008" => switch (c) {
+-                ';' => self.captureTrailing(.fixed),
++                // Supacode: allocating (like OSC 52) so an over-2048 notify keeps its
++                // title/earlier fields instead of being discarded whole (body may drop).
++                ';' => self.captureTrailing(.allocating),
+                 else => self.unknownOrInvalid(c),
+             },
+ 
 diff --git a/src/terminal/stream.zig b/src/terminal/stream.zig
-index 9771334f9..4187bcbfb 100644
+index b1c8a6c2a..dde6367d9 100644
 --- a/src/terminal/stream.zig
 +++ b/src/terminal/stream.zig
-@@ -125,6 +125,7 @@ pub const Action = union(Key) {
-     kitty_color_report: kitty.color.OSC,
-     color_operation: ColorOperation,
-     semantic_prompt: SemanticPrompt,
+@@ -138,6 +138,7 @@ pub const Action = union(Key) {
+     xt_checksum_extension: XtChecksumExtension,
+     program_status: ProgramStatus,
+     soft_reset,
 +    context_signal: ContextSignal,
  
      pub const Key = lib.Enum(
          lib.target,
-@@ -222,6 +223,7 @@ pub const Action = union(Key) {
-             "kitty_color_report",
-             "color_operation",
-             "semantic_prompt",
+@@ -246,6 +247,7 @@ pub const Action = union(Key) {
+             "xt_checksum_extension",
+             "program_status",
+             "soft_reset",
 +            "context_signal",
          },
      );
  
-@@ -348,6 +350,26 @@ pub const Action = union(Key) {
+@@ -430,6 +432,26 @@ pub const Action = union(Key) {
          }
      };
  
@@ -177,7 +191,7 @@ index 9771334f9..4187bcbfb 100644
      pub const StartHyperlink = struct {
          uri: []const u8,
          id: ?[]const u8,
-@@ -2047,6 +2069,21 @@ pub fn Stream(comptime H: type) type {
+@@ -2806,6 +2828,21 @@ pub fn Stream(comptime H: type) type {
                      self.handler.vt(.progress_report, v);
                  },
  
@@ -196,34 +210,34 @@ index 9771334f9..4187bcbfb 100644
 +                    });
 +                },
 +
-                 .conemu_sleep,
-                 .conemu_show_message_box,
-                 .conemu_change_tab_title,
-@@ -2058,7 +2095,6 @@ pub fn Stream(comptime H: type) type {
+                 .kitty_clipboard_protocol => |v| {
+                     self.handler.vt(.kitty_clipboard, v);
+                 },
+@@ -2834,7 +2871,6 @@ pub fn Stream(comptime H: type) type {
                  .conemu_run_process,
                  .kitty_text_sizing,
-                 .kitty_clipboard_protocol,
+                 .kitty_desktop_notification,
 -                .context_signal,
                  => {
                      log.debug("unimplemented OSC callback: {}", .{cmd});
                  },
 diff --git a/src/terminal/stream_terminal.zig b/src/terminal/stream_terminal.zig
-index 8e0f91110..93712be0d 100644
+index c94e196af..21fae8181 100644
 --- a/src/terminal/stream_terminal.zig
 +++ b/src/terminal/stream_terminal.zig
-@@ -259,6 +259,7 @@ pub const Handler = struct {
+@@ -803,6 +803,7 @@ pub const Handler = struct {
+             .dcs_unhook => try self.dcsUnhook(),
+ 
              // Have no terminal-modifying effect
-             .report_pwd,
-             .show_desktop_notification,
 +            .context_signal,
-             .progress_report,
-             .clipboard_contents,
              .title_push,
+             .title_pop,
+             => {},
 diff --git a/src/termio/stream_handler.zig b/src/termio/stream_handler.zig
-index fb3a6b3ff..08084ca69 100644
+index 8b6eb8947..ca9fd5431 100644
 --- a/src/termio/stream_handler.zig
 +++ b/src/termio/stream_handler.zig
-@@ -327,6 +327,7 @@ pub const StreamHandler = struct {
+@@ -348,6 +348,7 @@ pub const StreamHandler = struct {
              .window_title => try self.windowTitle(value.title),
              .report_pwd => try self.reportPwd(value.url),
              .show_desktop_notification => try self.showDesktopNotification(value.title, value.body),
@@ -231,8 +245,8 @@ index fb3a6b3ff..08084ca69 100644
              .progress_report => self.progressReport(value),
              .start_hyperlink => try self.startHyperlink(value.uri, value.id),
              .clipboard_contents => try self.clipboardContents(value.kind, value.data),
-@@ -1447,6 +1448,41 @@ pub const StreamHandler = struct {
-         self.surfaceMessageWriter(message);
+@@ -1821,6 +1822,41 @@ pub const StreamHandler = struct {
+         });
      }
  
 +    fn handleContextSignal(
@@ -273,18 +287,3 @@ index fb3a6b3ff..08084ca69 100644
      /// Send a report to the pty.
      pub fn sendSizeReport(self: *StreamHandler, style: terminal.SizeReportStyle) void {
          switch (style) {
-diff --git a/src/terminal/osc.zig b/src/terminal/osc.zig
-index 36cfd7f82..f610bf4e2 100644
---- a/src/terminal/osc.zig
-+++ b/src/terminal/osc.zig
-@@ -583,7 +583,9 @@ pub const Parser = struct {
-             },
- 
-             .@"3008" => switch (c) {
--                ';' => self.captureTrailing(.fixed),
-+                // Supacode: allocating (like OSC 52) so an over-2048 notify keeps its
-+                // title/earlier fields instead of being discarded whole (body may drop).
-+                ';' => self.captureTrailing(.allocating),
-                 else => self.state = .invalid,
-             },
- 

@@ -1,16 +1,24 @@
-diff --git a/src/main.zig b/src/main.zig
-index 89abdbc..33b1330 100644
---- a/src/main.zig
-+++ b/src/main.zig
-@@ -590,6 +590,7 @@ const Daemon = struct {
+diff --git a/src/loop.zig b/src/loop.zig
+index 30310da..5f95e96 100644
+--- a/src/loop.zig
++++ b/src/loop.zig
+@@ -352,6 +352,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+                 } else {
+                     // Feed PTY output to terminal emulator for state tracking
+                     vt_stream.nextSlice(buf[0..n]);
++                    daemon.cursor_tracker.track(buf[0..n]);
+                     daemon.setPwd(&term);
+                     daemon.has_pty_output = true;
+ 
+@@ -599,6 +600,7 @@ pub const Daemon = struct {
+     cwd_path_buf: [std.fs.max_path_bytes]u8 = undefined,
      has_pty_output: bool = false,
      has_had_client: bool = false,
-     has_terminal_client: bool = false, // true only after a real attach (.Init received)
 +    cursor_tracker: util.CursorShapeTracker = .{}, // last DECSCUSR, replayed on reattach.
      created_at: u64, // unix timestamp (ns)
      is_task_mode: bool = false, // flag for when session is run as a task
-     task_exit_code: ?u8 = null, // null = running or n/a, set when task completes
-@@ -950,6 +951,20 @@ const Daemon = struct {
+     task_id: [4]u8 = undefined,
+@@ -983,6 +985,19 @@ pub const Daemon = struct {
                  "cursor before serialize: x={d} y={d} pending_wrap={}",
                  .{ cursor.x, cursor.y, cursor.pending_wrap },
              );
@@ -19,7 +27,7 @@ index 89abdbc..33b1330 100644
 +            // serialized mode 12 win so an independently changed blink survives.
 +            // Per-screen shape is not tracked, so an alt-screen shape can linger.
 +            if (self.cursor_tracker.sequence()) |cursor_seq| {
-+                ipc.appendMessage(self.alloc, &client.write_buf, .Output, cursor_seq) catch |err| {
++                ipc.appendMessage(gpa, &client.write_buf, .Output, cursor_seq) catch |err| {
 +                    std.log.warn(
 +                        "failed to buffer cursor shape for client err={s}",
 +                        .{@errorName(err)},
@@ -27,33 +35,24 @@ index 89abdbc..33b1330 100644
 +                };
 +                client.has_pending_output = true;
 +            }
-+
-             if (util.serializeTerminalState(self.alloc, term)) |term_output| {
+             if (util.serializeTerminalState(gpa, term)) |term_output| {
                  std.log.debug("serialize terminal state", .{});
                  // Rewrite OSC 133;A to include redraw=0 so the outer terminal
-@@ -1169,6 +1184,7 @@ const Daemon = struct {
-     ) !void {
-         const state_payload = try osc8_stripper.strip(self.alloc, payload);
-         vt_stream.nextSlice(state_payload);
+@@ -1250,6 +1265,7 @@ pub const Daemon = struct {
+ 
+     pub fn handleOutput(self: *Daemon, gpa: std.mem.Allocator, payload: []const u8, term: *ghostty_vt.Terminal, vt_stream: anytype) !void {
+         vt_stream.nextSlice(payload);
 +        self.cursor_tracker.track(payload);
+         self.setPwd(term);
          self.has_pty_output = true;
          for (self.clients.items) |client| {
-             try ipc.appendMessage(self.alloc, &client.write_buf, .Output, payload);
-@@ -2591,6 +2607,7 @@ fn daemonLoop(daemon: *Daemon, server_sock_fd: i32, pty_fd: i32) !void {
-                 } else {
-                     const state_payload = try osc8_stripper.strip(daemon.alloc, buf[0..n]);
-                     vt_stream.nextSlice(state_payload);
-+                    daemon.cursor_tracker.track(buf[0..n]);
-                     daemon.has_pty_output = true;
- 
-                     // When no real terminal client has attached yet, respond to
 diff --git a/src/util.zig b/src/util.zig
-index 1ead461..01d17c6 100644
+index c3ba418..abb476a 100644
 --- a/src/util.zig
 +++ b/src/util.zig
-@@ -94,6 +94,120 @@ pub const Osc8Stripper = struct {
-     }
- };
+@@ -7,6 +7,121 @@ const label = @import("label.zig");
+ const lib_posix = @import("posix.zig");
+ const testing = std.testing;
  
 +/// Captures the most recent DECSCUSR (`CSI Ps SP q`) cursor shape from the PTY
 +/// stream and replays it on reattach, since the ghostty-vt formatter restores
@@ -169,10 +168,11 @@ index 1ead461..01d17c6 100644
 +    }
 +};
 +
++
  pub const SessionEntry = struct {
      name: []const u8,
      pid: ?i32,
-@@ -613,6 +727,9 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
+@@ -800,6 +915,9 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
      if (had_synchronized_output) {
          term.modes.set(.synchronized_output, false);
      }
@@ -180,9 +180,9 @@ index 1ead461..01d17c6 100644
 +    // otherwise leave the daemon terminal permanently desynchronized.
 +    defer if (had_synchronized_output) term.modes.set(.synchronized_output, true);
  
-     const pages = &term.screens.active.pages;
-     const screen_top = pages.getTopLeft(.screen);
-@@ -698,11 +815,6 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
+     // If state contains color override, restore it.
+     writeColorOverrides(&builder.writer, term);
+@@ -900,11 +1018,6 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
      const output = builder.writer.buffered();
      if (output.len == 0) return null;
  
@@ -194,8 +194,8 @@ index 1ead461..01d17c6 100644
      return alloc.dupe(u8, output) catch |err| {
          std.log.warn("failed to allocate terminal state err={s}", .{@errorName(err)});
          return null;
-@@ -1147,6 +1259,119 @@ fn expectStripped(chunks: []const []const u8, expected: []const u8) !void {
-     try testing.expectEqualStrings(expected, actual.items);
+@@ -1769,6 +1882,120 @@ test "serializeTerminalRange alternate screen returns only its grid" {
+     try testing.expectEqualStrings("alt", output);
  }
  
 +test "CursorShapeTracker captures the last DECSCUSR" {
@@ -271,15 +271,15 @@ index 1ead461..01d17c6 100644
 +
 +test "CursorShapeTracker replay restores the shape in a fresh terminal" {
 +    const alloc = testing.allocator;
++    const io = testing.io;
 +
 +    // DECSCUSR 5 selects a blinking bar cursor.
 +    var tracker = CursorShapeTracker{};
 +    tracker.track("\x1b[5 q");
 +
-+    var client = try ghostty_vt.Terminal.init(alloc, .{
++    var client = try ghostty_vt.Terminal.init(io, alloc, .{
 +        .cols = 80,
 +        .rows = 24,
-+        .max_scrollback = 0,
 +    });
 +    defer client.deinit(alloc);
 +    var stream = client.vtStream();
@@ -292,15 +292,15 @@ index 1ead461..01d17c6 100644
 +
 +test "CursorShapeTracker replay restores a steady shape with blink off" {
 +    const alloc = testing.allocator;
++    const io = testing.io;
 +
 +    // DECSCUSR 2 selects a steady block cursor (blink off).
 +    var tracker = CursorShapeTracker{};
 +    tracker.track("\x1b[2 q");
 +
-+    var client = try ghostty_vt.Terminal.init(alloc, .{
++    var client = try ghostty_vt.Terminal.init(io, alloc, .{
 +        .cols = 80,
 +        .rows = 24,
-+        .max_scrollback = 0,
 +    });
 +    defer client.deinit(alloc);
 +    var stream = client.vtStream();
@@ -311,6 +311,7 @@ index 1ead461..01d17c6 100644
 +    try testing.expect(!client.modes.get(.cursor_blinking));
 +}
 +
- fn testCreateTerminal(alloc: std.mem.Allocator, cols: u16, rows: u16, vt_data: []const u8) !ghostty_vt.Terminal {
-     var term = try ghostty_vt.Terminal.init(alloc, .{
++
+ fn testCreateTerminal(alloc: std.mem.Allocator, io: std.Io, cols: u16, rows: u16, vt_data: []const u8) !ghostty_vt.Terminal {
+     var term = try ghostty_vt.Terminal.init(io, alloc, .{
          .cols = cols,

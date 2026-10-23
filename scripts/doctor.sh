@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Verifies the build prerequisites on macOS 26.4+ and prints the fix for each
-# failure, instead of a 200-line Zig linker dump.
+# Verifies the build prerequisites and prints the fix for each failure, instead
+# of a 200-line Zig build dump.
 #
 # Usage: scripts/doctor.sh [--quiet]   (--quiet prints only failures). Exit 1 on any.
 set -uo pipefail
@@ -48,14 +48,13 @@ else
   fail "git submodules missing: ${missing_sub[*]}" "git submodule update --init --recursive"
 fi
 
-# 3. Zig-linkable Xcode
+# 3. Xcode
 developer_dir="$("${script_dir}/select-developer-dir.sh" 2>/dev/null)" || developer_dir=""
 if [ -n "${developer_dir}" ]; then
   sdk="$(DEVELOPER_DIR="${developer_dir}" xcrun --sdk macosx --show-sdk-path 2>/dev/null)"
-  pass "Zig-linkable Xcode: ${developer_dir} ($(basename "${sdk:-unknown}"))"
+  pass "Xcode: ${developer_dir} ($(basename "${sdk:-unknown}"))"
 else
-  fail "no Zig-linkable Xcode: macOS 26.4+ SDK dropped arm64-macos (ziglang/zig#31658)" \
-    "install Xcode 26.3 (ships the macOS 26.2 SDK): https://developer.apple.com/download/all/?q=Xcode%2026.3"
+  fail "no Xcode found" "install Xcode from the App Store"
 fi
 
 # 4 and 5 need an Xcode to point at.
