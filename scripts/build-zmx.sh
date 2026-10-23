@@ -52,7 +52,7 @@ ensure_zmx_checkout() {
   if [ -f "${zmx_dir}/build.zig" ]; then
     # Best effort, never fatal: move an old clone's remote to .gitmodules, and
     # flag a checkout off the staged pin, which the patches do not target.
-    [ -e "${zmx_dir}/.git" ] || return
+    [ -e "${zmx_dir}/.git" ] || return 0
     local expected_url configured_url pinned current
     expected_url="$(git -C "${repo_root}" config -f .gitmodules "submodule.${zmx_submodule_path}.url" || true)"
     configured_url="$(git -C "${repo_root}" config "submodule.${zmx_submodule_path}.url" || true)"

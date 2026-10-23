@@ -498,8 +498,11 @@ final class GhosttyRuntime {
       logger.warning("Clipboard read dropped: surface is gone.")
       return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE
     }
-    let pasteboardText = (wantsText || list) ? pasteboard.getOpinionatedStringContents() : nil
-    let plan = GhosttyClipboard.readPlan(wantsText: wantsText, list: list, pasteboardText: pasteboardText)
+    let pasteboardText = wantsText ? pasteboard.getOpinionatedStringContents() : nil
+    // A listing is metadata only: answer it from the declared types, never by reading contents.
+    let listsText = list && GhosttyClipboard.servesPlainText(pasteboard.types ?? [])
+    let plan = GhosttyClipboard.readPlan(
+      wantsText: wantsText, list: list, pasteboardText: pasteboardText, listsText: listsText)
     guard plan.result == GHOSTTY_CLIPBOARD_READ_STARTED else { return plan.result }
     completeClipboardRequest(surface, text: plan.text, available: plan.available, state: state, confirmed: false)
     return plan.result
@@ -1148,13 +1151,19 @@ nonisolated enum GhosttyClipboard {
   }
 
   /// Completing is only valid alongside `READ_STARTED`; any other result frees the request.
-  static func readPlan(wantsText: Bool, list: Bool, pasteboardText: String?) -> ReadPlan {
+  /// Listings name only what reads can serve, so a listed type is never answered empty.
+  static func readPlan(wantsText: Bool, list: Bool, pasteboardText: String?, listsText: Bool) -> ReadPlan {
     let text = wantsText ? pasteboardText : nil
     guard text != nil || list else {
       return ReadPlan(result: GHOSTTY_CLIPBOARD_READ_UNAVAILABLE, text: nil, available: [])
     }
-    let available = list && pasteboardText != nil ? [plainTextMime] : []
+    let available = list && listsText ? [plainTextMime] : []
     return ReadPlan(result: GHOSTTY_CLIPBOARD_READ_STARTED, text: text, available: available)
+  }
+
+  /// Whether the declared types yield `text/plain` reads: strings, or URLs pasted as text.
+  static func servesPlainText(_ types: [NSPasteboard.PasteboardType]) -> Bool {
+    types.contains(.string) || types.contains(.fileURL) || types.contains(.URL)
   }
 
   /// Kitty clipboard requests (OSC 5522) are denied until a confirmation prompt exists.

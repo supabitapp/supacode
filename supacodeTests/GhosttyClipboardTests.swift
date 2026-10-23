@@ -38,25 +38,32 @@ struct GhosttyClipboardTests {
   }
 
   @Test func readPlanIsUnavailableWithoutTextOrListing() {
-    let plan = GhosttyClipboard.readPlan(wantsText: true, list: false, pasteboardText: nil)
+    let plan = GhosttyClipboard.readPlan(wantsText: true, list: false, pasteboardText: nil, listsText: false)
     #expect(plan == GhosttyClipboard.ReadPlan(result: GHOSTTY_CLIPBOARD_READ_UNAVAILABLE, text: nil, available: []))
 
-    let unrequested = GhosttyClipboard.readPlan(wantsText: false, list: false, pasteboardText: "hello")
+    let unrequested = GhosttyClipboard.readPlan(wantsText: false, list: false, pasteboardText: "hello", listsText: true)
     #expect(unrequested.result == GHOSTTY_CLIPBOARD_READ_UNAVAILABLE)
   }
 
   @Test func readPlanServesRequestedText() {
-    let plan = GhosttyClipboard.readPlan(wantsText: true, list: false, pasteboardText: "hello")
+    let plan = GhosttyClipboard.readPlan(wantsText: true, list: false, pasteboardText: "hello", listsText: true)
     #expect(plan == GhosttyClipboard.ReadPlan(result: GHOSTTY_CLIPBOARD_READ_STARTED, text: "hello", available: []))
   }
 
-  @Test func readPlanListsTextOnlyWhenPresent() {
-    let listed = GhosttyClipboard.readPlan(wantsText: false, list: true, pasteboardText: "hello")
+  @Test func readPlanListsTextOnlyWhenServable() {
+    let listed = GhosttyClipboard.readPlan(wantsText: false, list: true, pasteboardText: nil, listsText: true)
     #expect(
       listed == GhosttyClipboard.ReadPlan(result: GHOSTTY_CLIPBOARD_READ_STARTED, text: nil, available: ["text/plain"]))
 
-    let empty = GhosttyClipboard.readPlan(wantsText: false, list: true, pasteboardText: nil)
+    let empty = GhosttyClipboard.readPlan(wantsText: false, list: true, pasteboardText: nil, listsText: false)
     #expect(empty == GhosttyClipboard.ReadPlan(result: GHOSTTY_CLIPBOARD_READ_STARTED, text: nil, available: []))
+  }
+
+  @Test func servesPlainTextForStringsAndURLsOnly() {
+    #expect(GhosttyClipboard.servesPlainText([.png, .string]))
+    #expect(GhosttyClipboard.servesPlainText([.fileURL]))
+    #expect(GhosttyClipboard.servesPlainText([.URL]))
+    #expect(!GhosttyClipboard.servesPlainText([.png, .tiff]))
   }
 
   @Test func confirmationDeniesKittyRequestsOnly() {
