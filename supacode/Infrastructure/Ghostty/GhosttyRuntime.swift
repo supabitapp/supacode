@@ -72,7 +72,11 @@ final class GhosttyRuntime {
       },
       read_clipboard_cb: { @Sendable userdata, location, state, mimes, mimesLen, list in
         // The MIME list is borrowed for this call only, so it is resolved before any hop.
-        let requested = (0..<mimesLen).compactMap { index in mimes?[index].map { String(cString: $0) } }
+        var requested: [String] = []
+        for index in 0..<mimesLen {
+          guard let mime = mimes?[index] else { continue }
+          requested.append(String(cString: mime))
+        }
         return GhosttyRuntime.readClipboardCallback(
           userdata, location, state, wantsText: GhosttyClipboard.requestsPlainText(requested), list: list)
       },
@@ -382,21 +386,12 @@ final class GhosttyRuntime {
     let userdataBits = userdata.map { UInt(bitPattern: $0) }
     let stateBits = state.map { UInt(bitPattern: $0) }
     // Copy the borrowed payload; completion runs after this call returns.
-    let payload = confirm.map { pointer in
-      let confirm = pointer.pointee
-      let contents = (0..<confirm.contents_len).compactMap { index in
-        confirm.contents.flatMap { GhosttyClipboard.Item($0[index]) }
-      }
-      let available = (0..<confirm.available_len).compactMap { index in
-        confirm.available?[index].map { String(cString: $0) }
-      }
-      return GhosttyClipboard.ConfirmPayload(contents: contents, available: available)
-    }
     let approves = GhosttyClipboard.approvesConfirmation(for: request)
+    let payload = approves ? confirm.map { GhosttyClipboard.ConfirmPayload($0.pointee) } : nil
     DispatchQueue.main.async {
       MainActor.assumeIsolated {
         if !approves { logger.info("Denied a Kitty clipboard request: no confirmation prompt yet.") }
-        confirmReadClipboard(userdataBits: userdataBits, stateBits: stateBits, payload: approves ? payload : nil)
+        confirmReadClipboard(userdataBits: userdataBits, stateBits: stateBits, payload: payload)
       }
     }
   }
@@ -503,7 +498,7 @@ final class GhosttyRuntime {
       logger.warning("Clipboard read dropped: surface is gone.")
       return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE
     }
-    let pasteboardText = wantsText || list ? pasteboard.getOpinionatedStringContents() : nil
+    let pasteboardText = (wantsText || list) ? pasteboard.getOpinionatedStringContents() : nil
     let plan = GhosttyClipboard.readPlan(wantsText: wantsText, list: list, pasteboardText: pasteboardText)
     guard plan.result == GHOSTTY_CLIPBOARD_READ_STARTED else { return plan.result }
     completeClipboardRequest(surface, text: plan.text, available: plan.available, state: state, confirmed: false)
@@ -540,17 +535,18 @@ final class GhosttyRuntime {
   ) {
     let availableStrings = available.compactMap { strdup($0) }
     defer { availableStrings.forEach { free($0) } }
-    let availablePointers = availableStrings.map { UnsafePointer<CChar>($0) as UnsafePointer<CChar>? }
+    let availablePointers: [UnsafePointer<CChar>?] = availableStrings.map { UnsafePointer($0) }
     // `utf8CString` keeps a terminator, so the buffer is never empty.
-    let bytes = Array((text ?? "").utf8CString)
+    let bytes = (text ?? "").utf8CString
     GhosttyClipboard.plainTextMime.withCString { mime in
       bytes.withUnsafeBufferPointer { data in
-        var content = ghostty_clipboard_content_s(mime: mime, data: data.baseAddress, len: data.count - 1)
-        withUnsafePointer(to: &content) { contentPointer in
+        let content = ghostty_clipboard_content_s(mime: mime, data: data.baseAddress, len: data.count - 1)
+        withUnsafePointer(to: content) { contentPointer in
           availablePointers.withUnsafeBufferPointer { availableBuffer in
+            let hasText = text != nil
             var complete = ghostty_clipboard_complete_s(
-              contents: text == nil ? nil : contentPointer,
-              contents_len: text == nil ? 0 : 1,
+              contents: hasText ? contentPointer : nil,
+              contents_len: hasText ? 1 : 0,
               available: availableBuffer.baseAddress,
               available_len: availableBuffer.count,
               confirmed: confirmed,
@@ -1123,17 +1119,6 @@ nonisolated enum GhosttyClipboard {
   struct Item: Equatable, Sendable {
     let mime: String
     let data: Data
-
-    init(mime: String, data: Data) {
-      self.mime = mime
-      self.data = data
-    }
-
-    init?(_ content: ghostty_clipboard_content_s) {
-      guard let mime = content.mime else { return nil }
-      self.mime = String(cString: mime)
-      self.data = content.data.map { Data(bytes: $0, count: content.len) } ?? Data()
-    }
   }
 
   struct ConfirmPayload: Equatable, Sendable {
@@ -1182,17 +1167,44 @@ nonisolated enum GhosttyClipboard {
   }
 
   /// One write per pasteboard type: text aliases collapse onto the string type, the rest keep their bytes.
-  static func pasteboardWrites(_ items: [Item]) -> [(type: NSPasteboard.PasteboardType, value: PasteboardValue)] {
-    var writes: [(type: NSPasteboard.PasteboardType, value: PasteboardValue)] = []
+  typealias PasteboardWrite = (type: NSPasteboard.PasteboardType, value: PasteboardValue)
+
+  static func pasteboardWrites(_ items: [Item]) -> [PasteboardWrite] {
+    var writes: [PasteboardWrite] = []
     var seen: Set<NSPasteboard.PasteboardType> = []
     for item in items {
       let isText = textMimes.contains(item.mime)
       guard let type = isText ? .string : NSPasteboard.PasteboardType(mimeType: item.mime) else { continue }
       // Plain text outside the UTF-8 aliases (e.g. UTF-16) would land raw where readers expect UTF-8.
-      guard isText || UTType(type.rawValue)?.conforms(to: .plainText) != true else { continue }
+      if !isText, UTType(type.rawValue)?.conforms(to: .plainText) == true { continue }
       guard seen.insert(type).inserted else { continue }
       writes.append((type: type, value: isText ? .string(text(from: item.data)) : .data(item.data)))
     }
     return writes
+  }
+}
+
+nonisolated extension GhosttyClipboard.Item {
+  /// Copies one representation out of Ghostty's borrowed buffer.
+  init?(_ content: ghostty_clipboard_content_s) {
+    guard let mime = content.mime else { return nil }
+    self.init(mime: String(cString: mime), data: content.data.map { Data(bytes: $0, count: content.len) } ?? Data())
+  }
+}
+
+nonisolated extension GhosttyClipboard.ConfirmPayload {
+  /// Copies a confirmation out of Ghostty's borrowed buffers.
+  init(_ confirm: ghostty_clipboard_confirm_s) {
+    var contents: [GhosttyClipboard.Item] = []
+    for index in 0..<confirm.contents_len {
+      guard let item = confirm.contents.flatMap({ GhosttyClipboard.Item($0[index]) }) else { continue }
+      contents.append(item)
+    }
+    var available: [String] = []
+    for index in 0..<confirm.available_len {
+      guard let mime = confirm.available?[index] else { continue }
+      available.append(String(cString: mime))
+    }
+    self.init(contents: contents, available: available)
   }
 }

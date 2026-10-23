@@ -66,12 +66,13 @@ private enum SparkleUpdater {
     updaterDelegate: delegate,
     userDriverDelegate: nil
   )
+  static var updater: SPUUpdater { controller.updater }
 }
 
 nonisolated extension UpdaterClient: DependencyKey {
   static let liveValue = UpdaterClient(
     configure: { checks, downloads, checkInBackground in
-      let updater = SparkleUpdater.controller.updater
+      let updater = SparkleUpdater.updater
       updater.automaticallyChecksForUpdates = checks
       updater.automaticallyDownloadsUpdates = downloads
       if checkInBackground, checks {
@@ -79,7 +80,7 @@ nonisolated extension UpdaterClient: DependencyKey {
       }
     },
     setUpdateChannel: { channel in
-      let updater = SparkleUpdater.controller.updater
+      let updater = SparkleUpdater.updater
       SparkleUpdater.delegate.updateChannel = channel
       updater.updateCheckInterval = channel == .tip ? 43200 : 259200
       if updater.automaticallyChecksForUpdates {
@@ -87,7 +88,7 @@ nonisolated extension UpdaterClient: DependencyKey {
       }
     },
     checkForUpdates: {
-      SparkleUpdater.controller.updater.checkForUpdates()
+      SparkleUpdater.updater.checkForUpdates()
     }
   )
 
