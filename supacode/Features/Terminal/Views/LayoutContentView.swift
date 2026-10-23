@@ -23,8 +23,6 @@ struct LayoutContentView: View {
   // NSHostingView boundary, which environment objects do not cross.
   @Environment(GhosttyShortcutManager.self) private var ghosttyShortcuts
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
-  /// One drag source per worktree layout, stable across rebuilds.
-  @State private var dragModel = PaneTabDragModel()
 
   var body: some View {
     // Body reads register the observation; the AppKit container below only
@@ -39,8 +37,7 @@ struct LayoutContentView: View {
         unfocusedOverlay: unfocusedOverlay,
         surfaceState: surfaceState,
         isLifecycleBusy: isLifecycleBusy,
-        showWindowedPane: showWindowedPane,
-        dragModel: dragModel
+        showWindowedPane: showWindowedPane
       ),
       ghosttyShortcuts: ghosttyShortcuts,
       commandKeyObserver: commandKeyObserver,
@@ -64,7 +61,7 @@ struct PaneRenderContext {
   var isLifecycleBusy = false
   var showWindowedPane: (PaneID) -> Void = { _ in }
   /// Shared tab-drag source, so a pane's split zones can gray out invalid drops.
-  var dragModel = PaneTabDragModel()
+  var dragModel = PaneTabDragModel.shared
 }
 
 /// Renders the pane tree itself: the split structure over panes, each pane a
@@ -330,7 +327,6 @@ struct PaneStripView: View {
   var surfaceState: (UUID) -> WorktreeSurfaceState? = { _ in nil }
   var isLifecycleBusy = false
   var context: Context = .embedded
-  /// Shared tab-drag source; nil in a pane window, where there are no drop zones.
   var dragModel: PaneTabDragModel?
 
   @Shared(.settingsFile) private var settingsFile
@@ -401,7 +397,7 @@ struct PaneStripView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       // On the whole content region, so a dormant pane still takes drops.
       .overlay {
-        if context == .embedded, let dragModel {
+        if context == .embedded, let dragModel, dragModel.isDraggingTab {
           PaneSplitDropZones(pane: pane, store: store, dragModel: dragModel)
         }
       }
@@ -537,8 +533,8 @@ private struct WindowedPanePlaceholderView: View {
 
 /// Edge drop zones over a pane's content: dropping a dragged tab on an edge
 /// splits the pane toward it, previewing the half the new pane will occupy.
-/// The zones register only the private tab-drag payload, so file drags still
-/// reach the terminal beneath.
+/// Mounted only during a tab drag: each zone's AppKit drop view registers
+/// `public.item`, so an idle one would take file drops from the terminal.
 private struct PaneSplitDropZones: View {
   let pane: Pane
   let store: StoreOf<LayoutFeature>

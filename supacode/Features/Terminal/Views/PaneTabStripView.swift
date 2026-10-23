@@ -20,13 +20,18 @@ nonisolated struct PaneTabDragPayload: Codable, Sendable, Transferable {
   }
 }
 
-/// Per-worktree drag state shared across sibling panes: the source tab
-/// (captured at drag start, since `.dropDestination`'s `isTargeted` has no
-/// payload access) and the full-span target the parent split paints across both
-/// its sides.
+/// App-wide tab drag state: the source tab (captured at drag start, since
+/// `.dropDestination`'s `isTargeted` has no payload access) and the full-span
+/// target the parent split paints across both its sides.
 @MainActor @Observable final class PaneTabDragModel {
+  /// One tab drag runs at a time, so the main layout and pane windows share it.
+  static let shared = PaneTabDragModel()
+
   var sourceTabID: TabID?
   var spanTarget: SpanTarget?
+
+  /// The split zones exist only while this holds: idle, their AppKit drop views would take file drops.
+  var isDraggingTab: Bool { sourceTabID != nil }
 
   struct SpanTarget: Equatable {
     let anchorPaneID: PaneID
@@ -34,7 +39,9 @@ nonisolated struct PaneTabDragPayload: Codable, Sendable, Transferable {
   }
 
   /// Records the source at drag start, clearing any target a prior drag left.
+  /// Repeat calls for the same tab keep the in-flight span target.
   func startDrag(from tabID: TabID) {
+    guard sourceTabID != tabID else { return }
     sourceTabID = tabID
     spanTarget = nil
   }
@@ -57,7 +64,6 @@ struct PaneTabStrip: View {
   let store: StoreOf<LayoutFeature>
   let runtime: ContentRuntime
   let surfaceState: (UUID) -> WorktreeSurfaceState?
-  /// Shared drag source, nil in a pane window; drives the split-zone graying.
   var dragModel: PaneTabDragModel?
 
   @Environment(\.controlActiveState) private var controlActiveState
@@ -87,7 +93,7 @@ struct PaneTabStrip: View {
       // A drop on the strip body (past the tabs) appends to this pane.
       PaneTabDrag.performDrop(items, into: pane, at: pane.tabs.count, store: store, dragModel: dragModel)
     } isTargeted: {
-      isAppendDropTargeted = $0
+      isAppendDropTargeted = $0 && PaneTabDrag.isInLayout(dragModel?.sourceTabID, store: store)
     }
   }
 
@@ -296,18 +302,24 @@ enum PaneTabDrag {
   }
 
   /// Whether a split drop of the dragged tab onto `pane`'s edge would take.
-  /// A pane's only tab dropped on its own edge is refused; an unknown source
-  /// (another window) can't be proven invalid, so it stays highlightable.
+  /// A pane's only tab dropped on its own edge is refused, and so is a tab from
+  /// another worktree, which this layout cannot move.
   @MainActor
   static func canSplitDrop(
     sourceTabID: TabID?,
     anchor pane: Pane,
     store: StoreOf<LayoutFeature>
   ) -> Bool {
-    guard let sourceTabID, let sourcePane = store.layout.pane(containingTab: sourceTabID) else {
-      return true
-    }
+    guard let sourceTabID else { return true }
+    guard let sourcePane = store.layout.pane(containingTab: sourceTabID) else { return false }
     return sourcePane.id != pane.id || sourcePane.tabs.count > 1
+  }
+
+  /// Whether the dragged tab belongs to this layout; a tab from another worktree can't move here.
+  @MainActor
+  static func isInLayout(_ sourceTabID: TabID?, store: StoreOf<LayoutFeature>) -> Bool {
+    guard let sourceTabID else { return true }
+    return store.layout.pane(containingTab: sourceTabID) != nil
   }
 }
 
@@ -456,6 +468,15 @@ private struct PaneTabView: View {
           .onAppear { dragModel?.startDrag(from: tab.id) }
           .onDisappear { dragModel?.reset() }
       }
+      // The session brackets the drag even when the preview's lifetime doesn't;
+      // a stale source would keep the zones over the terminal.
+      .onDragSessionUpdated { session in
+        switch session.phase {
+        case .initial, .active: dragModel?.startDrag(from: tab.id)
+        case .ended, .dataTransferCompleted: dragModel?.reset()
+        @unknown default: break
+        }
+      }
     }
     .overlay {
       if isEditing {
@@ -538,10 +559,13 @@ private struct PaneTabView: View {
       }
     }
     .dropDestination(for: PaneTabDragPayload.self) { items, _ in
-      guard let index = pane.tabs.index(id: tab.id) else { return false }
+      guard let index = pane.tabs.index(id: tab.id) else {
+        dragModel?.reset()
+        return false
+      }
       return PaneTabDrag.performDrop(items, into: pane, at: index, store: store, dragModel: dragModel)
     } isTargeted: {
-      isDropTargeted = $0
+      isDropTargeted = $0 && PaneTabDrag.isInLayout(dragModel?.sourceTabID, store: store)
     }
     .contextMenu { contextMenuItems }
   }

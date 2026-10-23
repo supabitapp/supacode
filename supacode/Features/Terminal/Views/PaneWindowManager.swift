@@ -569,7 +569,8 @@ private struct WindowedPaneRootView: View {
             surfaceState: { [weak manager] surfaceID in
               manager?.hostIfExists(for: worktreeID)?.surfaceStates[surfaceID]
             },
-            context: .windowed
+            context: .windowed,
+            dragModel: .shared
           )
         }
         .onAppear {
