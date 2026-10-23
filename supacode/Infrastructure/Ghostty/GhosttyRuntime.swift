@@ -392,10 +392,11 @@ final class GhosttyRuntime {
       }
       return GhosttyClipboard.ConfirmPayload(contents: contents, available: available)
     }
-    let approved = GhosttyClipboard.approvesConfirmation(for: request) ? payload : nil
+    let approves = GhosttyClipboard.approvesConfirmation(for: request)
     DispatchQueue.main.async {
       MainActor.assumeIsolated {
-        confirmReadClipboard(userdataBits: userdataBits, stateBits: stateBits, payload: approved)
+        if !approves { logger.info("Denied a Kitty clipboard request: no confirmation prompt yet.") }
+        confirmReadClipboard(userdataBits: userdataBits, stateBits: stateBits, payload: approves ? payload : nil)
       }
     }
   }
@@ -1187,6 +1188,8 @@ nonisolated enum GhosttyClipboard {
     for item in items {
       let isText = textMimes.contains(item.mime)
       guard let type = isText ? .string : NSPasteboard.PasteboardType(mimeType: item.mime) else { continue }
+      // Plain text outside the UTF-8 aliases (e.g. UTF-16) would land raw where readers expect UTF-8.
+      guard isText || UTType(type.rawValue)?.conforms(to: .plainText) != true else { continue }
       guard seen.insert(type).inserted else { continue }
       writes.append((type: type, value: isText ? .string(text(from: item.data)) : .data(item.data)))
     }

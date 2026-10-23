@@ -59,13 +59,18 @@ EOF
 
 ensure_ghostty_checkout() {
   if [ -f "${ghostty_dir}/build.zig" ]; then
-    # Keep an existing clone's remote in step with .gitmodules, and flag a
-    # checkout behind the staged pin, which the patches do not target.
-    git -C "${repo_root}" submodule sync --quiet -- "${ghostty_submodule_path}"
-    local pinned current
-    pinned="$(git -C "${repo_root}" ls-files --stage -- "${ghostty_submodule_path}" | awk '{print $2}')"
-    current="$(git -C "${ghostty_dir}" rev-parse HEAD)"
-    if [ -n "${pinned}" ] && [ "${current}" != "${pinned}" ]; then
+    # Best effort, never fatal: move an old clone's remote to .gitmodules, and
+    # flag a checkout off the staged pin, which the patches do not target.
+    [ -e "${ghostty_dir}/.git" ] || return
+    local expected_url configured_url pinned current
+    expected_url="$(git -C "${repo_root}" config -f .gitmodules "submodule.${ghostty_submodule_path}.url" || true)"
+    configured_url="$(git -C "${repo_root}" config "submodule.${ghostty_submodule_path}.url" || true)"
+    if [ -n "${expected_url}" ] && [ "${configured_url}" != "${expected_url}" ]; then
+      git -C "${repo_root}" submodule sync --quiet -- "${ghostty_submodule_path}" || true
+    fi
+    pinned="$(git -C "${repo_root}" ls-files --stage -- "${ghostty_submodule_path}" | awk '$3 == 0 {print $2}' || true)"
+    current="$(git -C "${ghostty_dir}" rev-parse HEAD 2>/dev/null || true)"
+    if [ -n "${pinned}" ] && [ -n "${current}" ] && [ "${current}" != "${pinned}" ]; then
       echo "warning: ${ghostty_submodule_path} is at ${current}, but the repo pins ${pinned}." >&2
       echo "         Run: git submodule update --init --recursive -- ${ghostty_submodule_path}" >&2
     fi
@@ -185,6 +190,7 @@ if [ -f "${ghostty_fingerprint_path}" ] &&
   exit 0
 fi
 
+rm -f "${ghostty_fingerprint_path}"
 cd "${ghostty_dir}"
 mise exec -- zig build -Doptimize=ReleaseFast -Demit-xcframework=true -Demit-macos-app=false -Dsentry=false --prefix "${ghostty_build_root}" --cache-dir "${ghostty_local_cache_dir}" --global-cache-dir "${ghostty_global_cache_dir}"
 rsync -a --delete "${ghostty_dir}/macos/GhosttyKit.xcframework/" "${xcframework_path}/"

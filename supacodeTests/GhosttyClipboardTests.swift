@@ -89,4 +89,20 @@ struct GhosttyClipboardTests {
     #expect(writes.map(\.type) == [.string, .png])
     #expect(writes.map(\.value) == [.string("hi"), .data(png)])
   }
+
+  @Test func pasteboardWritesSkipTextOutsideTheUTF8Aliases() {
+    let writes = GhosttyClipboard.pasteboardWrites([
+      GhosttyClipboard.Item(mime: "text/plain;charset=utf-16", data: Data([0xFF, 0xFE, 0x68, 0x00]))
+    ])
+
+    #expect(writes.isEmpty)
+  }
+
+  @Test func pasteboardWritesKeepRichTextTypes() {
+    let html = Data("<b>hi</b>".utf8)
+    let writes = GhosttyClipboard.pasteboardWrites([GhosttyClipboard.Item(mime: "text/html", data: html)])
+
+    #expect(writes.map(\.type) == [.html])
+    #expect(writes.map(\.value) == [.data(html)])
+  }
 }

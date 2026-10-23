@@ -15,6 +15,8 @@ is_usable_xcode() {
   [ -x "${dir}/usr/bin/xcodebuild" ] || return 1
   ver="$(DEVELOPER_DIR="$dir" xcrun --sdk macosx --show-sdk-version 2>/dev/null)" || return 1
   [ -n "$ver" ] || return 1
+  # A bare major ("27") sorts before "26.0" under sort -V, so normalize it.
+  case "$ver" in *.*) ;; *) ver="${ver}.0" ;; esac
   [ "$(printf '%s\n%s\n' "$min_sdk_version" "$ver" | sort -V | head -1)" = "$min_sdk_version" ]
 }
 
@@ -30,7 +32,7 @@ candidates=()
 if current="$(xcode-select -p 2>/dev/null)" && [ -n "${current}" ]; then
   candidates+=("${current}")
 fi
-# Side-by-side installs (Xcode_27.app, Xcode-beta.app), newest name first.
+# Side-by-side installs (Xcode_27.app, Xcode-beta.app); the first usable one wins.
 while IFS= read -r app; do
   [ -n "${app}" ] && candidates+=("${app}/Contents/Developer")
 done < <(ls -d /Applications/Xcode*.app 2>/dev/null | sort -rV)
