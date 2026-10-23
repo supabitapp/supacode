@@ -211,12 +211,12 @@ private struct GlobalHotkeySettingRow: View {
 
   // A global chord captured system-wide would also shadow a matching in-app
   // shortcut, so reject both system-reserved chords and effective app shortcuts.
+  // Global hotkeys register physical key codes, so the comparison is physical too.
   private func conflictName(for override: AppShortcutOverride) -> String? {
-    let display = override.displayString
-    if AppShortcutOverride.allReservedDisplayStrings().contains(display) { return "the system" }
+    if AppShortcutOverride.allReservedChords().contains(override.physicalChord) { return "the system" }
     for shortcut in AppShortcuts.all {
       guard let effective = shortcut.effective(from: store.shortcutOverrides) else { continue }
-      if effective.display == display { return shortcut.displayName }
+      if effective.physicalChord == override.physicalChord { return shortcut.displayName }
     }
     return nil
   }
