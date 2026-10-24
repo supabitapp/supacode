@@ -7,7 +7,7 @@ struct MemoryPressureClient {
   var warnings: @Sendable () -> AsyncStream<Void>
 }
 
-extension MemoryPressureClient: DependencyKey {
+nonisolated extension MemoryPressureClient: DependencyKey {
   static let liveValue = MemoryPressureClient(
     warnings: {
       AsyncStream { continuation in

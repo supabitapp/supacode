@@ -51,7 +51,7 @@ nonisolated struct LayoutContentFactory: Sendable {
   var make: @MainActor @Sendable (ContentRequest) -> any TabContent
 }
 
-extension LayoutContentFactory: DependencyKey {
+nonisolated extension LayoutContentFactory: DependencyKey {
   // `unimplemented(_:placeholder:)` cannot mint the id-bound placeholder, so
   // this hand-rolls the same report-and-return contract.
   static let liveValue = LayoutContentFactory(
@@ -64,7 +64,7 @@ extension LayoutContentFactory: DependencyKey {
   static let testValue = liveValue
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   var layoutContentFactory: LayoutContentFactory {
     get { self[LayoutContentFactory.self] }
     set { self[LayoutContentFactory.self] = newValue }
@@ -77,7 +77,7 @@ nonisolated struct ContentSessionKiller: Sendable {
   var kill: @Sendable (_ content: ContentID, _ worktree: Worktree.ID) async -> Void
 }
 
-extension ContentSessionKiller: DependencyKey {
+nonisolated extension ContentSessionKiller: DependencyKey {
   // The integration layer injects the zmx-backed kill; running unwired must be
   // loud, or closed tabs would confirm tombstones without killing anything.
   static let liveValue = ContentSessionKiller(
@@ -96,7 +96,7 @@ nonisolated struct SplitZoomPolicy: Sendable {
   var preservesZoomOnNavigation: @MainActor @Sendable () -> Bool
 }
 
-extension SplitZoomPolicy: DependencyKey {
+nonisolated extension SplitZoomPolicy: DependencyKey {
   // Matches GhosttyRuntime's no-config fallback until the real read is wired.
   static let liveValue = SplitZoomPolicy(preservesZoomOnNavigation: { false })
 
@@ -1116,7 +1116,7 @@ extension LayoutFeature {
   }
 }
 
-extension ContentState {
+nonisolated extension ContentState {
   /// The terminal payload; the only kind today.
   fileprivate var terminalState: TerminalContentState? {
     switch self {

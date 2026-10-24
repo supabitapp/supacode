@@ -73,7 +73,7 @@ you can bind an action to a hotkey or fire it from another app.
 - macOS 26.0+
 - [mise](https://mise.jdx.dev/) for the pinned toolchain. Add `~/.local/bin` to your `PATH`.
 - git submodules: `git submodule update --init --recursive`
-- **Xcode 26.3** if you are on macOS 26.4+ (see [below](#building-on-macos-264-tahoe)).
+- Xcode, with its license accepted and first launch complete.
 
 ## Quick start
 
@@ -85,7 +85,7 @@ make doctor    # check every build prerequisite and print fixes for anything mis
 make run-app   # build and launch the Debug app
 ```
 
-`make doctor` verifies mise, submodules, a Zig-linkable Xcode, the Metal Toolchain, and the
+`make doctor` verifies mise, submodules, Xcode, the Metal Toolchain, and the
 pinned tools, and prints the exact command to fix anything that is missing. The build targets
 run it automatically as a quiet preflight.
 
@@ -97,23 +97,15 @@ make build-app                   # build the macOS app (Debug)
 make run-app                     # build and launch
 ```
 
-### Building on macOS 26.4+ (Tahoe)
-
-GhosttyKit is built with a pinned Zig (`0.15.2`, required exactly by ghostty) whose linker
-cannot link the macOS 26.4+ SDK: that SDK dropped the `arm64-macos` slice from `libSystem.tbd`
-([ziglang/zig#31658](https://github.com/ziglang/zig/issues/31658)), so the build fails with a
-wall of `undefined symbol` errors. Install [Xcode 26.3](https://developer.apple.com/download/all/?q=Xcode%2026.3),
-which ships the macOS 26.2 SDK that still has `arm64-macos`. You do not need to switch it
-globally: the build auto-detects a Zig-linkable Xcode and pins it for that build only. After
-installing Xcode 26.3 once:
+On a fresh Xcode, finish its setup once:
 
 ```bash
-sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -license accept
-sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -runFirstLaunch
-sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -downloadComponent MetalToolchain
+sudo xcodebuild -license accept
+sudo xcodebuild -runFirstLaunch
+sudo xcodebuild -downloadComponent MetalToolchain
 ```
 
-See [AGENTS.md](AGENTS.md) for the full rationale and the rest of the architecture.
+See [AGENTS.md](AGENTS.md) for the rest of the architecture.
 
 ## Development
 

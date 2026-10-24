@@ -1,6 +1,6 @@
 import Foundation
 
-struct WorktreeTerminalNotification: Identifiable, Equatable, Sendable {
+nonisolated struct WorktreeTerminalNotification: Identifiable, Equatable, Sendable {
   let id: UUID
   let surfaceID: UUID
   let title: String

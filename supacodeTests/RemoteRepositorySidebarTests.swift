@@ -959,12 +959,14 @@ struct RemotePathClassificationTests {
 
   @Test func resolveRemotePathTimesOutOnAHangingProbe() async {
     let host = RemoteHost(alias: "devbox")
-    // A shell that never returns in time stands in for an unreachable host that
-    // accepts the connection but stalls; the timeout must reject it.
+    // A shell that never answers stands in for an unreachable host that accepts
+    // the connection but stalls; only the timeout can end the probe.
+    let (never, keepOpen) = AsyncStream<Never>.makeStream()
     let hanging = ShellClient(
       run: { _, _, _ in
-        try await Task.sleep(for: .seconds(5))
-        return ShellOutput(stdout: "/home/me/proj", stderr: "", exitCode: 0)
+        _ = keepOpen
+        for await _ in never {}
+        throw CancellationError()
       },
       runLoginImpl: { _, _, _, _ in ShellOutput(stdout: "", stderr: "", exitCode: 0) }
     )

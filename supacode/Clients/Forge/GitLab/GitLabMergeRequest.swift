@@ -60,7 +60,7 @@ nonisolated struct GitLabMergeRequest: Decodable, Equatable {
   }
 }
 
-extension GitLabMergeRequest {
+nonisolated extension GitLabMergeRequest {
   /// Branch-to-proposal matching over one page of merge requests, using the
   /// shared tie-break: open beats merged beats the rest, then recency, then
   /// the highest iid.

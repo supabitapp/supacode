@@ -103,7 +103,7 @@ extension ForgeRegistry {
   }
 }
 
-extension ForgeRegistry: DependencyKey {
+nonisolated extension ForgeRegistry: DependencyKey {
   static let liveValue = ForgeRegistry(
     resolveForgeID: { rootURL, host in
       await ForgeRegistry.resolveLive(rootURL: rootURL, host: host)

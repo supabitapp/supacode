@@ -10,7 +10,7 @@ nonisolated struct WorktreePlacementOverride: Equatable {
   var path: String?
 }
 
-extension WorktreePlacementOverride {
+nonisolated extension WorktreePlacementOverride {
   /// Validates a worktree-name leaf override. Returns an error message when the
   /// name would escape the parent folder or collide with git internals, or
   /// `nil` when it is empty (use the default) or acceptable. Shared by the

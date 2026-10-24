@@ -183,7 +183,7 @@ enum GithubAuthStatusParsing {
   }
 }
 
-struct GithubCLIClient: Sendable {
+nonisolated struct GithubCLIClient: Sendable {
   var latestRun: @Sendable (URL, String) async throws -> ForgeWorkflowRun?
   var resolveRemoteInfo: @Sendable (URL) async -> GithubRemoteInfo?
   var batchPullRequests: @Sendable (String, String, String, [String]) async throws -> [String: ForgePullRequest]
@@ -198,7 +198,7 @@ struct GithubCLIClient: Sendable {
   var authenticatedHosts: @Sendable () async throws -> Set<String>
 }
 
-extension GithubCLIClient: DependencyKey {
+nonisolated extension GithubCLIClient: DependencyKey {
   static let liveValue = live()
 
   static func live(
@@ -241,7 +241,7 @@ extension GithubCLIClient: DependencyKey {
   )
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   var githubCLI: GithubCLIClient {
     get { self[GithubCLIClient.self] }
     set { self[GithubCLIClient.self] = newValue }

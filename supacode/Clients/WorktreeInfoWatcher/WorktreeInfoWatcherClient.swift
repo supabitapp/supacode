@@ -1,7 +1,7 @@
 import ComposableArchitecture
 import Foundation
 
-struct WorktreeInfoWatcherClient {
+nonisolated struct WorktreeInfoWatcherClient: Sendable {
   var send: @MainActor @Sendable (Command) -> Void
   var events: @MainActor @Sendable () -> AsyncStream<Event>
 
@@ -34,7 +34,7 @@ struct WorktreeInfoWatcherClient {
   }
 }
 
-extension WorktreeInfoWatcherClient: DependencyKey {
+nonisolated extension WorktreeInfoWatcherClient: DependencyKey {
   static let liveValue = WorktreeInfoWatcherClient(
     send: { _ in fatalError("WorktreeInfoWatcherClient.send not configured") },
     events: { fatalError("WorktreeInfoWatcherClient.events not configured") }
@@ -46,7 +46,7 @@ extension WorktreeInfoWatcherClient: DependencyKey {
   )
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   var worktreeInfoWatcher: WorktreeInfoWatcherClient {
     get { self[WorktreeInfoWatcherClient.self] }
     set { self[WorktreeInfoWatcherClient.self] = newValue }

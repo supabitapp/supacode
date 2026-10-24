@@ -3,7 +3,7 @@ import SwiftUI
 
 /// One capability shown in a settings feature grid: a name and whether the
 /// integration surfaces it.
-struct FeatureCapability: Identifiable {
+nonisolated struct FeatureCapability: Identifiable, Sendable {
   let name: String
   let isSupported: Bool
 

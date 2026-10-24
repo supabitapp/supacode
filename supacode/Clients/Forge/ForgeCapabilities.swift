@@ -70,7 +70,7 @@ nonisolated struct ForgeCapabilities: Equatable, Hashable, Sendable {
   )
 }
 
-extension ForgeCapabilities {
+nonisolated extension ForgeCapabilities {
   nonisolated static func forID(_ forgeID: ForgeID) -> ForgeCapabilities? {
     switch forgeID {
     case .github: .github

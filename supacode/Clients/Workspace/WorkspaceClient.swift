@@ -2,7 +2,7 @@ import AppKit
 import ComposableArchitecture
 import SupacodeSettingsShared
 
-struct WorkspaceClient {
+nonisolated struct WorkspaceClient: Sendable {
   var open:
     @MainActor @Sendable (
       _ action: OpenWorktreeAction,
@@ -19,7 +19,7 @@ struct WorkspaceClient {
     ) async -> OpenActionError?
 }
 
-extension WorkspaceClient: DependencyKey {
+nonisolated extension WorkspaceClient: DependencyKey {
   static let liveValue = WorkspaceClient(
     open: { action, worktree, onError in
       if worktree.host != nil {
@@ -62,7 +62,7 @@ extension WorkspaceClient: DependencyKey {
   static let testValue = WorkspaceClient(open: { _, _, _ in }, openFile: { _, _ in nil })
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   var workspaceClient: WorkspaceClient {
     get { self[WorkspaceClient.self] }
     set { self[WorkspaceClient.self] = newValue }

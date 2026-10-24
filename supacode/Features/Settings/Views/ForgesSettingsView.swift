@@ -90,7 +90,7 @@ private struct ForgeStatusLine: View {
   }
 }
 
-extension ForgeCapabilities {
+nonisolated extension ForgeCapabilities {
   fileprivate var features: [FeatureCapability] {
     [
       FeatureCapability(name: "Sidebar \(vocabulary.abbreviation) icons", isSupported: true),

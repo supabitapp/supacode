@@ -2,7 +2,7 @@ import ComposableArchitecture
 import Sparkle
 import SupacodeSettingsShared
 
-struct UpdaterClient {
+nonisolated struct UpdaterClient: Sendable {
   var configure: @MainActor @Sendable (_ checks: Bool, _ downloads: Bool, _ checkInBackground: Bool) -> Void
   var setUpdateChannel: @MainActor @Sendable (UpdateChannel) -> Void
   var checkForUpdates: @MainActor @Sendable () -> Void
@@ -57,38 +57,40 @@ class SparkleUpdateDelegate: NSObject, SPUUpdaterDelegate {
   }
 }
 
-extension UpdaterClient: DependencyKey {
-  static let liveValue: UpdaterClient = {
-    let delegate = SparkleUpdateDelegate()
-    let controller = SPUStandardUpdaterController(
-      startingUpdater: true,
-      updaterDelegate: delegate,
-      userDriverDelegate: nil
-    )
-    let updater = controller.updater
-    return UpdaterClient(
-      configure: { checks, downloads, checkInBackground in
-        _ = controller
-        updater.automaticallyChecksForUpdates = checks
-        updater.automaticallyDownloadsUpdates = downloads
-        if checkInBackground, checks {
-          updater.checkForUpdatesInBackground()
-        }
-      },
-      setUpdateChannel: { channel in
-        _ = controller
-        delegate.updateChannel = channel
-        updater.updateCheckInterval = channel == .tip ? 43200 : 259200
-        if updater.automaticallyChecksForUpdates {
-          updater.checkForUpdatesInBackground()
-        }
-      },
-      checkForUpdates: {
-        _ = controller
-        updater.checkForUpdates()
+/// Sparkle's controller is main-actor only, so it starts on first use rather than on key resolution.
+@MainActor
+private enum SparkleUpdater {
+  static let delegate = SparkleUpdateDelegate()
+  static let controller = SPUStandardUpdaterController(
+    startingUpdater: true,
+    updaterDelegate: delegate,
+    userDriverDelegate: nil
+  )
+  static var updater: SPUUpdater { controller.updater }
+}
+
+nonisolated extension UpdaterClient: DependencyKey {
+  static let liveValue = UpdaterClient(
+    configure: { checks, downloads, checkInBackground in
+      let updater = SparkleUpdater.updater
+      updater.automaticallyChecksForUpdates = checks
+      updater.automaticallyDownloadsUpdates = downloads
+      if checkInBackground, checks {
+        updater.checkForUpdatesInBackground()
       }
-    )
-  }()
+    },
+    setUpdateChannel: { channel in
+      let updater = SparkleUpdater.updater
+      SparkleUpdater.delegate.updateChannel = channel
+      updater.updateCheckInterval = channel == .tip ? 43200 : 259200
+      if updater.automaticallyChecksForUpdates {
+        updater.checkForUpdatesInBackground()
+      }
+    },
+    checkForUpdates: {
+      SparkleUpdater.updater.checkForUpdates()
+    }
+  )
 
   static let testValue = UpdaterClient(
     configure: { _, _, _ in },
@@ -97,7 +99,7 @@ extension UpdaterClient: DependencyKey {
   )
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   var updaterClient: UpdaterClient {
     get { self[UpdaterClient.self] }
     set { self[UpdaterClient.self] = newValue }

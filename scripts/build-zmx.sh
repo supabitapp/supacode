@@ -5,7 +5,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script_path="${script_dir}/$(basename "${BASH_SOURCE[0]}")"
 srcroot="${SRCROOT:-$(cd "${script_dir}/.." && pwd)}"
 
-# Pin a Zig-linkable Xcode for `zig build`'s SDK lookups (see select-developer-dir.sh).
+# Pin an Xcode for `zig build`'s SDK lookups (see select-developer-dir.sh).
 # Always delegate so an inherited DEVELOPER_DIR is validated, not trusted blindly.
 # Plain assignment, separate export, so a selector failure aborts under set -e.
 DEVELOPER_DIR="$("${script_dir}/select-developer-dir.sh")"
@@ -18,7 +18,8 @@ zmx_global_cache_dir="${zmx_build_root}/.zig-global-cache"
 zmx_fingerprint_path="${zmx_build_root}/fingerprint"
 zmx_binary_path="${zmx_build_root}/bin/zmx"
 # Out-of-tree patches applied to the pinned zmx submodule at build time.
-# The submodule pointer stays on the fork's SHA; we never commit into it.
+# The submodule pointer stays on upstream; we never fork or commit into it.
+# Patches apply in lexical order and may stack on one another.
 zmx_patches_dir="${srcroot}/patches/zmx"
 
 # Mirror Xcode's ARCHS_STANDARD for macOS (arm64, x86_64); resync if Configurations/Project.xcconfig pins ARCHS.
@@ -49,6 +50,21 @@ print_fingerprint() {
 
 ensure_zmx_checkout() {
   if [ -f "${zmx_dir}/build.zig" ]; then
+    # Best effort, never fatal: move an old clone's remote to .gitmodules, and
+    # flag a checkout off the staged pin, which the patches do not target.
+    [ -e "${zmx_dir}/.git" ] || return 0
+    local expected_url configured_url pinned current
+    expected_url="$(git -C "${repo_root}" config -f .gitmodules "submodule.${zmx_submodule_path}.url" || true)"
+    configured_url="$(git -C "${repo_root}" config "submodule.${zmx_submodule_path}.url" || true)"
+    if [ -n "${expected_url}" ] && [ "${configured_url}" != "${expected_url}" ]; then
+      git -C "${repo_root}" submodule sync --quiet -- "${zmx_submodule_path}" || true
+    fi
+    pinned="$(git -C "${repo_root}" ls-files --stage -- "${zmx_submodule_path}" | awk '$3 == 0 {print $2}' || true)"
+    current="$(git -C "${zmx_dir}" rev-parse HEAD 2>/dev/null || true)"
+    if [ -n "${pinned}" ] && [ -n "${current}" ] && [ "${current}" != "${pinned}" ]; then
+      echo "warning: ${zmx_submodule_path} is at ${current}, but the repo pins ${pinned}." >&2
+      echo "         Run: git submodule update --init --recursive -- ${zmx_submodule_path}" >&2
+    fi
     return
   fi
 
@@ -109,8 +125,11 @@ apply_zmx_patches() {
 
 revert_zmx_patches() {
   [ -d "${zmx_patches_dir}" ] || return 0
-  local patch
-  for patch in "${zmx_patches_dir}"/*.patch; do
+  local patch index
+  # Unwind newest first, since stacked patches only reverse in that order.
+  local patches=("${zmx_patches_dir}"/*.patch)
+  for ((index = ${#patches[@]} - 1; index >= 0; index--)); do
+    patch="${patches[index]}"
     [ -e "${patch}" ] || continue
     # Prefer a clean reverse-apply; fall back to resetting just the patched files.
     # The fallback also guards against `set -e` aborting the trap mid-revert if the
@@ -162,6 +181,7 @@ if [ -f "${zmx_fingerprint_path}" ] &&
   exit 0
 fi
 
+rm -f "${zmx_fingerprint_path}"
 cd "${zmx_dir}"
 
 slice_paths=()
@@ -186,9 +206,12 @@ mkdir -p "$(dirname "${zmx_binary_path}")"
 lipo -create "${slice_paths[@]}" -output "${zmx_binary_path}"
 
 # Defense in depth: -verify_arch fails closed on a partial / thin lipo output, but exits silently.
-if ! lipo "${zmx_binary_path}" -verify_arch x86_64 arm64; then
-  echo "error: zmx universal binary at ${zmx_binary_path} is missing x86_64 or arm64 slice" >&2
-  exit 1
-fi
+# One arch per call: Xcode 27's lipo rejects several.
+for arch in x86_64 arm64; do
+  if ! lipo "${zmx_binary_path}" -verify_arch "${arch}"; then
+    echo "error: zmx universal binary at ${zmx_binary_path} is missing the ${arch} slice" >&2
+    exit 1
+  fi
+done
 
 printf '%s\n' "${fingerprint}" > "${zmx_fingerprint_path}"

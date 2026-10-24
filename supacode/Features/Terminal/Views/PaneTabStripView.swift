@@ -985,7 +985,7 @@ private struct PaneTabStripNewTabControl: View {
   }
 }
 
-extension TerminalSplitMenuDirection {
+nonisolated extension TerminalSplitMenuDirection {
   fileprivate var paneDirection: SplitTree<PaneID>.NewDirection {
     switch self {
     case .right: .right

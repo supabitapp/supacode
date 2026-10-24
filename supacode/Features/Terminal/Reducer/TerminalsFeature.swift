@@ -8,7 +8,7 @@ nonisolated struct LayoutChangeObserver: Sendable {
   var layoutChanged: @MainActor @Sendable (Worktree.ID) -> Void
 }
 
-extension LayoutChangeObserver: DependencyKey {
+nonisolated extension LayoutChangeObserver: DependencyKey {
   static let liveValue = LayoutChangeObserver(layoutChanged: { _ in })
   static let testValue = liveValue
 }

@@ -4,7 +4,7 @@ import SupacodeSettingsShared
 
 /// Filesystem reads for the files inspector. Every closure hops off the main
 /// actor: listing and sorting a large directory must never block the UI.
-struct FileExplorerClient: Sendable {
+nonisolated struct FileExplorerClient: Sendable {
   /// Lists `directory` non-recursively: dotfiles included, `.git` excluded,
   /// sorted directories-first then Finder-like, capped at `limit`.
   var list: @Sendable (_ directory: URL, _ limit: Int) async throws(FileExplorerListingError) -> FileExplorerListing
@@ -55,7 +55,7 @@ nonisolated enum FileConflictPolicy: Equatable, Sendable {
   case merge
 }
 
-extension FileExplorerClient: DependencyKey {
+nonisolated extension FileExplorerClient: DependencyKey {
   static let liveValue = FileExplorerClient(
     list: { directory, limit throws(FileExplorerListingError) in
       do {
@@ -143,14 +143,14 @@ extension FileExplorerClient: DependencyKey {
   )
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   var fileExplorerClient: FileExplorerClient {
     get { self[FileExplorerClient.self] }
     set { self[FileExplorerClient.self] = newValue }
   }
 }
 
-extension FileExplorerClient {
+nonisolated extension FileExplorerClient {
   nonisolated private static let logger = SupaLogger("FileExplorer")
 
   nonisolated static func listDirectory(at directory: URL, limit: Int) throws -> FileExplorerListing {

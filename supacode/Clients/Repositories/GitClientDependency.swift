@@ -2,7 +2,7 @@ import ComposableArchitecture
 import Foundation
 import SupacodeSettingsShared
 
-struct GitClientDependency: Sendable {
+nonisolated struct GitClientDependency: Sendable {
   var repoRoot: @Sendable (URL) async throws -> URL
   var isGitRepository: @Sendable (URL) async -> Bool
   /// Whether a root URL still points at a readable directory on
@@ -103,7 +103,7 @@ struct GitClientDependency: Sendable {
   var upstreamBranchExists: @Sendable (_ ref: String, _ repoRoot: URL) async throws -> Bool
 }
 
-extension GitClientDependency: DependencyKey {
+nonisolated extension GitClientDependency: DependencyKey {
   static let liveValue = make(shell: .live)
 
   /// Remote flavor: every `git` / `wt` shell-out runs on `host` over SSH.
@@ -331,7 +331,7 @@ extension GitClientDependency: DependencyKey {
   }
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   var gitClient: GitClientDependency {
     get { self[GitClientDependency.self] }
     set { self[GitClientDependency.self] = newValue }

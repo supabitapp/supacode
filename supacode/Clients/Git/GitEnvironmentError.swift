@@ -45,7 +45,7 @@ nonisolated enum GitEnvironmentError: Equatable, Sendable {
   }
 }
 
-extension GitEnvironmentError {
+nonisolated extension GitEnvironmentError {
   var title: String {
     switch self {
     case .xcodeLicenseNotAccepted:

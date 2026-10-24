@@ -110,7 +110,7 @@ private struct CodingAgentsCardBody: View {
   }
 }
 
-extension AgentIntegrationRowState {
+nonisolated extension AgentIntegrationRowState {
   fileprivate var integrationState: AgentIntegrationState? {
     if case .ready(let state) = self { return state }
     return nil

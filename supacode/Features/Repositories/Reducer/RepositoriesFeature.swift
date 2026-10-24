@@ -38,16 +38,16 @@ private nonisolated let toastAutoDismissDelay: Duration = .milliseconds(2500)
 private nonisolated let delayedPullRequestRefreshDelay: Duration = .seconds(2)
 
 /// Injected so the open paths stay testable without launching a real browser.
-struct URLOpenerClient: Sendable {
+nonisolated struct URLOpenerClient: Sendable {
   var open: @Sendable (URL) -> Void
 }
 
-extension URLOpenerClient: DependencyKey {
+nonisolated extension URLOpenerClient: DependencyKey {
   static let liveValue = URLOpenerClient { NSWorkspace.shared.open($0) }
   static let testValue = URLOpenerClient { _ in }
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   var urlOpener: URLOpenerClient {
     get { self[URLOpenerClient.self] }
     set { self[URLOpenerClient.self] = newValue }
@@ -7070,7 +7070,7 @@ extension RepositoriesFeature.State {
   }
 }
 
-extension SidebarState {
+nonisolated extension SidebarState {
   /// Preserve user-curated `.archived` / `.pinned` buckets and title / color
   /// customization for repositories no longer in `availableRepoIDs`. Tombstones
   /// are appended after live repos so the natural ordering stays "live first,

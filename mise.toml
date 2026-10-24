@@ -1,6 +1,6 @@
 [tools]
 tuist = "4.203.1"
-zig = "0.15.2"
+zig = "0.16.0"
 swiftlint = "0.64.0"
 xcbeautify = "3.2.1"
 # swift-format pinned so `make format` is reproducible across contributors'

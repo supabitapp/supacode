@@ -8,7 +8,7 @@ import SupacodeSettingsShared
 /// focus / archive) moved to `@Shared(.sidebar)` + the
 /// `SidebarPersistenceMigrator` — this client now only owns
 /// `repositoryRoots`.
-struct RepositoryPersistenceClient {
+nonisolated struct RepositoryPersistenceClient: Sendable {
   var loadRoots: @Sendable () async -> [String]
   var saveRoots: @Sendable ([String]) async -> Void
   /// Remove the per-repository entries (`settingsFile.repositories`
@@ -20,7 +20,7 @@ struct RepositoryPersistenceClient {
   var pruneRepositoryConfigs: @Sendable ([String]) async -> Void
 }
 
-extension RepositoryPersistenceClient: DependencyKey {
+nonisolated extension RepositoryPersistenceClient: DependencyKey {
   static let liveValue: RepositoryPersistenceClient = {
     RepositoryPersistenceClient(
       loadRoots: {
@@ -53,7 +53,7 @@ extension RepositoryPersistenceClient: DependencyKey {
   )
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   var repositoryPersistence: RepositoryPersistenceClient {
     get { self[RepositoryPersistenceClient.self] }
     set { self[RepositoryPersistenceClient.self] = newValue }

@@ -69,7 +69,7 @@ nonisolated struct ContentGeometry: Equatable, Sendable {
   }
 }
 
-extension ContentGeometry {
+nonisolated extension ContentGeometry {
   // Below this per-axis point extent a candidate cannot host a usable grid and
   // resolution prefers the next source.
   private static let minimumPointExtent: CGFloat = 64

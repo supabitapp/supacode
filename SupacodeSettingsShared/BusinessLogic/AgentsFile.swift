@@ -55,7 +55,7 @@ public nonisolated struct AgentsFile: Codable, Equatable, Sendable {
   }
 }
 
-extension AgentInstallTarget {
+nonisolated extension AgentInstallTarget {
   /// The persistable record for this target.
   public var installRecord: AgentInstallRecord {
     switch location {
@@ -65,7 +65,7 @@ extension AgentInstallTarget {
   }
 }
 
-extension AgentInstallRecord {
+nonisolated extension AgentInstallRecord {
   /// The install target this record identifies.
   public var target: AgentInstallTarget {
     AgentInstallTarget(

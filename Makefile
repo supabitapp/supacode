@@ -41,7 +41,7 @@ TEST_SCHEME := supacode-tests
 # text only lives in the result bundle, which `make test` dumps on failure.
 TEST_RESULT_BUNDLE := build/supacode-tests.xcresult
 
-# Export a Zig-linkable Xcode per build recipe (no global xcode-select -s). Plain
+# Export the selected Xcode per build recipe (no global xcode-select -s). Plain
 # assignment so a missing Xcode aborts the recipe under -e.
 SELECT_DEVELOPER_DIR = DEVELOPER_DIR="$$(./scripts/select-developer-dir.sh)"; export DEVELOPER_DIR
 

@@ -48,7 +48,7 @@ nonisolated struct ForgePullRequestDetail: Equatable, Sendable {
   }
 }
 
-extension ForgePullRequest {
+nonisolated extension ForgePullRequest {
   /// The detail-tier fields, exactly the set `applying(_:)` replaces.
   nonisolated var detail: ForgePullRequestDetail {
     ForgePullRequestDetail(
@@ -188,7 +188,7 @@ extension ForgeClient {
   }
 }
 
-extension ForgeClient: DependencyKey {
+nonisolated extension ForgeClient: DependencyKey {
   static let liveValue = ForgeClient.github
   static let testValue = ForgeClient.github
 }

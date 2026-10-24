@@ -405,7 +405,7 @@ nonisolated extension PaneLayout {
   }
 }
 
-extension PaneLayout {
+nonisolated extension PaneLayout {
   /// The persistable layout: blocking-script tabs die with the app, so they
   /// (and any pane they empty) drop, retargeting selection to the nearest
   /// left survivor.

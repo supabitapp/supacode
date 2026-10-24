@@ -17,7 +17,7 @@ public nonisolated struct RepositorySettingsGitClient: Sendable {
   }
 }
 
-extension RepositorySettingsGitClient: DependencyKey {
+nonisolated extension RepositorySettingsGitClient: DependencyKey {
   public static let liveValue = RepositorySettingsGitClient(
     isBareRepository: { try await GitReferenceQueries().isBareRepository(for: $0) },
     branchRefs: { try await GitReferenceQueries().branchRefs(for: $0) },
@@ -31,7 +31,7 @@ extension RepositorySettingsGitClient: DependencyKey {
   )
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   public var repositorySettingsGitClient: RepositorySettingsGitClient {
     get { self[RepositorySettingsGitClient.self] }
     set { self[RepositorySettingsGitClient.self] = newValue }

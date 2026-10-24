@@ -61,8 +61,7 @@ make check   # swift-format + swiftlint
 make test    # the test suite
 ```
 
-See the [README](README.md) and [AGENTS.md](AGENTS.md) for how to build and run the app,
-including the Xcode 26.3 requirement on macOS 26.4+.
+See the [README](README.md) and [AGENTS.md](AGENTS.md) for how to build and run the app.
 
 ## AI tools and accountability
 

@@ -9,7 +9,7 @@ import SupacodeSettingsShared
 /// Equality and hashing for the `.script` case use only the
 /// definition's `id`, so dictionary lookups and dedup checks remain
 /// stable even when the user edits the script's name or command.
-enum BlockingScriptKind: Sendable {
+nonisolated enum BlockingScriptKind: Sendable {
   case script(ScriptDefinition)
   case archive
   case delete
@@ -77,7 +77,7 @@ enum BlockingScriptKind: Sendable {
 
 // MARK: - Hashable / Equatable
 
-extension BlockingScriptKind: Hashable {
+nonisolated extension BlockingScriptKind: Hashable {
   static func == (lhs: BlockingScriptKind, rhs: BlockingScriptKind) -> Bool {
     switch (lhs, rhs) {
     case (.script(let lhsDef), .script(let rhsDef)): lhsDef.id == rhsDef.id

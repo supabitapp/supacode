@@ -73,7 +73,7 @@ public nonisolated enum SettingsFileURLsKey: DependencyKey {
   }
 }
 
-extension DependencyValues {
+nonisolated extension DependencyValues {
   public nonisolated var settingsFileStorage: SettingsFileStorage {
     get { self[SettingsFileStorageKey.self] }
     set { self[SettingsFileStorageKey.self] = newValue }
@@ -139,7 +139,7 @@ public nonisolated enum SettingsStoreError: Error, Equatable {
   case degraded
 }
 
-extension SettingsFileStorage {
+nonisolated extension SettingsFileStorage {
   public nonisolated static func inMemory() -> SettingsFileStorage {
     let storage = InMemorySettingsFileStorage()
     return SettingsFileStorage(

@@ -1,72 +1,57 @@
 #!/usr/bin/env bash
-# Prints the Developer dir of an Xcode whose macOS SDK the pinned Zig (0.15.2) can
-# link. Shared by the build scripts, the Makefile, and `make doctor`. Exit 1 with
-# an actionable message when none is installed.
+# Prints the Developer dir of a full Xcode for `zig build`'s SDK lookups. Shared by
+# the build scripts, the Makefile, and `make doctor`. Exit 1 with an actionable
+# message when none is installed.
 set -euo pipefail
 
-# Linkable when the dir is a full Xcode whose macOS SDK predates the zig-breaking
-# change. macOS 26.4+ SDKs can't link with Zig 0.15.2 (ziglang/zig#31658, fixed in
-# 0.16+) even though their libSystem.tbd may still list arm64-macos, so gate on the
-# SDK version, not that string (which is present on broken SDKs too).
-is_zig_linkable() {
+# The app targets macOS 26, so older SDKs fail deep inside the build instead.
+min_sdk_version="26.0"
+
+# Usable when the dir is a full Xcode (not CommandLineTools, which has no
+# xcodebuild) whose macOS SDK is at least the minimum.
+is_usable_xcode() {
   local dir="$1" ver
   [ -d "$dir" ] || return 1
-  # Require a full Xcode, not CommandLineTools (no xcodebuild).
   [ -x "${dir}/usr/bin/xcodebuild" ] || return 1
   ver="$(DEVELOPER_DIR="$dir" xcrun --sdk macosx --show-sdk-version 2>/dev/null)" || return 1
   [ -n "$ver" ] || return 1
-  # Reject SDKs newer than 26.3 (the 26.4+ break); sort -V keeps 26.10 above 26.3.
-  [ "$(printf '%s\n26.3\n' "$ver" | sort -V | tail -1)" = "26.3" ]
+  # A bare major ("27") sorts before "26.0" under sort -V, so normalize it.
+  case "$ver" in *.*) ;; *) ver="${ver}.0" ;; esac
+  [ "$(printf '%s\n%s\n' "$min_sdk_version" "$ver" | sort -V | head -1)" = "$min_sdk_version" ]
 }
 
-# Honor an explicit DEVELOPER_DIR when it is itself linkable.
-if [ -n "${DEVELOPER_DIR:-}" ] && is_zig_linkable "${DEVELOPER_DIR}"; then
-  printf '%s\n' "${DEVELOPER_DIR}"
-  exit 0
+if [ -n "${DEVELOPER_DIR:-}" ]; then
+  if is_usable_xcode "${DEVELOPER_DIR}"; then
+    printf '%s\n' "${DEVELOPER_DIR}"
+    exit 0
+  fi
+  echo "warning: DEVELOPER_DIR=${DEVELOPER_DIR} is not a usable Xcode; looking for another." >&2
 fi
 
 candidates=()
-# Known-good versioned Xcodes first (newest <= 26.3, underscore and hyphen
-# naming), so a machine whose default is a newer non-linkable Xcode (CI on 26.5)
-# still finds a linkable one instead of stopping at the default.
-for app in \
-  /Applications/Xcode_26.3*.app /Applications/Xcode-26.3*.app \
-  /Applications/Xcode_26.2*.app /Applications/Xcode-26.2*.app \
-  /Applications/Xcode_26.1*.app /Applications/Xcode-26.1*.app \
-  /Applications/Xcode_26.0*.app /Applications/Xcode-26.0*.app; do
-  [ -d "${app}" ] && candidates+=("${app}/Contents/Developer")
-done
-# Then the currently-selected and unversioned default, covering a linkable Xcode
-# at a non-standard path.
 if current="$(xcode-select -p 2>/dev/null)" && [ -n "${current}" ]; then
   candidates+=("${current}")
 fi
-[ -d /Applications/Xcode.app ] && candidates+=("/Applications/Xcode.app/Contents/Developer")
+# Side-by-side installs (Xcode_27.app, Xcode-beta.app); the first usable one wins.
+while IFS= read -r app; do
+  [ -n "${app}" ] && candidates+=("${app}/Contents/Developer")
+done < <(ls -d /Applications/Xcode*.app 2>/dev/null | sort -rV)
 
 # Guard the empty case: bash 3.2 errors on `"${arr[@]}"` under `set -u`.
 for dir in ${candidates[@]+"${candidates[@]}"}; do
-  if is_zig_linkable "${dir}"; then
+  if is_usable_xcode "${dir}"; then
     printf '%s\n' "${dir}"
     exit 0
   fi
 done
 
-cat >&2 <<'EOF'
-error: no Zig-linkable Xcode found.
+cat >&2 <<EOF
+error: no usable Xcode found (a full Xcode with the macOS ${min_sdk_version}+ SDK).
 
-  The pinned Zig (0.15.2, required exactly by ghostty) cannot link the macOS
-  26.4+ SDK: it dropped the arm64-macos slice from libSystem.tbd (ziglang/zig
-  #31658, fixed only in Zig 0.16+). Install Xcode 26.3, which ships the macOS
-  26.2 SDK whose .tbd still has arm64-macos:
+  Install Xcode from the App Store. If it is already installed, accept its
+  license and finish first launch:
 
-    https://developer.apple.com/download/all/?q=Xcode%2026.3
-
-  Then accept its license and finish first launch (DEVELOPER_DIR alone is not
-  enough until this completes):
-
-    sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -license accept
-    sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -runFirstLaunch
-
-  No global `xcode-select -s` is needed. The build picks it up automatically.
+    sudo xcodebuild -license accept
+    sudo xcodebuild -runFirstLaunch
 EOF
 exit 1
