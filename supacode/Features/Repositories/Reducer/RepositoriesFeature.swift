@@ -800,9 +800,10 @@ struct RepositoriesFeature {
           return .send(.archiveWorktreeConfirmed(worktree.id, repository.id))
         }
         @Shared(.settingsFile) var settingsFile
-        let archivedDisplay =
-          AppShortcuts.archivedWorktrees
-          .effective(from: settingsFile.global.shortcutOverrides)?.display ?? "none"
+        let archivedLocation = AppShortcut.helpText(
+          "Menu Bar > Worktrees > Archived Worktrees",
+          shortcut: AppShortcuts.archivedWorktrees.effective(from: settingsFile.global.shortcutOverrides)
+        )
         let alertWorktreeName =
           SidebarDisplayName.resolved(
             custom: state.sidebarItems[id: worktree.id]?.customTitle,
@@ -819,7 +820,7 @@ struct RepositoriesFeature {
           }
         } message: {
           TextState(
-            "You can find \(alertWorktreeName) later in Menu Bar > Worktrees > Archived Worktrees (\(archivedDisplay))."
+            "You can find \(alertWorktreeName) later in \(archivedLocation)."
           )
         }
         return .none
@@ -854,9 +855,10 @@ struct RepositoriesFeature {
         }
         let count = validTargets.count
         @Shared(.settingsFile) var settingsFile
-        let archivedDisplay =
-          AppShortcuts.archivedWorktrees
-          .effective(from: settingsFile.global.shortcutOverrides)?.display ?? "none"
+        let archivedLocation = AppShortcut.helpText(
+          "Menu Bar > Worktrees > Archived Worktrees",
+          shortcut: AppShortcuts.archivedWorktrees.effective(from: settingsFile.global.shortcutOverrides)
+        )
         state.alert = AlertState {
           TextState("Archive \(count) worktrees?")
         } actions: {
@@ -868,7 +870,7 @@ struct RepositoriesFeature {
           }
         } message: {
           TextState(
-            "You can find them later in Menu Bar > Worktrees > Archived Worktrees (\(archivedDisplay))."
+            "You can find them later in \(archivedLocation)."
           )
         }
         return .none

@@ -799,7 +799,7 @@ struct WorktreeDetailView: View {
             } label: {
               OpenWorktreeActionMenuLabelView(action: .finder)
             }
-            .help("Reveal in Finder (\(revealInFinderShortcut))")
+            .help(revealInFinderHelpText)
             .disabled(toolbarState.remoteOpenHost != nil)
           }
         } label: {
@@ -821,21 +821,20 @@ struct WorktreeDetailView: View {
       }
     }
 
-    private var revealInFinderShortcut: String {
-      WorktreeDetailView.resolveShortcutDisplay(
-        for: AppShortcuts.revealInFinder,
-        overrides: settingsFile.global.shortcutOverrides
+    private var revealInFinderHelpText: String {
+      AppShortcut.helpText(
+        "Reveal in Finder",
+        shortcut: AppShortcuts.revealInFinder.effective(from: settingsFile.global.shortcutOverrides)
       )
     }
 
     private func openActionHelpText(for action: OpenWorktreeAction, isDefault: Bool) -> String {
       if let reason = toolbarState.remoteOpenDisabledReason(action) { return reason }
       guard isDefault else { return action.title }
-      let display = WorktreeDetailView.resolveShortcutDisplay(
-        for: AppShortcuts.openWorktree,
-        overrides: settingsFile.global.shortcutOverrides
+      return AppShortcut.helpText(
+        action.title,
+        shortcut: AppShortcuts.openWorktree.effective(from: settingsFile.global.shortcutOverrides)
       )
-      return "\(action.title) (\(display))"
     }
   }
 
@@ -996,18 +995,6 @@ struct WorktreeDetailView: View {
       )
     }
     return nil
-  }
-
-  /// `overrides` is passed in (never read from a local `@Shared` here): the
-  /// shared reference is cached weakly, so constructing one per call would
-  /// re-read the settings file on every render.
-  static func resolveShortcutDisplay(
-    for shortcut: AppShortcut,
-    overrides: [AppShortcutID: AppShortcutOverride],
-    fallback: String = "none"
-  ) -> String {
-    let display = shortcut.effective(from: overrides)?.display ?? fallback
-    return display.isEmpty ? fallback : display
   }
 }
 
@@ -1218,6 +1205,7 @@ private struct MultiSelectedWorktreeSummary: Identifiable {
 
 private struct MultiSelectedWorktreesDetailView: View {
   let rows: [MultiSelectedWorktreeSummary]
+  @Shared(.settingsFile) private var settingsFile
 
   private let visibleRowsLimit = 8
 
@@ -1234,8 +1222,9 @@ private struct MultiSelectedWorktreesDetailView: View {
   }
 
   var body: some View {
-    let archiveShortcut = KeyboardShortcut(.delete, modifiers: .command).display
-    let deleteShortcut = KeyboardShortcut(.delete, modifiers: [.command, .shift]).display
+    let overrides = settingsFile.global.shortcutOverrides
+    let archiveShortcut = AppShortcuts.archiveWorktree.effective(from: overrides)
+    let deleteShortcut = AppShortcuts.deleteWorktree.effective(from: overrides)
     VStack(alignment: .leading, spacing: 20) {
       Text("\(rows.count) items selected")
         .appFont(.title3)
@@ -1247,8 +1236,8 @@ private struct MultiSelectedWorktreesDetailView: View {
           actions: isMixedKindSelection
             ? []
             : [
-              "Archive selected (\(archiveShortcut))",
-              "Delete selected (\(deleteShortcut))",
+              AppShortcut.helpText("Archive selected", shortcut: archiveShortcut),
+              AppShortcut.helpText("Delete selected", shortcut: deleteShortcut),
               "Right-click any selected worktree to apply actions to all selected worktrees.",
             ]
         )
@@ -1261,7 +1250,7 @@ private struct MultiSelectedWorktreesDetailView: View {
           actions: isMixedKindSelection
             ? []
             : [
-              "Remove selected from Supacode (\(deleteShortcut))",
+              AppShortcut.helpText("Remove selected from Supacode", shortcut: deleteShortcut),
               "Right-click any selected folder to remove them all from Supacode.",
             ]
         )
@@ -1435,14 +1424,12 @@ private struct ScriptMenu: View {
   private func primaryHelpText(hasRunning: Bool) -> String {
     let overrides = settingsFile.global.shortcutOverrides
     if hasRunning {
-      let display = AppShortcuts.stopRunScript.effective(from: overrides)?.display ?? "none"
-      return "Stop Script (\(display))"
+      return AppShortcut.helpText("Stop Script", shortcut: AppShortcuts.stopRunScript.effective(from: overrides))
     }
     guard primaryScript != nil else {
       return "Configure scripts in Settings."
     }
-    let display = AppShortcuts.runScript.effective(from: overrides)?.display ?? "none"
-    return "Run Script (\(display))"
+    return AppShortcut.helpText("Run Script", shortcut: AppShortcuts.runScript.effective(from: overrides))
   }
 }
 

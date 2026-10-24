@@ -43,17 +43,10 @@ struct TerminalTabTrailingButton: View {
         guard isPressing else { return }
         gestureActive = false
       }
-      .help(helpText)
+      .help(AppShortcut.helpText(title, shortcut: shortcut.effective(from: settingsFile.global.shortcutOverrides)))
       .opacity(isVisible ? 1 : 0)
       .allowsHitTesting(isVisible)
       .animation(.easeInOut(duration: TerminalTabBarMetrics.hoverAnimationDuration), value: isVisible)
-  }
-
-  private var helpText: String {
-    guard let display = shortcut.effective(from: settingsFile.global.shortcutOverrides)?.display else {
-      return title
-    }
-    return "\(title) (\(display))"
   }
 }
 

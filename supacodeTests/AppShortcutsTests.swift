@@ -718,6 +718,19 @@ struct AppShortcutsTests {
     #expect(lines.contains("keybind = super+w=unbind"))
   }
 
+  @Test func helpTextAppendsTheShortcutChord() {
+    let shortcut = AppShortcuts.newTerminalTab
+    #expect(AppShortcut.helpText("New Terminal Tab", shortcut: shortcut) == "New Terminal Tab (\(shortcut.display))")
+  }
+
+  @Test func helpTextIsTheBareTitleWhenUnbound() {
+    #expect(AppShortcut.helpText("New Terminal Tab", shortcut: nil) == "New Terminal Tab")
+  }
+
+  @Test func displayOfIsNilOnlyWhenUnbound() {
+    #expect(AppShortcut.display(of: nil) == nil)
+    #expect(AppShortcut.display(of: AppShortcuts.newTerminalTab) == AppShortcuts.newTerminalTab.display)
+  }
 }
 
 @MainActor

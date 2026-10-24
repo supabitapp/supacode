@@ -87,14 +87,14 @@ struct TerminalFindBar: View {
         } label: {
           Label("Find Previous", systemImage: "chevron.left")
         }
-        .help("Find Previous\(shortcutSuffix(for: AppShortcuts.findPrevious))")
+        .help(helpText("Find Previous", shortcut: AppShortcuts.findPrevious))
 
         Button {
           navigateSearch(.next)
         } label: {
           Label("Find Next", systemImage: "chevron.right")
         }
-        .help("Find Next\(shortcutSuffix(for: AppShortcuts.findNext))")
+        .help(helpText("Find Next", shortcut: AppShortcuts.findNext))
       }
       .controlGroupStyle(.navigation)
       .fixedSize()
@@ -142,9 +142,8 @@ struct TerminalFindBar: View {
     return "-/\(total)"
   }
 
-  private func shortcutSuffix(for shortcut: AppShortcut) -> String {
-    guard let effective = shortcut.effective(from: settingsFile.global.shortcutOverrides) else { return "" }
-    return " (\(effective.display))"
+  private func helpText(_ title: String, shortcut: AppShortcut) -> String {
+    AppShortcut.helpText(title, shortcut: shortcut.effective(from: settingsFile.global.shortcutOverrides))
   }
 
   private func scheduleSearch(_ needle: String) {

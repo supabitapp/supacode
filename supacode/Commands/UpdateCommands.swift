@@ -14,7 +14,7 @@ struct UpdateCommands: Commands {
         store.send(.checkForUpdates)
       }
       .appKeyboardShortcut(checkForUpdates)
-      .help("Check for Updates (\(checkForUpdates?.display ?? "none"))")
+      .help(AppShortcut.helpText("Check for Updates", shortcut: checkForUpdates))
     }
   }
 }

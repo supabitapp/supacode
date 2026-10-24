@@ -9,6 +9,7 @@ struct ArchivedWorktreeRowView: View {
   let customTint: RepositoryColor?
   let onUnarchive: () -> Void
   let onDelete: () -> Void
+  let deleteHelpText: String
   // The system paints selected rows with white-on-blue chrome; the custom tint must yield so the
   // selected row stays readable (matches `SidebarItemView.TitleView`).
   @Environment(\.backgroundProminence) private var backgroundProminence
@@ -18,7 +19,6 @@ struct ArchivedWorktreeRowView: View {
       worktreeName: worktree.name,
       pullRequest: pullRequest
     )
-    let deleteShortcut = KeyboardShortcut(.delete, modifiers: [.command, .shift]).display
     let bodyFontAscender = NSFont.preferredFont(forTextStyle: .body).ascender
     // User override wins; fall back to the branch / folder name on whitespace
     // or nil. Centralised so archive / sidebar / detail can't drift.
@@ -60,7 +60,7 @@ struct ArchivedWorktreeRowView: View {
               .accessibilityLabel("Delete worktree")
           }
           .buttonStyle(.plain)
-          .help("Delete Worktree (\(deleteShortcut))")
+          .help(deleteHelpText)
         }
       }
       HStack(spacing: 6) {

@@ -14,21 +14,19 @@ struct WorktreeHistoryToolbarButtons: View {
 
   var body: some View {
     let overrides = settingsFile.global.shortcutOverrides
-    let backShortcut = WorktreeDetailView.resolveShortcutDisplay(
-      for: AppShortcuts.worktreeHistoryBack, overrides: overrides)
-    let forwardShortcut = WorktreeDetailView.resolveShortcutDisplay(
-      for: AppShortcuts.worktreeHistoryForward, overrides: overrides)
+    let backShortcut = AppShortcuts.worktreeHistoryBack.effective(from: overrides)
+    let forwardShortcut = AppShortcuts.worktreeHistoryForward.effective(from: overrides)
     ControlGroup {
       Button(action: onBack) {
         Label("Back", systemImage: "chevron.backward")
       }
-      .help("Back in Worktree History (\(backShortcut))")
+      .help(AppShortcut.helpText("Back in Worktree History", shortcut: backShortcut))
       .disabled(!canGoBack)
 
       Button(action: onForward) {
         Label("Forward", systemImage: "chevron.forward")
       }
-      .help("Forward in Worktree History (\(forwardShortcut))")
+      .help(AppShortcut.helpText("Forward in Worktree History", shortcut: forwardShortcut))
       .disabled(!canGoForward)
     }
     .controlGroupStyle(.navigation)
@@ -53,10 +51,7 @@ struct WorktreeGitStatusButton: View {
     let icon = SidebarPullRequestIcon.resolve(pullRequest)
     let checkBadgeState = SidebarCheckBadgeState.resolve(pullRequest)
     let accessibilityLabel = checkBadgeState.map { "Pull request, \($0.statusDescription)" } ?? "Pull request"
-    let shortcut = WorktreeDetailView.resolveShortcutDisplay(
-      for: AppShortcuts.togglePullRequestInspector,
-      overrides: settingsFile.global.shortcutOverrides
-    )
+    let shortcut = AppShortcuts.togglePullRequestInspector.effective(from: settingsFile.global.shortcutOverrides)
     Toggle(isOn: Binding(get: { isSelected }, set: { _ in onActivate() })) {
       Label {
         Text("Pull Request")
@@ -71,7 +66,7 @@ struct WorktreeGitStatusButton: View {
       }
     }
     .tint(tint)
-    .help("Toggle Pull Request Inspector (\(shortcut))")
+    .help(AppShortcut.helpText("Toggle Pull Request Inspector", shortcut: shortcut))
     .accessibilityLabel(accessibilityLabel)
   }
 
@@ -145,10 +140,7 @@ struct WorktreeFilesToolbarButton: View {
   @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
-    let shortcut = WorktreeDetailView.resolveShortcutDisplay(
-      for: AppShortcuts.toggleFilesInspector,
-      overrides: settingsFile.global.shortcutOverrides
-    )
+    let shortcut = AppShortcuts.toggleFilesInspector.effective(from: settingsFile.global.shortcutOverrides)
     Toggle(isOn: Binding(get: { isSelected }, set: { _ in onActivate() })) {
       if isSelected {
         Label("Files", systemImage: "list.bullet")
@@ -160,7 +152,7 @@ struct WorktreeFilesToolbarButton: View {
       }
     }
     .tint(tint)
-    .help("Toggle Files Inspector (\(shortcut))")
+    .help(AppShortcut.helpText("Toggle Files Inspector", shortcut: shortcut))
     .accessibilityLabel("Files")
   }
 }
@@ -183,10 +175,7 @@ struct WorktreeNotificationsToolbarButton: View {
   @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
-    let shortcut = WorktreeDetailView.resolveShortcutDisplay(
-      for: AppShortcuts.toggleNotificationsInspector,
-      overrides: settingsFile.global.shortcutOverrides
-    )
+    let shortcut = AppShortcuts.toggleNotificationsInspector.effective(from: settingsFile.global.shortcutOverrides)
     Toggle(isOn: Binding(get: { isSelected }, set: { _ in onActivate() })) {
       if unreadCount > 0 {
         // Palette keeps the badge dot orange; the bell body tracks the resting tint
@@ -204,7 +193,7 @@ struct WorktreeNotificationsToolbarButton: View {
       }
     }
     .tint(tint)
-    .help("Toggle Notifications Inspector (\(shortcut))")
+    .help(AppShortcut.helpText("Toggle Notifications Inspector", shortcut: shortcut))
     .accessibilityLabel(unreadCount > 0 ? "Notifications, \(unreadCount) unread" : "Notifications")
   }
 

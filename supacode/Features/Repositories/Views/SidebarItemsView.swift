@@ -822,7 +822,7 @@ private struct SidebarItemContextMenu: View {
         store.send(.contextMenuOpenWorktree(rowID, primarySelection))
       }
       .appKeyboardShortcut(openShortcut)
-      .help("Open with \(primarySelection.labelTitle) (\(openShortcut?.display ?? "none"))")
+      .help(AppShortcut.helpText("Open with \(primarySelection.labelTitle)", shortcut: openShortcut))
       .disabled(!canOpen(primarySelection))
     }
 
@@ -842,7 +842,7 @@ private struct SidebarItemContextMenu: View {
       store.send(.contextMenuOpenWorktree(rowID, .finder))
     }
     .appKeyboardShortcut(revealShortcut)
-    .help("Reveal in Finder (\(revealShortcut?.display ?? "none"))")
+    .help(AppShortcut.helpText("Reveal in Finder", shortcut: revealShortcut))
     .disabled(row.host != nil)
   }
 

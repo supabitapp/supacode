@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import Sharing
 import SupacodeSettingsShared
 import SwiftUI
 
@@ -6,9 +7,12 @@ struct ArchivedWorktreesDetailView: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
   @State private var collapsedRepositoryIDs: Set<Repository.ID> = []
   @State private var selectedArchivedWorktreeIDs: Set<Worktree.ID> = []
+  @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
     let groups = store.state.archivedWorktreesByRepository()
+    let deleteShortcut = AppShortcuts.deleteWorktree.effective(from: settingsFile.global.shortcutOverrides)
+    let deleteHelpText = AppShortcut.helpText("Delete Worktree", shortcut: deleteShortcut)
     let groupIDs = Set(groups.map(\.repository.id))
     let archivedRowIDs = groups.flatMap(\.worktrees).map(\.id)
     let archivedWorktreeIDs = Set(groups.flatMap(\.worktrees).map(\.id))
@@ -57,7 +61,8 @@ struct ArchivedWorktreesDetailView: View {
                         )
                       ])
                     )
-                  }
+                  },
+                  deleteHelpText: deleteHelpText
                 )
                 .tag(worktree.id)
                 .typeSelectEquivalent("")
@@ -105,12 +110,11 @@ struct ArchivedWorktreesDetailView: View {
         }
       }
       .toolbar {
-        let deleteShortcut = KeyboardShortcut(.delete, modifiers: [.command, .shift]).display
         Button("Delete Selected", systemImage: "trash", role: .destructive) {
           guard !selectedTargets.isEmpty else { return }
           store.send(.requestDeleteSidebarItems(selectedTargets))
         }
-        .help("Delete Selected (\(deleteShortcut))")
+        .help(AppShortcut.helpText("Delete Selected", shortcut: deleteShortcut))
         .disabled(selectedTargets.isEmpty)
       }
     }

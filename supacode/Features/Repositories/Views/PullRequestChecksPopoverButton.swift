@@ -15,6 +15,10 @@ struct PullRequestChecksPopoverButton<Label: View>: View {
   var body: some View {
     let pullRequestURL = URL(string: pullRequest.url)
     let checks = pullRequest.statusCheckRollup?.checks ?? []
+    let openPullRequestHelpText = AppShortcut.helpText(
+      "Open pull request on GitHub",
+      shortcut: AppShortcuts.openPullRequest.effective(from: settingsFile.global.shortcutOverrides)
+    )
     Button {
       if let pullRequestURL {
         openURL(pullRequestURL)
@@ -24,13 +28,7 @@ struct PullRequestChecksPopoverButton<Label: View>: View {
     }
     .buttonStyle(.plain)
     .contentShape(.rect)
-    .help(
-      {
-        let overrides = settingsFile.global.shortcutOverrides
-        let display = AppShortcuts.openPullRequest.effective(from: overrides)?.display ?? "none"
-        return "Open pull request on GitHub (\(display)). Hover to show checks."
-      }()
-    )
+    .help("\(openPullRequestHelpText). Hover to show checks.")
     .accessibilityLabel("Open pull request on GitHub")
     .onHover { hovering in
       isHoveringButton = hovering

@@ -1024,8 +1024,6 @@ private struct PaneTabStripAccessoryButton: View {
   @Shared(.settingsFile) private var settingsFile
 
   var body: some View {
-    let shortcut = shortcut.effective(from: settingsFile.global.shortcutOverrides)?.display
-
     Button(action: action) {
       Label(title, systemImage: systemImage)
         .labelStyle(.iconOnly)
@@ -1034,12 +1032,7 @@ private struct PaneTabStripAccessoryButton: View {
     }
     .buttonStyle(.plain)
     .foregroundStyle(isProminent ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
-    .help(helpText(shortcut: shortcut))
-  }
-
-  private func helpText(shortcut: String?) -> String {
-    guard let shortcut else { return title }
-    return "\(title) (\(shortcut))"
+    .help(AppShortcut.helpText(title, shortcut: shortcut.effective(from: settingsFile.global.shortcutOverrides)))
   }
 }
 

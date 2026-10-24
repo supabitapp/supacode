@@ -65,7 +65,7 @@ struct PullRequestChecksPopoverView: View {
           }
           .buttonStyle(.plain)
           .focusable(false)
-          .help("Open pull request on GitHub (\(effectiveOpenPR?.display ?? "none"))")
+          .help(AppShortcut.helpText("Open pull request on GitHub", shortcut: effectiveOpenPR))
           .appKeyboardShortcut(effectiveOpenPR)
           .appFont(.headline)
         } else {

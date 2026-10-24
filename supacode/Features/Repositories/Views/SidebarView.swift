@@ -29,7 +29,7 @@ struct SidebarView: View {
           } label: {
             Label("Local Repository or Folder…", systemImage: "laptopcomputer")
           }
-          .help("Add a local repository or folder (\(openRepo?.display ?? "none"))")
+          .help(AppShortcut.helpText("Add a local repository or folder", shortcut: openRepo))
           Button {
             store.send(.requestAddRemoteRepository)
           } label: {

@@ -34,7 +34,7 @@ struct TerminalCommands: Commands {
       }
       .appKeyboardShortcut(renameTab)
       .disabled(renameTabAction?.isEnabled != true)
-      .help("Rename Tab (\(renameTab?.display ?? "none"))")
+      .help(AppShortcut.helpText("Rename Tab", shortcut: renameTab))
 
       Divider()
 
@@ -75,7 +75,7 @@ struct TerminalCommands: Commands {
       }
       .appKeyboardShortcut(toggleWindowMode)
       .disabled(toggleWindowModeAction?.isEnabled != true)
-      .help("Toggle Window Mode (\(toggleWindowMode?.display ?? "none"))")
+      .help(AppShortcut.helpText("Toggle Window Mode", shortcut: toggleWindowMode))
     }
     CommandGroup(after: .textEditing) {
       Menu {
@@ -138,7 +138,7 @@ private struct TerminalTabSelectionItems: View {
         store.send(.selectTerminalTabAtIndex(index + 1))
       }
       .appKeyboardShortcut(shortcut)
-      .help("Select Tab \(index + 1) (\(shortcut?.display ?? "no shortcut"))")
+      .help(AppShortcut.helpText("Select Tab \(index + 1)", shortcut: shortcut))
     }
     Divider()
     RelativeTabSelectionButton(
@@ -168,7 +168,7 @@ private struct RelativeTabSelectionButton: View {
       action()
     }
     .appKeyboardShortcut(effective)
-    .help("\(title) (\(effective?.display ?? "no shortcut"))")
+    .help(AppShortcut.helpText(title, shortcut: effective))
   }
 }
 

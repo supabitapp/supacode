@@ -342,6 +342,18 @@ public struct AppShortcut: Identifiable {
     displaySymbols.joined()
   }
 
+  // The chord to show, or `nil` when unbound or it renders empty.
+  public static func display(of shortcut: AppShortcut?) -> String? {
+    guard let display = shortcut?.display, !display.isEmpty else { return nil }
+    return display
+  }
+
+  // `title` with the shortcut's chord appended, or bare `title` when unbound.
+  public static func helpText(_ title: String, shortcut: AppShortcut?) -> String {
+    guard let display = display(of: shortcut) else { return title }
+    return "\(title) (\(display))"
+  }
+
   public var displaySymbols: [String] {
     if let keyCode {
       return AppShortcutOverride.displaySymbols(for: keyCode, modifiers: rawModifierFlags)
