@@ -86,66 +86,62 @@ ensure_ghostty_checkout() {
   fi
 }
 
-# Apply our out-of-tree patches to the submodule working tree. Idempotent: a
-# patch that already applies in reverse is treated as present. Fails loudly if
-# a patch no longer applies (e.g. after an upstream bump) so it's never silently
-# skipped. The submodule's committed SHA is untouched; `revert_ghostty_patches`
-# restores a pristine working tree on exit.
-# Repo-relative paths a patch touches. Parses the patch itself, not the tree, so
-# it works even when the working tree is dirty.
-ghostty_patch_files() {
-  git -C "${ghostty_dir}" apply --numstat "$1" 2>/dev/null | awk '{ print $3 }'
-}
+# The out-of-tree patches in apply order. They stack (later ones edit lines
+# earlier ones added), so they're applied in one `git apply` and reverted in one
+# newest-first `git apply --reverse`. Both are all-or-nothing: a tree that isn't
+# exactly pristine (or exactly patched) is left untouched, and unrelated local
+# edits to patched files survive a build.
+ghostty_patches=()
+for patch in "${ghostty_patches_dir}"/*.patch; do
+  [ -e "${patch}" ] && ghostty_patches+=("${patch}")
+done
+ghostty_patches_newest_first=()
+for ((i = ${#ghostty_patches[@]} - 1; i >= 0; i--)); do
+  ghostty_patches_newest_first+=("${ghostty_patches[i]}")
+done
 
-# Reset just the files a patch touches back to the pinned SHA. Reads the file
-# list line by line (bash 3.2 compatible) so a path with spaces stays intact.
+# Reset every file the patches touch back to the pinned SHA, deleting the ones
+# they create (untracked, so checkout can't restore them and would reject the
+# whole pathspec). Parses the patches, not the tree, so it works on any partial
+# state. Reads the file list line by line (bash 3.2 compatible) so a path with
+# spaces stays intact.
 reset_ghostty_patch_files() {
   local f
   local files=()
   while IFS= read -r f; do
-    [ -n "${f}" ] && files+=("${f}")
-  done < <(ghostty_patch_files "$1")
+    [ -n "${f}" ] || continue
+    if git -C "${ghostty_dir}" ls-files --error-unmatch -- "${f}" >/dev/null 2>&1; then
+      files+=("${f}")
+    else
+      rm -f "${ghostty_dir}/${f}"
+    fi
+  done < <(git -C "${ghostty_dir}" apply --numstat "${ghostty_patches[@]}" 2>/dev/null | awk '{ print $3 }' | sort -u)
   [ "${#files[@]}" -eq 0 ] || git -C "${ghostty_dir}" checkout -- "${files[@]}" 2>/dev/null || true
 }
 
+# Apply the patches to the submodule working tree. Fails loudly if they no
+# longer apply (e.g. after an upstream bump) so they're never silently skipped.
+# The submodule's committed SHA is untouched; `revert_ghostty_patches` restores
+# the pinned tree on exit.
 apply_ghostty_patches() {
-  [ -d "${ghostty_patches_dir}" ] || return 0
-  local patch
-  for patch in "${ghostty_patches_dir}"/*.patch; do
-    [ -e "${patch}" ] || continue
-    if git -C "${ghostty_dir}" apply --reverse --check "${patch}" 2>/dev/null; then
-      continue # already fully applied
-    fi
-    if ! git -C "${ghostty_dir}" apply --check "${patch}" 2>/dev/null; then
-      # Neither pristine nor cleanly applied: most likely a prior build was killed
-      # (SIGKILL / power loss) mid-apply and left the patched files dirty. Reset
-      # just those files to the pinned SHA and retry before blaming an upstream bump.
-      reset_ghostty_patch_files "${patch}"
-      if ! git -C "${ghostty_dir}" apply --check "${patch}" 2>/dev/null; then
-        echo "error: ${patch} does not apply cleanly to ${ghostty_submodule_path}." >&2
-        echo "       The submodule may have been bumped (refresh the patch), or a" >&2
-        echo "       previous build left it dirty: git -C ${ghostty_submodule_path} checkout . && retry." >&2
-        exit 1
-      fi
-    fi
-    git -C "${ghostty_dir}" apply "${patch}"
-  done
+  [ "${#ghostty_patches[@]}" -gt 0 ] || return 0
+  git -C "${ghostty_dir}" apply "${ghostty_patches[@]}" 2>/dev/null && return 0
+  # A prior build killed before its EXIT trap left the stack (or, mid-apply,
+  # part of it) in place: restore the pinned tree and retry.
+  revert_ghostty_patches
+  if ! git -C "${ghostty_dir}" apply "${ghostty_patches[@]}"; then
+    echo "error: patches/ghostty does not apply cleanly to ${ghostty_submodule_path}." >&2
+    echo "       The submodule may have been bumped (refresh the patches), or it has" >&2
+    echo "       conflicting local edits: git -C ${ghostty_submodule_path} checkout . && retry." >&2
+    exit 1
+  fi
 }
 
+# Also the trap's fallback when the tree isn't exactly the applied stack, so
+# `set -e` can't abort the trap mid-revert.
 revert_ghostty_patches() {
-  [ -d "${ghostty_patches_dir}" ] || return 0
-  local patch
-  for patch in "${ghostty_patches_dir}"/*.patch; do
-    [ -e "${patch}" ] || continue
-    # Prefer a clean reverse-apply; fall back to resetting just the patched files.
-    # The fallback also guards against `set -e` aborting the trap mid-revert if the
-    # reverse-apply fails (e.g. a partially-applied tree).
-    if git -C "${ghostty_dir}" apply --reverse --check "${patch}" 2>/dev/null; then
-      git -C "${ghostty_dir}" apply --reverse "${patch}" 2>/dev/null || reset_ghostty_patch_files "${patch}"
-    else
-      reset_ghostty_patch_files "${patch}"
-    fi
-  done
+  [ "${#ghostty_patches[@]}" -gt 0 ] || return 0
+  git -C "${ghostty_dir}" apply --reverse "${ghostty_patches_newest_first[@]}" 2>/dev/null || reset_ghostty_patch_files
 }
 
 ensure_ghostty_checkout

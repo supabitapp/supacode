@@ -193,6 +193,32 @@ struct WorktreeContentHostTests {
     #expect(content.terminalChrome.reportedTitle == "~/project")
     #expect(persistenceRearms == 1)
   }
+
+  @Test func programStatusRecordsAccumulateUntilTheSurfaceCloses() {
+    let surfaceID = UUID()
+    let host = makeHost(layout: singleTabLayout(contentID: surfaceID))
+
+    host.handleProgramStatus(surfaceID: surfaceID, event: .commandStart)
+    host.handleProgramStatus(
+      surfaceID: surfaceID,
+      event: .report(ProgramStatusReport(id: "", state: .working, app: "claude-code"))
+    )
+    #expect(host.programStatusStores[surfaceID]?.summary == .init(app: "claude-code", state: .working))
+    #expect(host.programStatusStores[surfaceID]?.commandDepth == 1)
+
+    // The layout drops the tab before the host cleans up after it.
+    host.layout = { nil }
+    host.cleanupSurfaceState(for: surfaceID)
+    #expect(host.programStatusStores[surfaceID] == nil)
+  }
+
+  @Test func programStatusForAnUnknownSurfaceIsDropped() {
+    let host = makeHost(layout: singleTabLayout(contentID: UUID()))
+
+    host.handleProgramStatus(surfaceID: UUID(), event: .report(ProgramStatusReport(id: "", state: .working)))
+
+    #expect(host.programStatusStores.isEmpty)
+  }
 }
 
 /// Pins the render-host claim invariants the steal-proof mount depends on.

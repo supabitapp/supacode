@@ -57,6 +57,8 @@ final class WorktreeContentHost {
   @ObservationIgnored private(set) var surfaceStates: [UUID: WorktreeSurfaceState] = [:]
   @ObservationIgnored private var lastCustomNotificationAt: [UUID: any InstantProtocol<Duration>] = [:]
   @ObservationIgnored private var pendingAgentOSCNotifications: [UUID: Task<Void, Never>] = [:]
+  /// OSC 7501 records per content; they outlive hibernation like the counters.
+  @ObservationIgnored private(set) var programStatusStores: [UUID: ProgramStatusRecordStore] = [:]
   @ObservationIgnored private var lastEmittedFocusSurfaceId: UUID?
   /// A focus request that arrived before its surface was live (launch restore of
   /// a hibernated tab). Resolved by `applySurfaceActivity` once the focused
@@ -486,6 +488,21 @@ final class WorktreeContentHost {
     case .failure(.unknownSurface), .failure(.empty):
       Self.logger.debug("Dropped notify signal for surface \(surfaceID)")
     }
+  }
+
+  // MARK: - Program status (OSC 7501).
+
+  /// Applies a report or OSC 133 boundary to the surface's records. Nothing
+  /// consumes them yet; summary changes are only logged, never the program's text.
+  func handleProgramStatus(surfaceID: UUID, event: ProgramStatusEvent) {
+    guard isKnownSurface(surfaceID) else { return }
+    var store = programStatusStores[surfaceID] ?? ProgramStatusRecordStore()
+    let previous = store.summary
+    store.apply(event)
+    programStatusStores[surfaceID] = store
+    let summary = store.summary
+    guard summary != previous else { return }
+    Self.logger.debug("Program status \(surfaceID): \(summary)")
   }
 
   // MARK: - Task status + progress.
@@ -1138,6 +1155,7 @@ final class WorktreeContentHost {
   private func discardSurfaceBookkeeping(for surfaceID: UUID) {
     pendingAgentOSCNotifications.removeValue(forKey: surfaceID)?.cancel()
     lastCustomNotificationAt.removeValue(forKey: surfaceID)
+    programStatusStores.removeValue(forKey: surfaceID)
     pendingExplicitSurfaceCloseIDs.remove(surfaceID)
     bypassCloseConfirmationSurfaceIDs.remove(surfaceID)
   }
@@ -1228,6 +1246,7 @@ final class WorktreeContentHost {
       task.cancel()
     }
     pendingAgentOSCNotifications.removeAll()
+    programStatusStores.removeAll()
     cleanupAllBlockingScriptLaunchDirectories()
   }
 }
