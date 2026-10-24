@@ -74,6 +74,7 @@ nonisolated extension ForgePullRequest: CustomDumpRepresentable {
       mergeStateStatus: mergeStateStatus,
       statusCheckRollup: statusCheckRollup,
       forgeBlockedReason: forgeBlockedReason,
+      fallbackReviewDecision: fallbackReviewDecision,
       updatedAt: updatedAt
     )
   }

@@ -83,6 +83,7 @@ nonisolated extension ForgePullRequest {
       statusCheckRollup: detail.statusCheckRollup,
       mergeQueueEntry: mergeQueueEntry,
       forgeBlockedReason: detail.forgeBlockedReason,
+      fallbackReviewDecision: fallbackReviewDecision,
       numberSigil: numberSigil
     )
   }

@@ -22,7 +22,8 @@ nonisolated struct PullRequestMergeReadiness: Equatable, Hashable {
   init(pullRequest: ForgePullRequest) {
     let mergeable = pullRequest.mergeable?.uppercased()
     let mergeStateStatus = pullRequest.mergeStateStatus?.uppercased()
-    let reviewDecision = pullRequest.reviewDecision?.uppercased()
+    // Forge-authoritative decision only; the latest-reviews fallback never gates merges.
+    let reviewDecision = PullRequestReviewDecision(forgeDecision: pullRequest.reviewDecision)
     let checks = pullRequest.statusCheckRollup?.checks ?? []
     let breakdown = PullRequestCheckBreakdown(checks: checks)
 
@@ -30,7 +31,7 @@ nonisolated struct PullRequestMergeReadiness: Equatable, Hashable {
       self.assessment = .blocked(.mergeConflicts)
       return
     }
-    if reviewDecision == "CHANGES_REQUESTED" {
+    if reviewDecision == .changesRequested {
       self.assessment = .blocked(.changesRequested)
       return
     }

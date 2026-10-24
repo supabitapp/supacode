@@ -47,6 +47,8 @@ nonisolated struct ForgeCapabilities: Equatable, Hashable, Sendable {
   let canMarkReady: Bool
   let canRerunChecks: Bool
   let canCopyCIFailureLogs: Bool
+  /// How completely this forge's adapter reports review verdicts; nil when it reports none.
+  let reviewStatusSupport: ForgeReviewStatusSupport?
   let vocabulary: ForgeVocabulary
 
   static let github = ForgeCapabilities(
@@ -55,19 +57,30 @@ nonisolated struct ForgeCapabilities: Equatable, Hashable, Sendable {
     canMarkReady: true,
     canRerunChecks: true,
     canCopyCIFailureLogs: true,
+    reviewStatusSupport: .full,
     vocabulary: .github
   )
 
   // GitLab's merge method is a project setting; only squash is a per-merge
-  // choice. Aggregate CI failure logs have no glab equivalent.
+  // choice. Aggregate CI failure logs have no glab equivalent. Pending approvals
+  // need paid-tier fields, so review required can hide behind another merge check.
   static let gitlab = ForgeCapabilities(
     mergeStrategies: [.merge, .squash],
     providesDetailTier: true,
     canMarkReady: true,
     canRerunChecks: true,
     canCopyCIFailureLogs: false,
+    reviewStatusSupport: .partial,
     vocabulary: .gitlab
   )
+}
+
+/// How completely a forge reports pull request review verdicts.
+nonisolated enum ForgeReviewStatusSupport: Hashable, Sendable {
+  /// Every verdict, including pending approvals, on every row.
+  case full
+  /// Every verdict, but a pending approval can go unreported.
+  case partial
 }
 
 nonisolated extension ForgeCapabilities {
