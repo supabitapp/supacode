@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// Three-state checkbox backed by NSButton for mixed-state support.
+// Checkbox backed by NSButton so it can show a mixed state.
 enum CheckboxState: Equatable {
   case checked
   case unchecked
@@ -10,12 +10,13 @@ enum CheckboxState: Equatable {
 
 struct MixedStateCheckbox: NSViewRepresentable {
   let state: CheckboxState
+  // Set on the NSButton itself; SwiftUI accessibility modifiers stop at the representable.
+  let accessibilityLabel: String
   let onToggle: (Bool) -> Void
 
   func makeNSView(context: Context) -> NSButton {
     let button = NSButton(
       checkboxWithTitle: "", target: context.coordinator, action: #selector(Coordinator.toggled(_:)))
-    button.allowsMixedState = true
     button.setContentHuggingPriority(.required, for: .horizontal)
     button.setContentHuggingPriority(.required, for: .vertical)
     applyState(to: button)
@@ -32,6 +33,9 @@ struct MixedStateCheckbox: NSViewRepresentable {
   }
 
   private func applyState(to button: NSButton) {
+    // Mixed only while shown, so a click never lands on it and the checkbox reads as two-state.
+    button.allowsMixedState = state == .mixed
+    button.setAccessibilityLabel(accessibilityLabel)
     switch state {
     case .checked: button.state = .on
     case .unchecked: button.state = .off

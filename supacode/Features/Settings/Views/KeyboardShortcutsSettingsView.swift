@@ -95,16 +95,7 @@ struct KeyboardShortcutsSettingsView: View {
       ForEach(tableItems) { group in
         DisclosureTableRow(
           group,
-          isExpanded: Binding(
-            get: { expandedGroups.contains(group.id) },
-            set: { expanded in
-              if expanded {
-                expandedGroups.insert(group.id)
-              } else {
-                expandedGroups.remove(group.id)
-              }
-            }
-          )
+          isExpanded: $expandedGroups[contains: group.id]
         ) {
           if let children = group.children {
             ForEach(children) { child in
@@ -228,24 +219,25 @@ private struct EnabledCell: View {
       if let group = AppShortcuts.groups.first(where: { $0.category == category }) {
         MixedStateCheckbox(
           state: groupCheckboxState(for: group),
+          accessibilityLabel: category.displayName,
           onToggle: { enabled in
             for shortcut in group.shortcuts where shortcut.isCustomizable {
               store.send(.toggleShortcutEnabled(id: shortcut.id, enabled: enabled))
             }
           }
-        ).frame(maxWidth: .infinity, alignment: .center)
+        )
+        .frame(maxWidth: .infinity, alignment: .center)
       }
     case .shortcut(let shortcut):
-      Toggle(
-        "",
-        isOn: Binding(
-          get: { store.shortcutOverrides[shortcut.id]?.isEnabled ?? shortcut.isEnabledByDefault },
-          set: { store.send(.toggleShortcutEnabled(id: shortcut.id, enabled: $0)) }
-        )
+      let isEnabled = store.shortcutOverrides[shortcut.id]?.isEnabled ?? shortcut.isEnabledByDefault
+      MixedStateCheckbox(
+        state: isEnabled ? .checked : .unchecked,
+        accessibilityLabel: shortcut.displayName,
+        onToggle: { enabled in
+          store.send(.toggleShortcutEnabled(id: shortcut.id, enabled: enabled))
+        }
       )
       .frame(maxWidth: .infinity, alignment: .center)
-      .toggleStyle(.checkbox)
-      .labelsHidden()
     }
   }
 
@@ -258,5 +250,19 @@ private struct EnabledCell: View {
     if enabledCount == customizable.count { return .checked }
     if enabledCount == 0 { return .unchecked }
     return .mixed
+  }
+}
+
+extension Set {
+  // Membership as a writable key path, so `$set[contains: element]` is a stable binding.
+  fileprivate subscript(contains element: Element) -> Bool {
+    get { contains(element) }
+    set {
+      if newValue {
+        insert(element)
+      } else {
+        remove(element)
+      }
+    }
   }
 }
