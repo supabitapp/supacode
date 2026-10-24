@@ -867,8 +867,8 @@ final class GhosttyRuntime {
     let key = "split-preserve-zoom"
     guard ghostty_config_get(config, &value, key, UInt(key.count)) else { return false }
     // Ghostty's C API bitcasts packed structs into c_uint; the first field maps to bit 0.
-    // https://github.com/ghostty-org/ghostty/blob/6057f8d/src/config/c_get.zig#L74-L84
-    // https://github.com/ghostty-org/ghostty/blob/6057f8d/src/config/c_get.zig#L226-L240
+    // https://github.com/ghostty-org/ghostty/blob/05dcf88/src/config/c_get.zig#L76-L84
+    // https://github.com/ghostty-org/ghostty/blob/05dcf88/src/config/c_get.zig#L226-L240
     return value & (1 << 0) != 0
   }
 

@@ -1,0 +1,249 @@
+diff --git a/src/Surface.zig b/src/Surface.zig
+index 1891137cb..73e56e0c2 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -4122,7 +4122,10 @@ pub fn mouseButtonCallback(
+                     null,
+                 )) |result_| {
+                     if (result_) |result| {
+-                        press_selection = result.selection;
++                        // Keep the word selection when pin is past the path.
++                        if (screen.trimLinkTrailingWords(result.selection, pin)) |sel| {
++                            press_selection = sel;
++                        }
+                     }
+                 } else |_| {
+                     // Ignore any errors, likely regex errors.
+@@ -4203,8 +4206,12 @@ pub fn mouseButtonCallback(
+ 
+                 // If there is a link at this position, we want to
+                 // select the link. Otherwise, select the word.
+-                if (try self.linkAtPos(pos)) |link| {
+-                    try self.setSelectionAndCopy(link.selection);
++                const link_sel = if (try self.linkAtPos(pos)) |link|
++                    screen.trimLinkTrailingWords(link.selection, pin)
++                else
++                    null;
++                if (link_sel) |sel| {
++                    try self.setSelectionAndCopy(sel);
+                 } else {
+                     const sel = screen.selectWord(
+                         pin,
+diff --git a/src/terminal/Screen.zig b/src/terminal/Screen.zig
+index 1364a4ee0..6a892c741 100644
+--- a/src/terminal/Screen.zig
++++ b/src/terminal/Screen.zig
+@@ -3429,6 +3429,66 @@ pub fn selectWord(
+     return .init(start, end, false);
+ }
+ 
++/// Trim a link match containing pin to its first space-separated word, or
++/// through the last file name with an extension when only path-like words
++/// lead there, so `/bin/a -b` keeps `/bin/a` while `/tmp/My File.txt` stays
++/// whole. Returns null when pin lands past the result.
++pub fn trimLinkTrailingWords(self: *Screen, sel: Selection, pin: Pin) ?Selection {
++    const ordered = sel.ordered(self, .forward);
++    const start = ordered.start();
++    const limit = ordered.end();
++
++    var trim_end: ?Pin = null;
++    var word_end = start;
++    var in_word = false;
++    var has_slash = false;
++    var has_ext = false;
++    var in_ext = false;
++    var it = start.cellIterator(.right_down, limit);
++    while (true) {
++        const next = it.next();
++        // CellIterator only limits the row, so bound the column too.
++        const done = next == null or limit.before(next.?);
++
++        // Blank cells are word breaks too, like padding in aligned output.
++        const cp: u21 = if (done) ' ' else selectWordCodepoint(next.?) orelse ' ';
++        if (cp == ' ' or cp == '\t') {
++            if (in_word) {
++                if (trim_end == null or has_ext) {
++                    trim_end = word_end;
++                } else if (!has_slash) break;
++            }
++            if (done) break;
++            in_word = false;
++            has_slash = false;
++            has_ext = false;
++            in_ext = false;
++            continue;
++        }
++
++        in_word = true;
++        // An extension is a `.` then alphanumerics with a letter, so `.7z`
++        // counts but a version like `1.2` doesn't.
++        const ascii: u8 = if (cp < 0x80) @intCast(cp) else 0;
++        if (cp == '/') {
++            has_slash = true;
++            has_ext = false;
++            in_ext = false;
++        } else if (cp == '.') {
++            in_ext = true;
++        } else if (in_ext and std.ascii.isAlphabetic(ascii)) {
++            has_ext = true;
++        } else if (!std.ascii.isDigit(ascii)) {
++            in_ext = false;
++        }
++        word_end = next.?;
++    }
++
++    const end = trim_end orelse start;
++    if (end.before(pin)) return null;
++    return .init(start, end, false);
++}
++
+ /// Return the codepoint for word selection, following wide-character spacers.
+ fn selectWordCodepoint(pin: Pin) ?u21 {
+     const rac = pin.rowAndCell();
+@@ -10394,6 +10454,72 @@ test "Screen: selectWord across soft-wrap at right edge" {
+     }
+ }
+ 
++test "Screen: trimLinkTrailingWords" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++    const io = testing.io;
++
++    var s = try init(io, alloc, .{ .cols = 40, .rows = 12, .max_scrollback_bytes = 0 });
++    defer s.deinit();
++    try s.testWriteString("~/work/nas master\n/bin/a -b -c\n/tmp/test folder/file.txt\nhttps://a.io/x?y=1\n/a/b");
++    s.cursorAbsolute(8, 4);
++    try s.testWriteString("next\n/bin/cp -r src/ dst/\n/tmp/My File.txt\n~/work/nas sbertix/foo\n/tmp/foo a/b.txt\n/tmp/a b.7z\n~/a release/1.2");
++
++    const Case = struct { y: u16, link: [2]u16, click: u16, expect: ?[2]u16 };
++    const cases = [_]Case{
++        // Prompt segments after a path are not part of it.
++        .{ .y = 0, .link = .{ 0, 16 }, .click = 13, .expect = null },
++        .{ .y = 0, .link = .{ 0, 16 }, .click = 2, .expect = .{ 0, 9 } },
++        // Arguments after a command path are not part of it.
++        .{ .y = 1, .link = .{ 0, 11 }, .click = 8, .expect = null },
++        .{ .y = 1, .link = .{ 0, 11 }, .click = 1, .expect = .{ 0, 5 } },
++        // A path with spaces stays whole while later words have a `/`.
++        .{ .y = 2, .link = .{ 0, 24 }, .click = 12, .expect = .{ 0, 24 } },
++        .{ .y = 2, .link = .{ 0, 24 }, .click = 2, .expect = .{ 0, 24 } },
++        // A match without spaces is kept whole.
++        .{ .y = 3, .link = .{ 0, 17 }, .click = 5, .expect = .{ 0, 17 } },
++        // Blank cells split words like spaces do.
++        .{ .y = 4, .link = .{ 0, 11 }, .click = 9, .expect = null },
++        .{ .y = 4, .link = .{ 0, 11 }, .click = 1, .expect = .{ 0, 3 } },
++        // The cut is at the first dropped word, even if a path follows.
++        .{ .y = 5, .link = .{ 0, 19 }, .click = 9, .expect = null },
++        .{ .y = 5, .link = .{ 0, 19 }, .click = 12, .expect = null },
++        .{ .y = 5, .link = .{ 0, 19 }, .click = 2, .expect = .{ 0, 6 } },
++        // A trailing file name with an extension is part of the path.
++        .{ .y = 6, .link = .{ 0, 15 }, .click = 2, .expect = .{ 0, 15 } },
++        // A slash word without an extension, like a branch, is dropped.
++        .{ .y = 7, .link = .{ 0, 21 }, .click = 13, .expect = null },
++        .{ .y = 7, .link = .{ 0, 21 }, .click = 2, .expect = .{ 0, 9 } },
++        // Never extends past the match.
++        .{ .y = 8, .link = .{ 0, 7 }, .click = 2, .expect = .{ 0, 7 } },
++        // Extensions may start with a digit, but versions are not extensions.
++        .{ .y = 9, .link = .{ 0, 10 }, .click = 2, .expect = .{ 0, 10 } },
++        .{ .y = 10, .link = .{ 0, 14 }, .click = 2, .expect = .{ 0, 2 } },
++    };
++
++    const at = struct {
++        fn at(screen: *Screen, x: u16, y: u16) Pin {
++            return screen.pages.pin(.{ .active = .{ .x = x, .y = y } }).?;
++        }
++    }.at;
++    for (cases) |c| {
++        const link: Selection = .init(at(&s, c.link[0], c.y), at(&s, c.link[1], c.y), false);
++        const sel = s.trimLinkTrailingWords(link, at(&s, c.click, c.y));
++        const expect = c.expect orelse {
++            try testing.expect(sel == null);
++            continue;
++        };
++        try testing.expectEqual(point.Point{ .screen = .{
++            .x = expect[0],
++            .y = c.y,
++        } }, s.pages.pointFromPin(.screen, sel.?.start()).?);
++        try testing.expectEqual(point.Point{ .screen = .{
++            .x = expect[1],
++            .y = c.y,
++        } }, s.pages.pointFromPin(.screen, sel.?.end()).?);
++    }
++}
++
+ test "Screen: selectWord wide characters" {
+     const testing = std.testing;
+     const alloc = testing.allocator;
+diff --git a/src/terminal/StringMap.zig b/src/terminal/StringMap.zig
+index 7b8aac067..92c91ccd2 100644
+--- a/src/terminal/StringMap.zig
++++ b/src/terminal/StringMap.zig
+@@ -294,3 +294,69 @@ test "StringMap searchIterator URL with click position" {
+     }
+     try testing.expect(found_url);
+ }
++
++test "StringMap URL match trimmed for double-click" {
++    if (comptime !build_options.oniguruma) return error.SkipZigTest;
++
++    const testing = std.testing;
++    const alloc = testing.allocator;
++    const io = testing.io;
++    const url = @import("../config/url.zig");
++
++    try oni.testing.ensureInit();
++    var re = try oni.Regex.init(
++        url.regex,
++        .{},
++        oni.Encoding.utf8,
++        oni.Syntax.default,
++        null,
++    );
++    defer re.deinit();
++
++    var s = try Screen.init(io, alloc, .{ .cols = 40, .rows = 8, .max_scrollback_bytes = 0 });
++    defer s.deinit();
++    try s.testWriteString("~/work/nas master\n/bin/a -b -c\n/tmp/test folder/file.txt\n/bin/cp -r src/ dst/\n/tmp/My File.txt\n~/work/nas sbertix/foo\n/tmp/foo /tmp/bar");
++
++    const Case = struct { y: u16, click: u16, expect: ?[2]u16 };
++    const cases = [_]Case{
++        .{ .y = 0, .click = 13, .expect = null },
++        .{ .y = 0, .click = 2, .expect = .{ 0, 9 } },
++        .{ .y = 1, .click = 8, .expect = null },
++        .{ .y = 1, .click = 1, .expect = .{ 0, 5 } },
++        .{ .y = 2, .click = 12, .expect = .{ 0, 24 } },
++        .{ .y = 3, .click = 9, .expect = null },
++        .{ .y = 4, .click = 2, .expect = .{ 0, 15 } },
++        .{ .y = 5, .click = 13, .expect = null },
++        .{ .y = 6, .click = 2, .expect = .{ 0, 7 } },
++    };
++
++    for (cases) |c| {
++        const click_pin = s.pages.pin(.{ .active = .{ .x = c.click, .y = c.y } }).?;
++        const line = s.selectLine(.{ .pin = click_pin }).?;
++        const map = try s.selectionStringMap(alloc, .{ .sel = line, .trim = false });
++        defer map.deinit(alloc);
++
++        // Find the match under the click, like Surface.linkAtPin.
++        var it = map.searchIterator(re);
++        const link = while (try it.next()) |m| {
++            var match = m;
++            defer match.deinit();
++            const sel = match.selection();
++            if (sel.contains(&s, click_pin)) break sel;
++        } else return error.TestUnexpectedResult;
++
++        const sel = s.trimLinkTrailingWords(link, click_pin);
++        const expect = c.expect orelse {
++            try testing.expect(sel == null);
++            continue;
++        };
++        try testing.expectEqual(point.Point{ .screen = .{
++            .x = expect[0],
++            .y = c.y,
++        } }, s.pages.pointFromPin(.screen, sel.?.start()).?);
++        try testing.expectEqual(point.Point{ .screen = .{
++            .x = expect[1],
++            .y = c.y,
++        } }, s.pages.pointFromPin(.screen, sel.?.end()).?);
++    }
++}
