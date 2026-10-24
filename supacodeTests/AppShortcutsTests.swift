@@ -405,6 +405,91 @@ struct AppShortcutsTests {
     #expect(lines.contains { $0 == AppShortcuts.newWorktree.ghosttyUnbindConfigLine } == false)
   }
 
+  // MARK: - Terminal reachability.
+
+  @Test func ghosttyKeybindConfigLinesKeepSidebarOnlyChordsBound() throws {
+    let lines = AppShortcuts.ghosttyKeybindConfigLines(from: [:])
+    // Ghostty keeps `super+backspace` (delete line) while Archive only runs from the sidebar.
+    let archiveLine = try #require(AppShortcuts.archiveWorktree.ghosttyUnbindConfigLine)
+    let deleteLine = try #require(AppShortcuts.deleteWorktree.ghosttyUnbindConfigLine)
+    #expect(archiveLine == "keybind = super+backspace=unbind")
+    #expect(!lines.contains(archiveLine))
+    #expect(!lines.contains(deleteLine))
+    for shortcut in AppShortcuts.all where shortcut.id.isReachableFromTerminal {
+      guard let effective = shortcut.effective(from: [:]), let line = effective.ghosttyUnbindConfigLine else {
+        continue
+      }
+      #expect(lines.contains(line), "\(shortcut.displayName) is not released from the terminal")
+    }
+  }
+
+  @Test func ghosttyKeybindConfigLinesKeepReachableOwnerOfSharedChord() {
+    let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_D), modifiers: [.command])
+    let lines = AppShortcuts.ghosttyKeybindConfigLines(from: [.archiveWorktree: override])
+    // Split Right still owns ⌘D, so Ghostty still unbinds it.
+    #expect(lines.contains("keybind = super+d=unbind"))
+  }
+
+  @Test func ghosttyKeybindConfigLinesUnbindReachableShortcutMovedOntoCommandDelete() {
+    let override = AppShortcutOverride(keyCode: UInt16(kVK_Delete), modifiers: [.command])
+    let lines = AppShortcuts.ghosttyKeybindConfigLines(from: [.newWorktree: override])
+    #expect(lines.contains("keybind = super+backspace=unbind"))
+  }
+
+  @Test func terminalUnreachableChordMatchesOnlySidebarOnlyShortcuts() {
+    let commandDelete = Self.keyEvent(keyCode: kVK_Delete, modifiers: [.command])
+    #expect(AppShortcuts.isTerminalUnreachableChord(commandDelete, overrides: [:]))
+
+    let shiftCommandDelete = Self.keyEvent(keyCode: kVK_Delete, modifiers: [.command, .shift])
+    #expect(AppShortcuts.isTerminalUnreachableChord(shiftCommandDelete, overrides: [:]))
+
+    let optionCommandDelete = Self.keyEvent(keyCode: kVK_Delete, modifiers: [.command, .option])
+    #expect(!AppShortcuts.isTerminalUnreachableChord(optionCommandDelete, overrides: [:]))
+
+    let commandD = Self.keyEvent(keyCode: kVK_ANSI_D, modifiers: [.command])
+    #expect(!AppShortcuts.isTerminalUnreachableChord(commandD, overrides: [:]))
+
+    let unbound = Self.keyEvent(keyCode: kVK_ANSI_J, modifiers: [.command, .option, .control])
+    #expect(!AppShortcuts.isTerminalUnreachableChord(unbound, overrides: [:]))
+  }
+
+  @Test func terminalUnreachableChordYieldsToReachableShortcutSharingIt() {
+    let override = AppShortcutOverride(keyCode: UInt16(kVK_Delete), modifiers: [.command])
+    let commandDelete = Self.keyEvent(keyCode: kVK_Delete, modifiers: [.command])
+    #expect(!AppShortcuts.isTerminalUnreachableChord(commandDelete, overrides: [.newWorktree: override]))
+  }
+
+  @Test func terminalUnreachableChordReleasesDisabledArchive() {
+    let commandDelete = Self.keyEvent(keyCode: kVK_Delete, modifiers: [.command])
+    #expect(!AppShortcuts.isTerminalUnreachableChord(commandDelete, overrides: [.archiveWorktree: .disabled]))
+  }
+
+  @Test func onlyWorktreeArchiveAndDeleteAreSidebarOnly() {
+    var sidebarOnly: Set<AppShortcutID> = []
+    for shortcut in AppShortcuts.all {
+      guard !shortcut.id.isReachableFromTerminal else { continue }
+      sidebarOnly.insert(shortcut.id)
+    }
+    #expect(sidebarOnly == [.archiveWorktree, .deleteWorktree])
+  }
+
+  @Test func reboundSidebarOnlyChordMovesWithTheShortcut() {
+    let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_K), modifiers: [.command, .option])
+    let overrides: [AppShortcutID: AppShortcutOverride] = [.archiveWorktree: override]
+    let rebound = Self.keyEvent(keyCode: kVK_ANSI_K, modifiers: [.command, .option])
+    #expect(AppShortcuts.isTerminalUnreachableChord(rebound, overrides: overrides))
+    let commandDelete = Self.keyEvent(keyCode: kVK_Delete, modifiers: [.command])
+    #expect(!AppShortcuts.isTerminalUnreachableChord(commandDelete, overrides: overrides))
+    #expect(!AppShortcuts.ghosttyKeybindConfigLines(from: overrides).contains("keybind = super+alt+k=unbind"))
+  }
+
+  @Test func terminalUnreachableChordYieldsToLaterReachableShortcut() {
+    // Archive precedes Split Right in `all`, so the sidebar-only match comes first.
+    let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_D), modifiers: [.command])
+    let commandD = Self.keyEvent(keyCode: kVK_ANSI_D, modifiers: [.command])
+    #expect(!AppShortcuts.isTerminalUnreachableChord(commandD, overrides: [.archiveWorktree: override]))
+  }
+
   // MARK: - Category display names.
 
   @Test func categoryDisplayNames() {

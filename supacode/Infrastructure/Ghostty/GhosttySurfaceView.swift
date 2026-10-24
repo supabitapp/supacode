@@ -3,6 +3,7 @@ import Carbon
 import CoreText
 import GhosttyKit
 import QuartzCore
+import Sharing
 import SupacodeSettingsShared
 import UniformTypeIdentifiers
 
@@ -103,6 +104,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private var lastPerformKeyEvent: TimeInterval?
   private var currentCursor: NSCursor = .iBeam
   private var focused = false
+  // Held so the per-chord check doesn't build a fresh reference.
+  @Shared(.settingsFile) private var settingsFile
   // True between a left press this view forwarded to the terminal and its release. mouseUp only
   // reports a release when it is set, so a consumed focus-transfer press (which never sets it,
   // whether released here or dragged in from another split) can't orphan a release. Cleared at
@@ -1298,12 +1301,20 @@ final class GhosttySurfaceView: NSView, Identifiable {
       // forwardable item (e.g. `⌘⌥H` Hide Others vs a `goto_split` binding) falls through to
       // Ghostty so the terminal binding wins.
       if shouldAttemptMenu(for: bindingFlags),
+        // Sidebar-only chords stay with the terminal (`⌘⌫` deletes the line).
+        !isTerminalUnreachableChord(event),
         let menu = NSApp.mainMenu,
         let item = Self.forwardableMenuItem(for: event, in: menu),
         Self.dispatchForwardableChord(item, for: event, in: menu)
       {
         return true
       }
+      keyDown(with: event)
+      return true
+    }
+
+    // A sidebar-only chord Ghostty doesn't bind must still reach the shell, not its disabled menu item.
+    if isTerminalUnreachableChord(event) {
       keyDown(with: event)
       return true
     }
@@ -1635,6 +1646,10 @@ final class GhosttySurfaceView: NSView, Identifiable {
   static func performMenuItem(_ item: NSMenuItem) -> Bool {
     guard item.isEnabled, let action = item.action else { return false }
     return NSApp.sendAction(action, to: item.target, from: item)
+  }
+
+  private func isTerminalUnreachableChord(_ event: NSEvent) -> Bool {
+    AppShortcuts.isTerminalUnreachableChord(event, overrides: settingsFile.global.shortcutOverrides)
   }
 
   private func shouldAttemptMenu(for flags: ghostty_binding_flags_e) -> Bool {

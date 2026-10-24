@@ -62,10 +62,7 @@ struct KeyboardShortcutsSettingsView: View {
     !store.shortcutOverrides.isEmpty
   }
 
-  // No terminal-conflict pass here: every effective shortcut's chord is
-  // unbound inside Ghostty via the app's keybind config lines, so a terminal
-  // "conflict" is resolved in the app's favor by construction. The recorder
-  // still flags terminal chords at record time.
+  // No terminal pass: Ghostty unbinds every terminal-reachable chord.
   private var warningsByID: [AppShortcutID: String] {
     AppShortcuts.conflictWarnings(from: store.shortcutOverrides)
   }
@@ -175,8 +172,7 @@ private struct HotkeyCell: View {
         onReset: {
           store.send(.updateShortcut(id: shortcut.id, override: nil))
         },
-        // No terminal check: the app unbinds every recorded chord inside
-        // Ghostty, so a terminal binding is claimable, not a conflict.
+        // No terminal check: Ghostty unbinds reachable chords; sidebar-only ones fire only from the sidebar.
         conflictChecker: { proposed in
           let proposedDisplay = proposed.displayString
           // The hardcoded close chord has no row of its own to explain a
