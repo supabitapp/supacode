@@ -364,6 +364,7 @@ private struct IconView: View {
       isMissing: isMissing,
       icon: SidebarPullRequestIcon.resolve(display.pullRequest),
       checkBadgeState: SidebarCheckBadgeState.resolve(display.pullRequest),
+      reviewDecision: display.pullRequest?.reviewStatus,
       rowState: IconRowState(lifecycle),
     )
     .equatable()
@@ -392,6 +393,7 @@ private struct IconContent: View, Equatable {
   let isMissing: Bool
   let icon: SidebarPullRequestIcon
   let checkBadgeState: SidebarCheckBadgeState?
+  let reviewDecision: PullRequestReviewDecision?
   let rowState: IconRowState
   // `==` ignores @Environment; SwiftUI tracks env changes separately.
   @Environment(\.backgroundProminence) private var backgroundProminence
@@ -402,6 +404,7 @@ private struct IconContent: View, Equatable {
       && lhs.isMissing == rhs.isMissing
       && lhs.icon == rhs.icon
       && lhs.checkBadgeState == rhs.checkBadgeState
+      && lhs.reviewDecision == rhs.reviewDecision
       && lhs.rowState == rhs.rowState
   }
 
@@ -444,16 +447,11 @@ private struct IconContent: View, Equatable {
     }
   }
 
-  /// Single hover tooltip for the whole icon + badge composite. The PR/branch
-  /// icon and the check badge are tiny, separate hover targets, so one `.help`
-  /// on the composite surfaces both the pull request state and the check status
-  /// together (e.g. "Pull request open · Checks passed"). Falls back to the
-  /// folder / lifecycle label for the system-image variants; idle folders map
-  /// to an empty string, which shows no tooltip.
+  /// One tooltip for the tiny icon + badge composite: PR state, review, and checks. Empty for idle folders.
   private var helpText: String {
     if isSystemImage { return accessibilityLabel ?? "" }
-    guard let checkBadgeState else { return icon.statusDescription }
-    return "\(icon.statusDescription) · \(checkBadgeState.statusDescription)"
+    let parts = [icon.statusDescription, reviewDecision?.label, checkBadgeState?.statusDescription]
+    return parts.compactMap(\.self).joined(separator: " · ")
   }
 
   var body: some View {
@@ -513,6 +511,7 @@ private struct TrailingView: View {
       pullRequest: showsPullRequestInfo ? store.pullRequest : nil,
     )
     let prText = display.pullRequestBadgeStyle?.text
+    let reviewDecision = display.pullRequest?.reviewStatus
     let agents = store.agents
     let scriptColors = store.runningScripts.map(\.tint)
     let showsNotificationIndicator = store.hasUnseenNotifications
@@ -542,7 +541,7 @@ private struct TrailingView: View {
             .equatable()
         }
         if let prText {
-          PullRequestBadgeContent(text: prText)
+          PullRequestBadgeContent(text: prText, reviewDecision: reviewDecision)
             .equatable()
         }
         if !agents.isEmpty {
@@ -590,11 +589,22 @@ private struct SidebarDormantIndicator: View, Equatable {
 
 private struct PullRequestBadgeContent: View, Equatable {
   let text: String
+  let reviewDecision: PullRequestReviewDecision?
+  // `==` ignores @Environment; SwiftUI tracks env changes separately.
+  @Environment(\.backgroundProminence) private var backgroundProminence
+
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.text == rhs.text && lhs.reviewDecision == rhs.reviewDecision
+  }
 
   var body: some View {
+    let isEmphasized = backgroundProminence == .increased
+    let color = isEmphasized ? nil : reviewDecision?.color
     Text(text)
       .appFont(.caption)
-      .foregroundStyle(.secondary)
+      .foregroundStyle(color.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
+      .help(reviewDecision.map { "\(text) · \($0.label)" } ?? "")
+      .accessibilityLabel(reviewDecision.map { "\(text), \($0.label)" } ?? text)
       .transition(.blurReplace)
   }
 }

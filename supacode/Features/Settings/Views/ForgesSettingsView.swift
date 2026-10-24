@@ -103,6 +103,8 @@ nonisolated extension ForgeCapabilities {
       FeatureCapability(
         name: "Re-run failed \(vocabulary.ciNoun.lowercased())", isSupported: canRerunChecks),
       FeatureCapability(name: "Copy failure logs", isSupported: canCopyCIFailureLogs),
+      FeatureCapability(name: "Review status", isSupported: reviewStatusSupport != nil),
+      FeatureCapability(name: "Full approval status", isSupported: reviewStatusSupport == .full),
     ]
   }
 }

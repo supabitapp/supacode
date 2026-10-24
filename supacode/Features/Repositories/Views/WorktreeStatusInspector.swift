@@ -211,6 +211,12 @@ private struct GitInspectorContent: View {
             }
           }
         }
+        if let reviewStatus = pullRequest.reviewStatus {
+          LabeledContent("Review") {
+            Text(reviewStatus.label)
+              .foregroundStyle(reviewStatus.color)
+          }
+        }
         if readiness.isConflicting {
           Label {
             Text("Merge Conflicts")
