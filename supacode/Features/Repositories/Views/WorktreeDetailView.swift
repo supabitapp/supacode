@@ -313,7 +313,16 @@ struct WorktreeDetailView: View {
           terminalsStore: store.scope(state: \.terminals, action: \.terminals),
           runtime: ContentRuntime.liveValue,
           forceAutoFocus: shouldFocusTerminal,
-          isLifecycleBusy: selectedSlice?.lifecycle.isBusy ?? false
+          isLifecycleBusy: selectedSlice?.lifecycle.isBusy ?? false,
+          newTerminal: FocusedAction(
+            isEnabled: hasActiveWorktree(
+              repositories: repositories,
+              loadingInfo: loadingInfo,
+              selectedWorktree: selectedWorktree,
+              selectedWorktreeSummaries: selectedWorktreeSummaries
+            ),
+            token: selectedWorktree.id
+          ) { store.send(.newTerminalInWorktree(selectedWorktree.id)) }
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.container, edges: .bottom)

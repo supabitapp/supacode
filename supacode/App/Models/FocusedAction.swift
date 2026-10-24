@@ -8,6 +8,7 @@ import SwiftUI
 /// "value changed" event to AppKit, which then rebuilds the system menu and
 /// drops open-submenu / hover state (#289). Wrapping the closure in this
 /// Equatable adapter keeps the focused value stable across no-op body runs.
+/// It doubles as an action input for views that must stay diffable.
 ///
 /// **Contract**: `token` must hash any captured state that affects the
 /// closure's behavior. If the closure captures only stable references

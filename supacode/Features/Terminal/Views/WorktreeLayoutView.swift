@@ -1,5 +1,7 @@
 import AppKit
 import ComposableArchitecture
+import Sharing
+import SupacodeSettingsShared
 import SwiftUI
 
 /// One worktree's terminal area on the layout engine: the pane tree with its
@@ -11,6 +13,7 @@ struct WorktreeLayoutView: View {
   let runtime: ContentRuntime
   let forceAutoFocus: Bool
   var isLifecycleBusy = false
+  let newTerminal: FocusedAction<Void>
   @State private var windowActivity = WindowActivityState.inactive
   @State private var windowActivityReader = WindowActivityReader()
   // Reading `\.colorScheme` invalidates this body when the window appearance
@@ -42,12 +45,7 @@ struct WorktreeLayoutView: View {
           }
         )
       } else {
-        // No strip is mounted here, so the default "+" hint would point at a
-        // control that is not on screen.
-        EmptyTerminalPaneView(
-          message: "No terminals open",
-          hint: Text("Press \(Text("⌘T").bold()) to open a new terminal.")
-        )
+        EmptyWorktreeTerminalView(newTerminal: newTerminal)
       }
     }
     .background(
@@ -100,6 +98,33 @@ struct WorktreeLayoutView: View {
     // window entirely (e.g. the command palette panel).
     let activity = windowActivityReader.current ?? windowActivity
     host?.syncFocus(windowIsKey: activity.isKeyWindow, windowIsVisible: activity.isVisible)
+  }
+}
+
+/// The tab-less state: no strip is mounted, so it carries its own new-tab button.
+private struct EmptyWorktreeTerminalView: View {
+  let newTerminal: FocusedAction<Void>
+
+  @Shared(.settingsFile) private var settingsFile
+
+  var body: some View {
+    let title = "New Terminal Tab"
+    let shortcut = AppShortcuts.newTerminalTab.effective(from: settingsFile.global.shortcutOverrides)
+    let hint =
+      AppShortcut.display(of: shortcut).map {
+        Text("Press \(Text(verbatim: $0).bold()) or click New Terminal Tab to open one.")
+      }
+      ?? Text("Click New Terminal Tab to open one.")
+    EmptyTerminalPaneView(
+      message: "No terminals open",
+      hint: hint,
+      action: .init(
+        title: title,
+        systemImage: "plus",
+        help: AppShortcut.helpText(title, shortcut: shortcut),
+        perform: newTerminal
+      )
+    )
   }
 }
 

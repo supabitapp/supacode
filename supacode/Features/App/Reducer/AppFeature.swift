@@ -319,6 +319,7 @@ struct AppFeature {
     case requestQuit
     case requestTerminateAllTerminalSessions
     case newTerminal
+    case newTerminalInWorktree(Worktree.ID)
     case renameSelectedTerminalTab
     case toggleWindowModeForFocusedPane
     case toggleSplitZoom
@@ -1045,8 +1046,10 @@ struct AppFeature {
           await terminalClient.terminateAllSessions()
         }
 
-      case .newTerminal:
-        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+      case .newTerminal, .newTerminalInWorktree:
+        let worktreeID: Worktree.ID? =
+          if case .newTerminalInWorktree(let id) = action { id } else { state.repositories.selectedWorktreeID }
+        guard let worktree = state.repositories.worktree(for: worktreeID),
           !worktree.isMissing
         else {
           return .none

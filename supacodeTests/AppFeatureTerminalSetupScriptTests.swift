@@ -70,6 +70,34 @@ struct AppFeatureTerminalSetupScriptTests {
     #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: false, id: nil)])
   }
 
+  @Test(.dependencies) func newTerminalInWorktreeTargetsThatWorktreeNotTheSelection() async {
+    let worktree = makeWorktree()
+    let repositoriesState = makeRepositoriesState(
+      worktree: worktree,
+      pendingSetupScript: false,
+      selected: false
+    )
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+
+    await store.send(.newTerminal)
+    await store.send(.newTerminalInWorktree(worktree.id))
+    await store.finish()
+    // The untargeted action finds no selection and sends nothing.
+    #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: false, id: nil)])
+  }
+
   @Test(.dependencies) func tabCreatedClearsPending() async {
     // A hosted tab is the readiness condition, so `.tabCreated` clears the
     // creation-progress state even when no setup script runs (empty script,
