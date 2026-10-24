@@ -52,6 +52,16 @@ redundant_discardable_let:
   ignore_swiftui_view_bodies: true
 
 custom_rules:
+  # Drop once the deployment target is macOS 26.4+ (fixed upstream in swiftlang/swift#88036).
+  no_isolated_deinit:
+    name: "No Isolated Deinit"
+    regex: "\\bisolated\\s+deinit\\b"
+    message: >
+      `isolated deinit` aborts with an invalid free on macOS 26.3 and earlier when the last release lands
+      inside a task-local scope (every reducer send and effect, #853). Use `nonisolated deinit`, wrapping a
+      body that touches main-actor state in `MainActor.assumeIsolated`.
+    severity: error
+    excluded_match_kinds: [comment, doccomment, string]
   store_state_mutation_in_views:
     name: "Store State Mutation In Views"
     regex: "\\bstore\\.[A-Za-z0-9_]+\\s*(?:\\+=|-=|\\*=|/=|=(?!=))"
