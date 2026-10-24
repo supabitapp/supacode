@@ -49,9 +49,11 @@ enum WindowChromeApplier {
       return
     }
     lastApplied = next
+    window.titlebarSeparatorStyle = .none
+    // An opaque titlebar (full screen included) paints a band over the sidebar's top.
+    window.titlebarAppearsTransparent = true
     if !next.isFullScreen, opacity < 1, !next.isOpaqueOverride {
       window.isOpaque = false
-      window.titlebarAppearsTransparent = true
       // Near-transparent backing so the window-wide blur shows through and the
       // tint is carried by `WindowTintBackdrop`, which masks the surface regions
       // out of it. A surface then composites over blur (its own opacity),
@@ -66,7 +68,6 @@ enum WindowChromeApplier {
       return
     }
     window.isOpaque = true
-    window.titlebarAppearsTransparent = !next.isFullScreen
     window.backgroundColor = tintColor
   }
 
@@ -186,8 +187,6 @@ final class WindowChromeObserverNSView: NSView {
   private func addObservers(for window: NSWindow) {
     let center = NotificationCenter.default
     let windowNotifications: [Notification.Name] = [
-      NSWindow.didEnterFullScreenNotification,
-      NSWindow.didExitFullScreenNotification,
       NSWindow.didBecomeKeyNotification,
       NSWindow.didChangeOcclusionStateNotification,
       NSWindow.didChangeScreenNotification,
@@ -196,6 +195,17 @@ final class WindowChromeObserverNSView: NSView {
       observers.append(
         center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
           Task { @MainActor [weak self] in self?.apply() }
+        }
+      )
+    }
+    // AppKit resets titlebar properties across a fullscreen transition, so skip the dedupe there.
+    for name in [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+      observers.append(
+        center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+          Task { @MainActor [weak self] in
+            self?.lastApplied = nil
+            self?.apply()
+          }
         }
       )
     }

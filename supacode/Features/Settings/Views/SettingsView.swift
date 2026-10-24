@@ -16,12 +16,20 @@ private struct RepositoryLabel: View {
   @State private var avatarURL: URL?
   @Dependency(GitClientDependency.self) private var gitClient
 
+  init(name: String, rootURL: URL, isGitRepository: Bool) {
+    self.name = name
+    self.rootURL = rootURL
+    self.isGitRepository = isGitRepository
+    _avatarURL = State(initialValue: isGitRepository ? GitHubOwnerAvatar.cachedURL(for: rootURL) : nil)
+  }
+
   var body: some View {
     Label {
       Text(name)
     } icon: {
       if isGitRepository {
         KFImage(avatarURL)
+          .startLoadingBeforeViewAppear()
           .placeholder {
             Image(systemName: "arrow.trianglehead.branch")
               .padding(-3)

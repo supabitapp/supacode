@@ -41,22 +41,6 @@ struct ContentView: View {
     } detail: {
       WorktreeDetailView(store: store, terminalManager: terminalManager)
     }
-    .sheet(
-      isPresented: Binding(
-        get: { store.license.isPresented },
-        set: { if !$0 { store.send(.license(.dismiss)) } }
-      )
-    ) {
-      LicenseSettingsView(store: store.scope(state: \.license, action: \.license))
-        .frame(minWidth: 460, idealWidth: 520, minHeight: 400)
-        .toolbar {
-          ToolbarItem(placement: .confirmationAction) {
-            Button("Done") { store.send(.license(.dismiss)) }
-              .keyboardShortcut(.cancelAction)
-              .help("Close the license window. Escape.")
-          }
-        }
-    }
     .navigationSplitViewStyle(.automatic)
     .disabled(!repositoriesStore.isInitialLoadComplete)
     .onChange(of: scenePhase) { _, newValue in

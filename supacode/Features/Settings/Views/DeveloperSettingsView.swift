@@ -175,19 +175,25 @@ private struct CLIInstallRow: View {
       switch store.cliInstallState {
       case .checking:
         ProgressView()
+          .controlSize(.small)
+          .accessibilityLabel("Checking")
       case .installed:
         ControlGroup {
           Label("Installed", systemImage: "checkmark")
           Button("Uninstall", role: .destructive) { store.send(.cliUninstallTapped) }
+            .help("Remove the supacode command line tool.")
         }
       case .notInstalled, .failed:
         Button("Install") { store.send(.cliInstallTapped) }
+          .help("Install the supacode command line tool.")
       case .installing:
         Button("Installing\u{2026}") {}
           .disabled(true)
+          .help("Installing the supacode command line tool.")
       case .uninstalling:
         Button("Uninstalling\u{2026}") {}
           .disabled(true)
+          .help("Removing the supacode command line tool.")
       }
     } label: {
       Text("Command Line Tool")
@@ -320,7 +326,12 @@ private struct AgentInstallTargetLine: View {
               .appFont(.subheadline)
               .foregroundStyle(.secondary)
           }
-          pathLabel
+          AgentInstallPathLabel(
+            configDirectoryURL: configDirectoryURL,
+            configPath: configPath,
+            isLink: directoryExists && !showsEllipsis,
+            showsEllipsis: showsEllipsis
+          )
         }
         if let message = state.errorMessage {
           Text(message)
@@ -329,7 +340,15 @@ private struct AgentInstallTargetLine: View {
         }
       }
       Spacer()
-      trailingControl
+      AgentInstallTrailingControl(
+        agent: agent,
+        state: state,
+        isStandard: isStandard,
+        configPath: configPath,
+        install: install,
+        uninstall: uninstall,
+        addCustomFolder: addCustomFolder
+      )
     }
   }
 
@@ -359,12 +378,16 @@ private struct AgentInstallTargetLine: View {
     case .checking, .ready, .failed, .failedTransient, .undetermined: false
     }
   }
+}
 
-  /// The path: a Finder-revealing link (tinted, with an arrow) whenever the
-  /// directory is on disk (so even a prospective install links, since the
-  /// agent's config dir already exists), otherwise the plain forge-style path.
-  @ViewBuilder private var pathLabel: some View {
-    if directoryExists && !showsEllipsis {
+private struct AgentInstallPathLabel: View {
+  let configDirectoryURL: URL
+  let configPath: String
+  let isLink: Bool
+  let showsEllipsis: Bool
+
+  var body: some View {
+    if isLink {
       Button {
         NSWorkspace.shared.open(configDirectoryURL)
       } label: {
@@ -373,47 +396,80 @@ private struct AgentInstallTargetLine: View {
       .buttonStyle(.plain)
       .foregroundStyle(.tint)
       .appFont(.subheadline)
-      .help("Show \(configPath) in Finder")
+      .help("Show \(configPath) in Finder.")
+      .accessibilityLabel("Show \(configPath) in Finder")
     } else {
       Text(verbatim: showsEllipsis ? "\(configPath)\u{2026}" : configPath)
         .appFont(.subheadline)
         .foregroundStyle(.secondary)
     }
   }
+}
 
-  @ViewBuilder
-  private var trailingControl: some View {
+private struct AgentInstallTrailingControl: View {
+  let agent: SkillAgent
+  let state: AgentIntegrationRowState
+  let isStandard: Bool
+  let configPath: String
+  let install: () -> Void
+  let uninstall: () -> Void
+  let addCustomFolder: () -> Void
+
+  var body: some View {
     switch state {
     case .checking:
       ProgressView()
+        .controlSize(.small)
+        .accessibilityLabel("Checking")
     case .ready(.installed), .undetermined(.installed, _):
       ControlGroup {
         Label("Installed", systemImage: "checkmark")
         Button("Uninstall", role: .destructive, action: uninstall)
+          .help("Remove the \(agent.displayName) integration from \(configPath).")
       }
     case .ready(.outdated), .undetermined(.outdated, _):
       ControlGroup {
         Button("Update", action: install)
+          .help("Update the \(agent.displayName) integration in \(configPath).")
         Button("Uninstall", role: .destructive, action: uninstall)
+          .help("Remove the \(agent.displayName) integration from \(configPath).")
       }
     case .ready(.notInstalled), .failed, .failedTransient, .undetermined(.notInstalled, _),
       .undetermined(nil, _):
-      installControl
+      AgentInstallControl(
+        agent: agent,
+        isStandard: isStandard,
+        configPath: configPath,
+        install: install,
+        uninstall: uninstall,
+        addCustomFolder: addCustomFolder
+      )
     case .installing:
-      Button("Installing\u{2026}") {}.disabled(true)
+      Button("Installing\u{2026}") {}
+        .disabled(true)
+        .help("Installing the \(agent.displayName) integration into \(configPath).")
     case .uninstalling:
-      Button("Uninstalling\u{2026}") {}.disabled(true)
+      Button("Uninstalling\u{2026}") {}
+        .disabled(true)
+        .help("Removing the \(agent.displayName) integration from \(configPath).")
     }
   }
+}
 
-  /// Not-installed control. A supporting agent's default offers the split
-  /// button (primary installs the default, the menu adds a custom folder). A
-  /// custom row offers retry plus remove; everything else a plain Install.
-  @ViewBuilder
-  private var installControl: some View {
+/// Not-installed control: a split button on a supporting default, Install and Remove on a custom folder.
+private struct AgentInstallControl: View {
+  let agent: SkillAgent
+  let isStandard: Bool
+  let configPath: String
+  let install: () -> Void
+  let uninstall: () -> Void
+  let addCustomFolder: () -> Void
+
+  var body: some View {
     if isStandard && agent.supportsCustomConfigFolder {
       Menu {
         Button("Install at Folder\u{2026}", action: addCustomFolder)
+          .help("Install the \(agent.displayName) integration into another folder.")
       } label: {
         Text("Install")
       } primaryAction: {
@@ -424,10 +480,13 @@ private struct AgentInstallTargetLine: View {
     } else if !isStandard {
       ControlGroup {
         Button("Install", action: install)
+          .help("Install the \(agent.displayName) integration into \(configPath).")
         Button("Remove", role: .destructive, action: uninstall)
+          .help("Remove the \(agent.displayName) integration from \(configPath).")
       }
     } else {
       Button("Install", action: install)
+        .help("Install the \(agent.displayName) integration into \(configPath).")
     }
   }
 }

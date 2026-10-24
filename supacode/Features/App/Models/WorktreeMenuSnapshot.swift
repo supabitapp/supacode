@@ -141,7 +141,7 @@ extension AppFeature.Action {
       .navigateSearchPrevious,
       .systemNotificationsPermissionFailed, .deeplinkReceived,
       .deeplink, .commandAckTimedOut, .deeplinkConfirmationTimedOut,
-      .deeplinkReferenceOpened, .settingsRelocationDidNotFinish, .settingsStoreUnreadable,
+      .deeplinkReferenceOpened, .settingsWindowOpened, .settingsRelocationDidNotFinish, .settingsStoreUnreadable,
       .alert, .deeplinkInputConfirmation:
       return false
     }

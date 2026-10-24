@@ -168,6 +168,7 @@ struct AppFeature {
     var lastKnownGlobalHotkey: AppShortcutOverride?
     var pendingDeeplinks: [Deeplink] = []
     var isDeeplinkReferenceRequested = false
+    var isSettingsWindowRequested = false
     /// Cached projection of every primitive the menu-bar `WorktreeCommands`
     /// body reads. The menu observes ONE Equatable field instead of pulling
     /// `\.repositories` / `\.settings` (whole-substate) observation through
@@ -349,6 +350,7 @@ struct AppFeature {
     case commandAckTimedOut(responseFD: Int32, token: Int)
     case deeplinkConfirmationTimedOut(responseFD: Int32, token: Int)
     case deeplinkReferenceOpened
+    case settingsWindowOpened
     case settingsRelocationDidNotFinish(problems: [String])
     case settingsStoreUnreadable
     case alert(PresentationAction<Alert>)
@@ -1432,6 +1434,10 @@ struct AppFeature {
         state.isDeeplinkReferenceRequested = false
         return .none
 
+      case .settingsWindowOpened:
+        state.isSettingsWindowRequested = false
+        return .none
+
       case .settingsStoreUnreadable:
         // The settings store loaded degraded (a file was present but unreadable),
         // so saves are refused this session to avoid overwriting the real data.
@@ -1561,6 +1567,10 @@ struct AppFeature {
           if case .worktreeNew(let ackPendingID, _) = match { return ackPendingID == pendingID }
           return false
         }
+      case .license(.delegate(.deactivationRequested)):
+        return .send(.settings(.licenseDeactivationRequested))
+      case .settings(.delegate(.deactivateLicense)):
+        return .send(.license(.deactivate))
       case .license:
         return .none
       case .repositories(.createRandomWorktreeSucceeded(let worktree, _, let pendingID)):
@@ -2400,7 +2410,10 @@ struct AppFeature {
     switch deeplink {
     case .activateLicense(let key):
       state.license.keyInput = key
-      return .merge(.send(.license(.show)), .send(.license(.activate)))
+      // Brings Settings forward even when it already shows License.
+      state.isSettingsWindowRequested = true
+      return .merge(
+        .send(.settings(.setSelection(.license))), .send(.license(.load)), .send(.license(.activate)))
     case .open:
       return .run { @MainActor _ in NSApplication.shared.surfaceMainWindow() }
     case .help:

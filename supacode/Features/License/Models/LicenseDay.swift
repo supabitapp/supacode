@@ -51,6 +51,20 @@ nonisolated struct LicenseDay: Codable, Comparable, Hashable, RawRepresentable, 
     return value
   }
 
+  /// The day as a long localized date, read in UTC so it never shifts by a day.
+  func formatted(locale: Locale = .autoupdatingCurrent) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = .gmt
+    let parts = rawValue.split(separator: "-").compactMap { Int($0) }
+    guard parts.count == 3,
+      let date = calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+    else { return rawValue }
+    var displayCalendar = locale.calendar
+    displayCalendar.timeZone = .gmt
+    return date.formatted(
+      Date.FormatStyle(date: .long, time: .omitted, locale: locale, calendar: displayCalendar, timeZone: .gmt))
+  }
+
   init(from decoder: any Decoder) throws {
     let container = try decoder.singleValueContainer()
     let rawValue = try container.decode(String.self)

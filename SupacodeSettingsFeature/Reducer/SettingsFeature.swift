@@ -274,6 +274,7 @@ public struct SettingsFeature {
     case repositorySettings(RepositorySettingsFeature.Action)
     case addGlobalScript
     case removeGlobalScript(ScriptDefinition.ID)
+    case licenseDeactivationRequested
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
     case binding(BindingAction<State>)
@@ -284,11 +285,13 @@ public struct SettingsFeature {
     case openSystemNotificationSettings
     case confirmAutoDeleteDaysChange(AutoDeletePeriod)
     case confirmRemoveGlobalScript(ScriptDefinition.ID)
+    case confirmLicenseDeactivation
   }
 
   @CasePathable
   public enum Delegate: Equatable {
     case settingsChanged(GlobalSettings)
+    case deactivateLicense
   }
 
   @Dependency(AnalyticsClient.self) private var analyticsClient
@@ -915,6 +918,26 @@ public struct SettingsFeature {
         state.alert = nil
         state.globalScripts.removeAll { $0.id == id }
         return persist(state)
+
+      case .licenseDeactivationRequested:
+        guard state.alert == nil else { return .none }
+        state.alert = AlertState {
+          TextState("Deactivate this Mac?")
+        } actions: {
+          ButtonState(role: .destructive, action: .confirmLicenseDeactivation) {
+            TextState("Deactivate")
+          }
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("Cancel")
+          }
+        } message: {
+          TextState("You can activate your license again on this Mac or another one with your key.")
+        }
+        return .none
+
+      case .alert(.presented(.confirmLicenseDeactivation)):
+        state.alert = nil
+        return .send(.delegate(.deactivateLicense))
 
       case .repositoriesChanged(let repositories):
         state.repositorySummaries =

@@ -10,8 +10,11 @@ struct LicenseFeature {
     var keyInput = ""
     var isBusy = false
     var errorMessage: String?
-    var isPresented = false
     @Presents var alert: AlertState<Alert>?
+
+    var isKeyInputEmpty: Bool {
+      keyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     mutating func apply(_ update: LicenseSnapshot) {
       $snapshot.withLock { current in
@@ -26,22 +29,28 @@ struct LicenseFeature {
   enum Action: BindableAction {
     case binding(BindingAction<State>)
     case task
+    case load
     case loaded(Result<LicenseSnapshot, Error>)
     case activate
+    case deactivateButtonTapped
     case deactivate
     case refresh
     case completed(Result<LicenseSnapshot, Error>)
-    case show
     case purchaseRequired
     case alert(PresentationAction<Alert>)
-    case dismiss
     case snapshotUpdated(LicenseSnapshot)
     case buy
     case portal
+    case delegate(Delegate)
   }
 
   enum Alert: Equatable {
     case buy
+  }
+
+  @CasePathable
+  enum Delegate: Equatable {
+    case deactivationRequested
   }
 
   private nonisolated enum CancelID: Hashable, Sendable { case periodicRefresh }
@@ -69,14 +78,22 @@ struct LicenseFeature {
             }
           }.cancellable(id: CancelID.periodicRefresh, cancelInFlight: true)
         )
+      case .load:
+        return .run { send in
+          do { await send(.loaded(.success(try await client.load()))) } catch {
+            await send(.loaded(.failure(error)))
+          }
+        }
       case .loaded(.success(let snapshot)), .snapshotUpdated(let snapshot):
         state.apply(snapshot)
         return .none
       case .loaded(.failure(let error)):
+        // An in-flight activation or deactivation reports its own outcome.
+        guard !state.isBusy else { return .none }
         state.errorMessage = error.localizedDescription
         return .none
       case .activate:
-        guard !state.isBusy else { return .none }
+        guard !state.isBusy, !state.isKeyInputEmpty else { return .none }
         state.isBusy = true
         state.errorMessage = nil
         let key = state.keyInput
@@ -85,6 +102,9 @@ struct LicenseFeature {
             await send(.completed(.failure(error)))
           }
         }
+      case .deactivateButtonTapped:
+        guard !state.isBusy else { return .none }
+        return .send(.delegate(.deactivationRequested))
       case .deactivate:
         guard !state.isBusy else { return .none }
         state.isBusy = true
@@ -112,13 +132,6 @@ struct LicenseFeature {
         state.isBusy = false
         state.errorMessage = error.localizedDescription
         return .none
-      case .show:
-        state.isPresented = true
-        return .run { send in
-          do { await send(.loaded(.success(try await client.load()))) } catch {
-            await send(.loaded(.failure(error)))
-          }
-        }
       case .purchaseRequired:
         state.alert = AlertState {
           TextState("License Required")
@@ -142,9 +155,6 @@ struct LicenseFeature {
         return .send(.buy)
       case .alert:
         return .none
-      case .dismiss:
-        state.isPresented = false
-        return .none
       case .buy:
         analytics.capture("license_checkout_opened", nil)
         urlOpener.open(URL(string: "https://license.supacode.sh/buy")!)
@@ -152,7 +162,7 @@ struct LicenseFeature {
       case .portal:
         urlOpener.open(URL(string: "https://license.supacode.sh/login")!)
         return .none
-      case .binding:
+      case .binding, .delegate:
         return .none
       }
     }

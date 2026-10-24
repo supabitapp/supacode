@@ -5,7 +5,7 @@ import SwiftUI
 
 // MARK: - Selection → settings window bridge.
 
-/// Observes `store.settings.selection` and opens the dedicated settings window when it becomes non-nil.
+/// Opens the dedicated settings window when `store.settings.selection` becomes non-nil or a reducer requests it.
 /// Applied to the main window content so the environment action is always available.
 private struct OpenSettingsOnSelection: ViewModifier {
   @Environment(\.openWindow) private var openWindow
@@ -16,6 +16,12 @@ private struct OpenSettingsOnSelection: ViewModifier {
       .onChange(of: store.settings.selection) { _, new in
         guard new != nil else { return }
         openWindow(id: WindowID.settings)
+      }
+      .onChange(of: store.isSettingsWindowRequested, initial: true) { _, requested in
+        guard requested else { return }
+        openWindow(id: WindowID.settings)
+        NSApplication.shared.activate()
+        store.send(.settingsWindowOpened)
       }
   }
 }

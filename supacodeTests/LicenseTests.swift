@@ -2,6 +2,7 @@ import ComposableArchitecture
 import CryptoKit
 import DependenciesTestSupport
 import Foundation
+import SupacodeSettingsFeature
 import Testing
 
 @testable import SupacodeSettingsShared
@@ -321,7 +322,6 @@ struct LicenseTests {
     await store.send(.purchaseRequired) {
       $0.alert = Self.purchaseAlert
     }
-    #expect(!store.state.isPresented)
     #expect(openedURLs.value.isEmpty)
     #expect(events.value.isEmpty)
 
@@ -339,7 +339,6 @@ struct LicenseTests {
       #expect(openedURLs.value.isEmpty)
       #expect(events.value.isEmpty)
     }
-    #expect(!store.state.isPresented)
   }
 
   @Test(.dependencies) func licenseGatePresentsPurchasePromptInsteadOfActivation() async {
@@ -356,7 +355,6 @@ struct LicenseTests {
     await store.receive(\.license.purchaseRequired) {
       $0.license.alert = Self.purchaseAlert
     }
-    #expect(!store.state.license.isPresented)
   }
 
   private static var purchaseAlert: AlertState<LicenseFeature.Alert> {
@@ -487,6 +485,173 @@ struct LicenseTests {
     #expect(stored.value.trialCreations == trialCreations)
     #expect(stored.value.pendingWorktreePaths == nil)
     #expect(store.state.licensePermits.isEmpty)
+  }
+
+  @Test func licenseDayFormatsAsItsOwnCalendarDay() throws {
+    let locale = Locale(identifier: "en_US")
+    #expect(try #require(LicenseDay("2026-03-01")).formatted(locale: locale) == "March 1, 2026")
+    #expect(try #require(LicenseDay("2026-01-01")).formatted(locale: locale) == "January 1, 2026")
+  }
+
+  @Test(.dependencies) func ignoresActivationWithAnEmptyKey() async {
+    let store = TestStore(initialState: LicenseFeature.State()) { LicenseFeature() }
+    await store.send(.binding(.set(\.keyInput, "  "))) { $0.keyInput = "  " }
+    await store.send(.activate)
+  }
+
+  @Test(.dependencies) func deactivateButtonDefersToTheSettingsConfirmation() async {
+    let store = TestStore(initialState: LicenseFeature.State()) { LicenseFeature() }
+    await store.send(.deactivateButtonTapped)
+    await store.receive(\.delegate.deactivationRequested)
+  }
+
+  @Test(.dependencies) func deactivateButtonIsIgnoredWhileBusy() async {
+    var state = LicenseFeature.State()
+    state.isBusy = true
+    let store = TestStore(initialState: state) { LicenseFeature() }
+    await store.send(.deactivateButtonTapped)
+  }
+
+  @Test(.dependencies) func deactivationRunsOnlyAfterTheSettingsConfirmation() async {
+    let storage = SettingsTestStorage()
+    let deactivations = LockIsolated(0)
+    let store = withDependencies {
+      $0.settingsFileStorage = storage.storage
+      $0[LicenseClient.self].deactivate = {
+        deactivations.withValue { $0 += 1 }
+        return LicenseSnapshot()
+      }
+    } operation: {
+      TestStore(initialState: AppFeature.State()) {
+        AppFeature()
+      }
+    }
+
+    await store.send(.license(.deactivateButtonTapped))
+    await store.receive(\.license.delegate.deactivationRequested)
+    await store.receive(\.settings.licenseDeactivationRequested) {
+      $0.settings.alert = Self.deactivationAlert
+    }
+    #expect(store.state.license.alert == nil)
+    await store.send(.settings(.alert(.dismiss))) {
+      $0.settings.alert = nil
+    }
+    #expect(deactivations.value == 0)
+
+    await store.send(.license(.deactivateButtonTapped))
+    await store.receive(\.license.delegate.deactivationRequested)
+    await store.receive(\.settings.licenseDeactivationRequested) {
+      $0.settings.alert = Self.deactivationAlert
+    }
+    await store.send(.settings(.alert(.presented(.confirmLicenseDeactivation)))) {
+      $0.settings.alert = nil
+    }
+    await store.receive(\.settings.delegate.deactivateLicense)
+    await store.receive(\.license.deactivate) {
+      $0.license.isBusy = true
+    }
+    await store.receive(\.license.completed.success) {
+      $0.license.isBusy = false
+    }
+    #expect(deactivations.value == 1)
+  }
+
+  @Test(.dependencies) func deactivationRequestKeepsAnOpenSettingsAlert() async {
+    var state = SettingsFeature.State()
+    state.alert = AlertState { TextState("Open") }
+    let store = TestStore(initialState: state) { SettingsFeature() }
+    await store.send(.licenseDeactivationRequested)
+  }
+
+  private static var deactivationAlert: AlertState<SettingsFeature.Alert> {
+    AlertState {
+      TextState("Deactivate this Mac?")
+    } actions: {
+      ButtonState(role: .destructive, action: .confirmLicenseDeactivation) {
+        TextState("Deactivate")
+      }
+      ButtonState(role: .cancel, action: .dismiss) {
+        TextState("Cancel")
+      }
+    } message: {
+      TextState("You can activate your license again on this Mac or another one with your key.")
+    }
+  }
+
+  @Test func displayStatusReflectsTheEntitlement() throws {
+    let through = try #require(LicenseDay("2026-08-01"))
+    func snapshot(
+      _ status: LicenseEntitlement.Status?, releaseDay: String? = "2026-07-01",
+      updatesThrough: LicenseDay? = through, reason: String? = nil, isDevelopmentBuild: Bool = false
+    ) -> LicenseSnapshot {
+      LicenseSnapshot(
+        entitlement: status.map {
+          LicenseEntitlement(
+            licenseID: "license", deviceID: "device", status: $0, updatesThrough: updatesThrough, revision: 1,
+            issuedAt: 1, revocationReason: reason)
+        },
+        isDevelopmentBuild: isDevelopmentBuild,
+        releaseDay: releaseDay.flatMap(LicenseDay.init(rawValue:))
+      )
+    }
+    #expect(snapshot(nil).displayStatus == .notActivated)
+    #expect(snapshot(nil, isDevelopmentBuild: true).displayStatus == .developmentBuild)
+    #expect(snapshot(.active).displayStatus == .active)
+    #expect(snapshot(.active, releaseDay: "2026-08-01").displayStatus == .active)
+    #expect(snapshot(.active, releaseDay: "2026-08-02").displayStatus == .updatesExpired)
+    // Statuses must agree with trial charging, which needs both days to own the release.
+    #expect(snapshot(.active, releaseDay: nil).displayStatus == .updatesExpired)
+    #expect(snapshot(.active, updatesThrough: nil).displayStatus == .updatesExpired)
+    #expect(snapshot(.active, releaseDay: nil, isDevelopmentBuild: true).displayStatus == .active)
+    #expect(snapshot(.revoked, reason: "Refunded").displayStatus == .revoked(reason: "Refunded"))
+    #expect(snapshot(.revoked).displayStatus == .revoked(reason: nil))
+    #expect(snapshot(.transferred).displayStatus == .transferred)
+    #expect(snapshot(.deactivated).displayStatus == .deactivated)
+  }
+
+  @Test(.dependencies) func loadFailureDoesNotMaskAnInFlightRequest() async {
+    var state = LicenseFeature.State()
+    state.isBusy = true
+    let store = TestStore(initialState: state) { LicenseFeature() }
+    await store.send(.loaded(.failure(LicenseError.invalidKey)))
+  }
+
+  @Test(.dependencies) func activationLinkOpensLicenseSettingsAndActivates() async {
+    let storage = SettingsTestStorage()
+    let activatedKeys = LockIsolated<[String]>([])
+    let store = withDependencies {
+      $0.settingsFileStorage = storage.storage
+      $0[LicenseClient.self].activate = { key in
+        activatedKeys.withValue { $0.append(key) }
+        throw LicenseError.invalidKey
+      }
+    } operation: {
+      TestStore(initialState: AppFeature.State()) {
+        AppFeature()
+      }
+    }
+    // The load and the activation race, so only their outcomes are asserted.
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.deeplink(.activateLicense(key: Self.key))) {
+      $0.license.keyInput = Self.key
+      $0.isSettingsWindowRequested = true
+    }
+    await store.receive(\.settings.setSelection) {
+      $0.settings.selection = .license
+    }
+    await store.receive(\.license.load)
+    await store.receive(\.license.activate) {
+      $0.license.isBusy = true
+    }
+    await store.receive(\.license.completed.failure) {
+      $0.license.isBusy = false
+      $0.license.errorMessage = LicenseError.invalidKey.localizedDescription
+    }
+    #expect(activatedKeys.value == [Self.key])
+    await store.send(.settingsWindowOpened) {
+      $0.isSettingsWindowRequested = false
+    }
   }
 
   @Test func activationLinksAreParsedAndRedacted() throws {

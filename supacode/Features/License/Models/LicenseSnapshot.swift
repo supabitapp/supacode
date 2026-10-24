@@ -35,6 +35,31 @@ nonisolated struct LicenseSnapshot: Equatable, Sendable {
   var remainingCreations: Int {
     max(0, Self.freeCreationLimit - trialCreations)
   }
+
+  var displayStatus: LicenseDisplayStatus {
+    guard let entitlement else { return isDevelopmentBuild ? .developmentBuild : .notActivated }
+    switch entitlement.status {
+    case .active:
+      // Mirrors trial charging: an active license that doesn't own this release still spends free creations.
+      return ownsCurrentRelease || isDevelopmentBuild ? .active : .updatesExpired
+    case .deactivated:
+      return .deactivated
+    case .revoked:
+      return .revoked(reason: entitlement.revocationReason)
+    case .transferred:
+      return .transferred
+    }
+  }
+}
+
+nonisolated enum LicenseDisplayStatus: Equatable, Sendable {
+  case developmentBuild
+  case notActivated
+  case active
+  case updatesExpired
+  case deactivated
+  case revoked(reason: String?)
+  case transferred
 }
 
 nonisolated struct LicenseCreationPermit: Equatable, Sendable {
