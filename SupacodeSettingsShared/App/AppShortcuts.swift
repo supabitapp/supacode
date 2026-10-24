@@ -745,9 +745,10 @@ public enum AppShortcuts {
 
   // MARK: - Conflict detection.
 
-  // Computes conflict warnings for all shortcuts given the current overrides.
+  // Conflict warnings against system hotkeys, built-in menu chords and other shortcuts.
   public static func conflictWarnings(
-    from overrides: [AppShortcutID: AppShortcutOverride]
+    from overrides: [AppShortcutID: AppShortcutOverride],
+    menuReserved: [String: String] = [:]
   ) -> [AppShortcutID: String] {
     let reserved = AppShortcutOverride.allReservedDisplayStrings()
     var displayToIDs: [String: [AppShortcutID]] = [:]
@@ -760,6 +761,8 @@ public enum AppShortcuts {
 
       if reserved.contains(display) {
         warnings[shortcut.id] = "\(display) is reserved by the system."
+      } else if let builtIn = menuReserved[display] {
+        warnings[shortcut.id] = "\(display) is used by \(builtIn)."
       }
     }
 

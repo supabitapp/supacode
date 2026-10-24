@@ -126,6 +126,74 @@ extension AppShortcutOverride {
     return result
   }
 
+  // Chords held by macOS built-in menu items (Hide Others, Undo, Copy), mapped to the item title.
+  // Built-ins dispatch through the responder chain (nil target); SwiftUI command items carry a target.
+  @MainActor
+  public static func menuReservedShortcuts(in menu: NSMenu?) -> [String: String] {
+    guard let menu else { return [:] }
+    var result: [String: String] = [:]
+    for item in menu.items where !item.isHidden || item.allowsKeyEquivalentWhenHidden {
+      if let submenu = item.submenu {
+        guard !item.isHidden else { continue }
+        result.merge(menuReservedShortcuts(in: submenu)) { first, _ in first }
+        continue
+      }
+      guard item.action != nil, item.target == nil, let display = displayString(for: item) else { continue }
+      guard result[display] == nil else { continue }
+      // Warnings end with their own period, so "Find…" must not become "Find….".
+      var title = item.title
+      if title.hasSuffix("…") { title.removeLast() }
+      if title.hasSuffix("...") { title.removeLast(3) }
+      result[display] = title
+    }
+    return result
+  }
+
+  @MainActor
+  static func displayString(for item: NSMenuItem) -> String? {
+    guard item.keyEquivalent.count == 1, let character = item.keyEquivalent.first else { return nil }
+    return displayString(
+      forKeyEquivalent: character,
+      mask: item.keyEquivalentModifierMask,
+      keyStroke: keyStroke(forDisplayedKeyEquivalent:)
+    )
+  }
+
+  // The chord as the recorder would capture it; nil for ones it never produces: Fn/Globe,
+  // no ⌘, ⌃ or ⌥, or a key no layout types.
+  static func displayString(
+    forKeyEquivalent character: Character,
+    mask: NSEvent.ModifierFlags,
+    keyStroke: (Character) -> KeyStroke?
+  ) -> String? {
+    guard !mask.contains(.function), !mask.isDisjoint(with: [.command, .control, .option]) else { return nil }
+    var modifiers = modifierFlags(fromSymbolicHotkeyMask: Int(mask.rawValue))
+    // An uppercase key equivalent implies shift (AppKit convention).
+    let key = Character(character.lowercased())
+    if key != character { modifiers.insert(.shift) }
+    let isASCIILetter = key.isASCII && key.isLetter
+    let shiftState = UInt32(shiftKey >> 8)
+    let optionState = UInt32(optionKey >> 8)
+    let code: UInt16
+    if let special = specialKeyCode(for: KeyEquivalent(key)) {
+      code = special
+    } else if let stroke = keyStroke(key), stroke.modifierState & optionState == 0,
+      !isASCIILetter || stroke.modifierState == 0
+    {
+      code = stroke.keyCode
+      // A symbol typed with shift (`?`, `{`) needs shift held too.
+      if stroke.modifierState & shiftState != 0 { modifiers.insert(.shift) }
+    } else if isASCIILetter, let fallback = keyCode(for: key) {
+      // AppKit matches letters on the ASCII layout when the current one can't type them.
+      code = fallback
+    } else {
+      // Option-typed or untypeable symbols aren't reserved; AppKit matches them unpredictably.
+      shortcutLogger.debug("No recordable chord for menu key equivalent '\(character)'; not reserved.")
+      return nil
+    }
+    return AppShortcutOverride(keyCode: code, modifiers: modifiers).displayString
+  }
+
   // AppleSymbolicHotKeys stores the modifier field as an NSEvent mask
   // (command = 1 << 20, etc.), not Carbon bits.
   public static func modifierFlags(fromSymbolicHotkeyMask mask: Int) -> ModifierFlags {
@@ -298,6 +366,23 @@ extension AppShortcutOverride {
     modifierStates: [UInt32] = menuDisplayModifierStates,
     translatedCharacter: (UInt16, UInt32) -> String?
   ) -> UInt16? {
+    keyStroke(
+      forDisplayedKeyEquivalent: character,
+      candidateKeyCodes: candidateKeyCodes,
+      modifierStates: modifierStates,
+      translatedCharacter: translatedCharacter
+    )?.keyCode
+  }
+
+  public typealias KeyStroke = (keyCode: UInt16, modifierState: UInt32)
+
+  // The key code and the first layout modifier state (Carbon bits shifted right by 8) typing `character`.
+  public static func keyStroke(
+    forDisplayedKeyEquivalent character: Character,
+    candidateKeyCodes: [UInt16] = candidatePrintableKeyCodes,
+    modifierStates: [UInt32] = menuDisplayModifierStates,
+    translatedCharacter: (UInt16, UInt32) -> String?
+  ) -> KeyStroke? {
     let target = String(character).lowercased()
     for modifierState in modifierStates {
       for code in candidateKeyCodes {
@@ -305,7 +390,7 @@ extension AppShortcutOverride {
           continue
         }
         guard resolved.lowercased() == target else { continue }
-        return code
+        return (code, modifierState)
       }
     }
     return nil
@@ -313,7 +398,7 @@ extension AppShortcutOverride {
 
   // Uncached resolution walks 4 modifier states x 47 key codes through
   // UCKeyTranslate; per-event matching would be a TIS storm without this.
-  private static let reverseKeyCodeCache = Mutex<[Character: UInt16?]>([:])
+  private static let reverseKeyCodeCache = Mutex<[Character: KeyStroke?]>([:])
 
   private static let reverseKeyCodeCacheInvalidator: NSObjectProtocol =
     NotificationCenter.default.addObserver(
@@ -325,11 +410,15 @@ extension AppShortcutOverride {
     }
 
   public static func keyCode(forDisplayedKeyEquivalent character: Character) -> UInt16? {
+    keyStroke(forDisplayedKeyEquivalent: character)?.keyCode
+  }
+
+  public static func keyStroke(forDisplayedKeyEquivalent character: Character) -> KeyStroke? {
     _ = reverseKeyCodeCacheInvalidator
     if let cached = reverseKeyCodeCache.withLock({ $0[character] }) {
       return cached
     }
-    let resolved = keyCode(forDisplayedKeyEquivalent: character) { code, modifierState in
+    let resolved = keyStroke(forDisplayedKeyEquivalent: character) { code, modifierState in
       currentLayoutCharacter(for: code, modifierState: modifierState)
     }
     // Store misses too: subscript-assigning nil would delete the entry, so an

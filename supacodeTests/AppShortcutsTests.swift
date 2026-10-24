@@ -588,6 +588,104 @@ struct AppShortcutsTests {
     #expect(AppShortcutOverride.appKitReservedDisplayStrings == ["⌘Q", "⌘H", "⌘M", "⌘W"])
   }
 
+  @Test func menuReservedShortcutsCollectResponderChainBuiltIns() {
+    let appMenu = NSMenu()
+    appMenu.addItem(
+      Self.menuItem("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]))
+    appMenu.addItem(Self.menuItem("Redo", Selector(("redo:")), "Z", [.command]))
+    let root = NSMenu()
+    root.addItem(withTitle: "App", action: nil, keyEquivalent: "").submenu = appMenu
+
+    let reserved = AppShortcutOverride.menuReservedShortcuts(in: root)
+    let hideOthers = AppShortcutOverride(keyCode: Self.layoutKeyCode("h"), modifiers: [.command, .option]).displayString
+    let redo = AppShortcutOverride(keyCode: Self.layoutKeyCode("z"), modifiers: [.command, .shift]).displayString
+    #expect(reserved == [hideOthers: "Hide Others", redo: "Redo"])
+  }
+
+  @Test func menuReservedShortcutsSkipAppOwnedHiddenAndUnmodifiedItems() {
+    let menu = NSMenu()
+    // SwiftUI command items carry their own target; disabled ones drop their action.
+    let appOwned = Self.menuItem("Focus Split Left", Selector(("menuAction:")), "j", [.command, .option])
+    appOwned.target = menu
+    menu.addItem(appOwned)
+    menu.addItem(Self.menuItem("Disabled", nil, "k", [.command, .option]))
+    let hidden = Self.menuItem("Emoji & Symbols", Selector(("orderFrontCharacterPalette:")), " ", [.command, .control])
+    hidden.isHidden = true
+    menu.addItem(hidden)
+    menu.addItem(Self.menuItem("Unmodified", Selector(("complete:")), "d", []))
+    menu.addItem(Self.menuItem("Bring All to Front", Selector(("arrangeInFront:")), "", [.command]))
+    let hiddenParent = NSMenuItem(title: "Hidden", action: nil, keyEquivalent: "")
+    hiddenParent.isHidden = true
+    hiddenParent.submenu = NSMenu()
+    hiddenParent.submenu?.addItem(Self.menuItem("Nested", Selector(("undo:")), "u", [.command]))
+    menu.addItem(hiddenParent)
+
+    #expect(AppShortcutOverride.menuReservedShortcuts(in: menu).isEmpty)
+    #expect(AppShortcutOverride.menuReservedShortcuts(in: nil).isEmpty)
+  }
+
+  @Test func menuReservedShortcutsKeepHiddenItemsThatStillFire() {
+    let menu = NSMenu()
+    let hidden = Self.menuItem("Find…", Selector(("performFindPanelAction:")), "j", [.command, .option])
+    hidden.isHidden = true
+    hidden.allowsKeyEquivalentWhenHidden = true
+    menu.addItem(hidden)
+    let findChord = AppShortcutOverride(keyCode: Self.layoutKeyCode("j"), modifiers: [.command, .option]).displayString
+    #expect(AppShortcutOverride.menuReservedShortcuts(in: menu) == [findChord: "Find"])
+  }
+
+  @Test func menuChordDisplayAddsShiftAndSkipsOptionSymbols() {
+    // `?` sits on shifted slash; `@` on option-2 (Italian-style).
+    let strokes: [Character: AppShortcutOverride.KeyStroke] = [
+      "?": (UInt16(kVK_ANSI_Slash), 0x02),
+      "@": (UInt16(kVK_ANSI_2), 0x08),
+    ]
+    let question = AppShortcutOverride.displayString(forKeyEquivalent: "?", mask: [.command]) { strokes[$0] }
+    #expect(
+      question == AppShortcutOverride(keyCode: UInt16(kVK_ANSI_Slash), modifiers: [.command, .shift]).displayString)
+    let atSign = AppShortcutOverride.displayString(forKeyEquivalent: "@", mask: [.command]) { strokes[$0] }
+    #expect(atSign == nil)
+  }
+
+  @Test func menuChordDisplayFallsBackToTheASCIIKeyAndSkipsFnChords() {
+    // A non-Latin layout types no `h`, but AppKit still matches Hide Others on it.
+    let hideOthers = AppShortcutOverride.displayString(forKeyEquivalent: "h", mask: [.command, .option]) { _ in nil }
+    #expect(
+      hideOthers == AppShortcutOverride(keyCode: UInt16(kVK_ANSI_H), modifiers: [.command, .option]).displayString)
+    // A letter the layout only types with option still matches its plain ASCII key.
+    let optionLetter = AppShortcutOverride.displayString(forKeyEquivalent: "h", mask: [.command]) { _ in
+      (UInt16(kVK_ANSI_J), 0x08)
+    }
+    #expect(optionLetter == AppShortcutOverride(keyCode: UInt16(kVK_ANSI_H), modifiers: [.command]).displayString)
+    let fnChord = AppShortcutOverride.displayString(forKeyEquivalent: "e", mask: [.command, .function]) { _ in nil }
+    #expect(fnChord == nil)
+  }
+
+  @Test func shortcutOnBuiltInMenuChordIsFlagged() {
+    let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_H), modifiers: [.command, .option])
+    let warnings = AppShortcuts.conflictWarnings(
+      from: [.focusSplitLeft: override],
+      menuReserved: ["⌘⌥H": "Hide Others"]
+    )
+    #expect(warnings[.focusSplitLeft] == "⌘⌥H is used by Hide Others.")
+  }
+
+  // Where the live layout types `letter`, as the menu scan resolves it.
+  private static func layoutKeyCode(_ letter: Character) -> UInt16 {
+    AppShortcutOverride.keyCode(forDisplayedKeyEquivalent: letter) ?? AppShortcutOverride.keyCode(for: letter) ?? 0
+  }
+
+  private static func menuItem(
+    _ title: String,
+    _ action: Selector?,
+    _ keyEquivalent: String,
+    _ mask: NSEvent.ModifierFlags
+  ) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
+    item.keyEquivalentModifierMask = mask
+    return item
+  }
+
   @Test func rebindingOntoCloseTabChordIsFlaggedAsAConflict() {
     let override = AppShortcutOverride(keyCode: UInt16(kVK_ANSI_W), modifiers: [.command])
     let warnings = AppShortcuts.conflictWarnings(from: [.runScript: override])

@@ -21,6 +21,12 @@ struct KeyboardShortcutsSettingsView: View {
   @State private var searchText = ""
   @State private var showRestoreConfirmation = false
   @State private var expandedGroups: Set<String> = Set(Self.visibleGroups.map(\.id))
+  // Display strings follow the keyboard layout, so the snapshot refreshes when it changes.
+  @State private var menuReserved: [String: String] = [:]
+
+  private static let keyboardLayoutChanges = NotificationCenter.default.publisher(
+    for: NSTextInputContext.keyboardSelectionDidChangeNotification
+  )
 
   // Non-customizable shortcuts are hardcoded chords; they get no row at all.
   private static let visibleGroups: [AppShortcutGroup] = AppShortcuts.groups.compactMap { group in
@@ -64,7 +70,11 @@ struct KeyboardShortcutsSettingsView: View {
 
   // No terminal pass: Ghostty unbinds every terminal-reachable chord.
   private var warningsByID: [AppShortcutID: String] {
-    AppShortcuts.conflictWarnings(from: store.shortcutOverrides)
+    AppShortcuts.conflictWarnings(from: store.shortcutOverrides, menuReserved: menuReserved)
+  }
+
+  private func reloadMenuReserved() {
+    menuReserved = AppShortcutOverride.menuReservedShortcuts(in: NSApp.mainMenu)
   }
 
   var body: some View {
@@ -74,7 +84,7 @@ struct KeyboardShortcutsSettingsView: View {
         NameCell(item: item, overrides: store.shortcutOverrides)
       }
       TableColumn("Hotkey") { item in
-        HotkeyCell(item: item, store: store, warning: warnings)
+        HotkeyCell(item: item, store: store, warning: warnings, menuReserved: menuReserved)
       }
       .width(min: 90, ideal: 120, max: 200)
       TableColumn("Enabled") { item in
@@ -108,6 +118,11 @@ struct KeyboardShortcutsSettingsView: View {
     .padding(.leading, -6)
     .searchable(text: $searchText, placement: .toolbar, prompt: "Search...")
     .navigationTitle("Shortcuts")
+    .onAppear { reloadMenuReserved() }
+    .onReceive(Self.keyboardLayoutChanges) { _ in
+      // Hop so the key-stroke cache clears on the same notification first.
+      Task { @MainActor in reloadMenuReserved() }
+    }
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         Button {
@@ -155,6 +170,7 @@ private struct HotkeyCell: View {
   let item: ShortcutTableItem
   let store: StoreOf<SettingsFeature>
   let warning: [AppShortcutID: String]
+  let menuReserved: [String: String]
 
   var body: some View {
     switch item.kind {
@@ -183,6 +199,10 @@ private struct HotkeyCell: View {
           // Check system-reserved shortcuts.
           guard !AppShortcutOverride.allReservedDisplayStrings().contains(proposedDisplay) else {
             return "System"
+          }
+          // Built-in menu items (Hide Others, Undo) keep their chords.
+          if let builtIn = menuReserved[proposedDisplay] {
+            return builtIn
           }
           // Check other app shortcuts.
           let overrides = store.shortcutOverrides
