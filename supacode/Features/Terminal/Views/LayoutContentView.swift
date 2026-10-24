@@ -327,7 +327,7 @@ struct PaneStripView: View {
   var surfaceState: (UUID) -> WorktreeSurfaceState? = { _ in nil }
   var isLifecycleBusy = false
   var context: Context = .embedded
-  var dragModel: PaneTabDragModel?
+  let dragModel: PaneTabDragModel
 
   @Shared(.settingsFile) private var settingsFile
 
@@ -397,7 +397,7 @@ struct PaneStripView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       // On the whole content region, so a dormant pane still takes drops.
       .overlay {
-        if context == .embedded, let dragModel, dragModel.isDraggingTab {
+        if context == .embedded, dragModel.isDraggingTab {
           PaneSplitDropZones(pane: pane, store: store, dragModel: dragModel)
         }
       }
@@ -585,7 +585,6 @@ private struct PaneSplitDropZones: View {
     }
     .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: targetedDirection)
   }
-
 }
 
 /// The pane's shared divider: the edge the full-span band sits against and the
