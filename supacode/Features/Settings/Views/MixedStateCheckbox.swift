@@ -50,6 +50,8 @@ struct MixedStateCheckbox: NSViewRepresentable {
       self.onToggle = onToggle
     }
 
+    nonisolated deinit {}
+
     @objc func toggled(_ sender: NSButton) {
       // Clicking mixed or off → on; clicking on → off.
       let newEnabled = sender.state != .off

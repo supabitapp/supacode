@@ -174,6 +174,8 @@ struct FileExplorerOutlineView: NSViewRepresentable {
       self.kind = kind
     }
 
+    nonisolated deinit {}
+
     var entry: FileExplorerEntry? {
       guard case .entry(let entry) = kind else { return nil }
       return entry
@@ -205,6 +207,8 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     private var childrenCache: [String: [OutlineItem]] = [:]
     /// Suppresses delegate feedback while state is applied programmatically.
     private var isApplyingState = false
+
+    nonisolated deinit {}
 
     // swiftlint:disable:next function_parameter_count
     func apply(
@@ -720,6 +724,8 @@ struct FileExplorerOutlineView: NSViewRepresentable {
         self.path = path
         self.action = action
       }
+
+      nonisolated deinit {}
     }
   }
 }
@@ -1104,6 +1110,8 @@ extension FileExplorerOutlineView.Coordinator: NSMenuDelegate {
 private final class FileExplorerNSOutlineView: NSOutlineView {
   weak var coordinator: FileExplorerOutlineView.Coordinator?
 
+  nonisolated deinit {}
+
   // Tie the app-global key monitor to window membership so it can't outlive the
   // view (which `dismantleNSView` alone doesn't guarantee) and accumulate.
   override func viewDidMoveToWindow() {
@@ -1150,6 +1158,8 @@ private final class ProgressiveBlurView: NSVisualEffectView {
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { nil }
+
+  nonisolated deinit {}
 
   // Decorative only: let clicks, drags, and scroll reach the outline rows behind
   // the fade instead of landing on the overlay.
@@ -1329,6 +1339,8 @@ private final class FileExplorerEntryCellView: NSTableCellView {
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { nil }
+
+  nonisolated deinit {}
 
   // swiftlint:disable:next function_parameter_count
   func configure(
@@ -1593,6 +1605,8 @@ private final class FileExplorerShowMoreCellView: NSTableCellView {
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { nil }
+
+  nonisolated deinit {}
 
   func configure(
     remaining: Int, isLoading: Bool, chromeTextSize: ChromeTextSize, onTap: @escaping () -> Void

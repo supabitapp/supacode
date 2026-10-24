@@ -48,6 +48,8 @@ final class CommandPalettePanel: NSPanel {
     animationBehavior = .none
   }
 
+  nonisolated deinit {}
+
   // Esc while the query field is empty routes here; forward it as a dismiss.
   override func cancelOperation(_ sender: Any?) {
     onCancel?()
@@ -96,7 +98,7 @@ final class CommandPalettePanelHostView: NSView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError() }
 
-  deinit {
+  nonisolated deinit {
     if let resignObserver {
       NotificationCenter.default.removeObserver(resignObserver)
     }

@@ -12,6 +12,8 @@ struct WindowTabbingDisabler: NSViewRepresentable {
 }
 
 final class WindowTabbingView: NSView, NSWindowDelegate {
+  nonisolated deinit {}
+
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     disallowTabbing()

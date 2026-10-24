@@ -103,7 +103,7 @@ final class GhosttySurfaceBridge {
     self.progressStaleTimeout = progressStaleTimeout
   }
 
-  deinit {
+  nonisolated deinit {
     progressFlushTask?.cancel()
     progressStaleTask?.cancel()
   }

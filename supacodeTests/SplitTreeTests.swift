@@ -240,6 +240,8 @@ struct SplitTreeTests {
 
 private final class SplitTreeTestView: NSView, Identifiable {
   let id = UUID()
+
+  nonisolated deinit {}
 }
 
 nonisolated private struct IDLeaf: Identifiable, Hashable, Codable {

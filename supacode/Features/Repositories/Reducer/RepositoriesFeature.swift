@@ -991,11 +991,8 @@ struct RepositoriesFeature {
         }
 
       case .archiveWorktreeApply(let worktreeID, let repositoryID):
-        // Deliver the commit from a Task so the teardown never runs on a
-        // synchronous UI send: the departing surface's isolated deinit, freed
-        // inside the still-live TCA task-local scope during the commit's
-        // `withAnimation` flush, aborts with an invalid free (issue #784). Keep
-        // this a pure forward; mutating here re-arms the crash.
+        // Deliver the commit from a Task so the teardown stays off the
+        // synchronous UI send (#784); keep this a pure forward.
         return .run { send in await send(.archiveWorktreeCommit(worktreeID, repositoryID)) }
 
       case .archiveWorktreeCommit(let worktreeID, let repositoryID):

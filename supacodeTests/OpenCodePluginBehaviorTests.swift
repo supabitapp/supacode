@@ -78,6 +78,8 @@ private final class PluginRuntime {
         .replacing("export default", with: "globalThis.plugin ="))
   }
 
+  nonisolated deinit {}
+
   static func importsSpawn(_ source: String) -> Bool {
     source.contains(importLine)
   }

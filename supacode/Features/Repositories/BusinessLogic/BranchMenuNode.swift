@@ -109,6 +109,8 @@ struct BranchMenuNode: Equatable, Identifiable {
     var children: [String: TrieNode] = [:]
     var branch: String?
 
+    nonisolated deinit {}
+
     func sortedChildren(pathPrefix: String, refPrefix: String) -> [BranchMenuNode] {
       children
         .map { segment, child in

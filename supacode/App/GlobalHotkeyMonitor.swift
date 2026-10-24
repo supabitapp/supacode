@@ -64,9 +64,11 @@ final class GlobalHotkeyMonitor {
     }
   }
 
-  isolated deinit {
-    if let hotKeyRef { UnregisterEventHotKey(hotKeyRef) }
-    if let eventHandler { RemoveEventHandler(eventHandler) }
+  nonisolated deinit {
+    MainActor.assumeIsolated {
+      if let hotKeyRef { UnregisterEventHotKey(hotKeyRef) }
+      if let eventHandler { RemoveEventHandler(eventHandler) }
+    }
   }
 
   private func unregister() {

@@ -62,6 +62,8 @@ final class TerminalTabChrome: TabChrome {
     guard !agents.isEmpty else { return nil }
     return AnyView(TerminalAgentBadgeAccessory(agents: agents).equatable())
   }
+
+  nonisolated deinit {}
 }
 
 /// Equatable barrier under the type-erased accessory: the tab body re-runs on

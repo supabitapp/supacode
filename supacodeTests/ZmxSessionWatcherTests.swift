@@ -273,6 +273,8 @@ private final class FakeZmxDaemon {
     self.listenFD = socketFD
   }
 
+  nonisolated deinit {}
+
   /// Accepts one connection, writes `payload`, holds it open until `stop()`.
   func serveOnce(payload: [UInt8]) {
     serve(payload: payload, loop: false, closeAfterWrite: false)
@@ -504,6 +506,36 @@ struct ZmxSessionWatcherLifecycleTests {
     #expect(finished.wait(timeout: .now() + 0.3) == .timedOut)
   }
 
+  @Test func releasingWatcherInsideTaskLocalScopeStopsReader() {
+    guard let daemon = FakeZmxDaemon() else {
+      Issue.record("Failed to bind fake zmx daemon socket")
+      return
+    }
+    defer { daemon.stop() }
+    daemon.serveOnce(
+      payload: ZmxWireFixture.frame(tag: ZmxIPCTag.output, payload: ZmxWireFixture.oscBEL(9, "ping")))
+
+    let delivered = DispatchSemaphore(value: 0)
+    let finished = DispatchSemaphore(value: 0)
+    var watcher: ZmxSessionWatcher? = ZmxSessionWatcher(
+      surfaceID: UUID(), socketPath: daemon.path, tuning: Self.fastTuning,
+      onReaderFinished: { finished.signal() },
+      onSequences: { _ in delivered.signal() }
+    )
+    watcher?.start()
+    #expect(delivered.wait(timeout: .now() + ZmxTestBudget.signalTimeout) == .success)
+    // The daemon holds the connection open, so only the release can stop the reader.
+    #expect(finished.wait(timeout: .now() + 0.3) == .timedOut)
+
+    // An isolated deinit released here aborts on macOS 26.3 and earlier (#853).
+    withDependencies { _ in
+    } operation: {
+      watcher = nil
+    }
+
+    #expect(finished.wait(timeout: .now() + ZmxTestBudget.signalTimeout) == .success)
+  }
+
   @Test func backoffMillisecondsStaysWithinBounds() {
     #expect(ZmxSessionWatcher.backoffMilliseconds(1) == 200)
     #expect(ZmxSessionWatcher.backoffMilliseconds(2) == 400)
@@ -613,6 +645,34 @@ struct ZmxDormantWatcherRegistryTests {
     #expect(host.watchedDormantSurfaceIDsForTesting.isEmpty)
   }
 
+  @Test func releasingRegistryReleasesItsWatchers() {
+    // The real watcher's deinit stops its reader, so the registry must release it.
+    let made = WeakWatcherBox()
+    var registry: ZmxSessionWatcherRegistry? = withDependencies {
+      $0.zmxSessionWatcherClient = ZmxSessionWatcherClient { _, _, _ in
+        let watcher = InertZmxSessionWatcher()
+        made.watcher = watcher
+        return watcher
+      }
+    } operation: {
+      ZmxSessionWatcherRegistry(socketDirectory: "/tmp")
+    }
+    registry?.reconcile(dormantSurfaceIDs: [UUID()])
+    #expect(made.watcher != nil)
+
+    withDependencies { _ in
+    } operation: {
+      registry = nil
+    }
+    #expect(made.watcher == nil)
+  }
+
+  private final class WeakWatcherBox {
+    weak var watcher: InertZmxSessionWatcher?
+
+    nonisolated deinit {}
+  }
+
   /// Minimal content whose renderer exists from the start.
   @MainActor
   private final class LiveRendererContent: TabContent {
@@ -623,6 +683,8 @@ struct ZmxDormantWatcherRegistryTests {
     init(id: ContentID) {
       self.id = id
     }
+
+    nonisolated deinit {}
 
     var renderer: NSView? { view }
     func startSession(at geometry: ContentGeometry) {}

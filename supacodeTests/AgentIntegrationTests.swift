@@ -255,6 +255,8 @@ private final class OrderRecorder: @unchecked Sendable {
 
   var uninstallsSync: [String] { _uninstallsSync }
 
+  nonisolated deinit {}
+
   func recordInstall(_ label: String) async {
     await installState.append(label)
   }

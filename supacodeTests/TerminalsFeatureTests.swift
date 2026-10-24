@@ -25,6 +25,8 @@ struct TerminalsFeatureTests {
       self.state = state
     }
 
+    nonisolated deinit {}
+
     var renderer: NSView? { view }
     var isHibernatable: Bool { view != nil && claimsHibernation }
 

@@ -22,6 +22,8 @@ final class GithubSettingsViewModel {
   @ObservationIgnored
   @Dependency(GithubCLIClient.self) private var githubCLI
 
+  nonisolated deinit {}
+
   func load() async {
     state = .loading
     let isAvailable = await githubIntegration.isAvailable()
@@ -66,6 +68,8 @@ final class GitLabSettingsViewModel {
 
   @ObservationIgnored
   @Dependency(GitLabCLIClient.self) private var gitlabCLI
+
+  nonisolated deinit {}
 
   func load() async {
     state = .loading

@@ -24,6 +24,8 @@ final class PaneWindow: NSWindow, WindowTintColorProviding {
   /// AppKit-owned window is key, so chords are handled here deterministically.
   var performShortcut: ((NSEvent) -> Bool)?
 
+  nonisolated deinit {}
+
   override func sendEvent(_ event: NSEvent) {
     if event.type == .keyDown, performShortcut?(event) == true { return }
     super.sendEvent(event)
@@ -150,8 +152,10 @@ final class PaneWindowManager {
     }
   }
 
-  isolated deinit {
-    appObservers.forEach { NotificationCenter.default.removeObserver($0) }
+  nonisolated deinit {
+    MainActor.assumeIsolated {
+      appObservers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
   }
 
   /// Opens missing windows and closes stale ones for the worktree. A window
@@ -449,6 +453,8 @@ final class PaneWindowManager {
 @Observable
 final class PaneWindowHeaderModel {
   var title = ""
+
+  nonisolated deinit {}
 }
 
 /// A pane window's controller: the close button exits window mode through the
@@ -478,6 +484,8 @@ private final class PaneWindowController: NSWindowController, NSWindowDelegate {
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError() }
+
+  nonisolated deinit {}
 
   /// The red button exits window mode; the state change closes the window
   /// through the reconcile, so the pane itself survives.
@@ -530,6 +538,8 @@ private final class PaneWindowController: NSWindowController, NSWindowDelegate {
 /// selector lands the notification in a no-op; the window's frame is the
 /// user's.
 private final class PaneWindowHostingView: NSHostingView<WindowedPaneRootView> {
+  nonisolated deinit {}
+
   @objc private func windowDidLayout() {}
 }
 

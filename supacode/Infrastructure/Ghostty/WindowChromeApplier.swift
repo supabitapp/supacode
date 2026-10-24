@@ -137,7 +137,7 @@ final class WindowChromeObserverNSView: NSView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError() }
 
-  deinit {
+  nonisolated deinit {
     let center = NotificationCenter.default
     for observer in observers {
       center.removeObserver(observer)
@@ -272,6 +272,8 @@ final class WindowTintBackdropFinder: NSView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError() }
 
+  nonisolated deinit {}
+
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
   override func viewDidMoveToWindow() {
@@ -325,7 +327,7 @@ final class TintBackdropView: NSView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError() }
 
-  deinit {
+  nonisolated deinit {
     let center = NotificationCenter.default
     for observer in observers {
       center.removeObserver(observer)

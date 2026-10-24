@@ -50,4 +50,6 @@ final class GhosttySurfaceState {
   var presentTerminalCount: Int = 0
   var resetWindowSizeCount: Int = 0
   var quitTimer: ghostty_action_quit_timer_e?
+
+  nonisolated deinit {}
 }

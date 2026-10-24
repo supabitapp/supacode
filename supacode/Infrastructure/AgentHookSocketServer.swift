@@ -86,7 +86,7 @@ final class AgentHookSocketServer {
     }
   }
 
-  deinit {
+  nonisolated deinit {
     listenStopped.setValue(true)
     if let socketPath {
       unlink(socketPath)

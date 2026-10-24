@@ -55,6 +55,8 @@ final class PresenceTestHarness {
   /// it has drained everything buffered so far.
   private var parkCount = 0
 
+  nonisolated deinit {}
+
   func send(_ action: AgentPresenceFeature.Action) {
     reduce(action)
   }

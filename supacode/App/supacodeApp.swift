@@ -47,6 +47,8 @@ final class SupacodeAppDelegate: NSObject, NSApplicationDelegate {
   var globalHotkeyMonitor: GlobalHotkeyMonitor?
   private var bufferedDeeplinkURLs: [URL] = []
 
+  nonisolated deinit {}
+
   func applicationWillTerminate(_ notification: Notification) {
     // Release the global Carbon registration explicitly rather than leaning on
     // deinit timing.

@@ -99,9 +99,8 @@ final class ZmxSessionWatcher: ZmxSessionWatching {
     thread = nil
   }
 
-  isolated deinit {
-    guard !stopped.value else { return }
-    stop()
+  nonisolated deinit {
+    stopped.setValue(true)
   }
 
   // MARK: - Reader thread (nonisolated).
@@ -318,6 +317,8 @@ final class ZmxSessionWatcher: ZmxSessionWatching {
 /// the registry's start / stop bookkeeping without a real socket-reading thread.
 @MainActor
 final class InertZmxSessionWatcher: ZmxSessionWatching {
+  nonisolated deinit {}
+
   func start() {}
   func stop() {}
 }
@@ -371,6 +372,8 @@ final class ZmxSessionWatcherRegistry {
     self.socketDirectory = socketDirectory
   }
 
+  nonisolated deinit {}
+
   /// Test seam for the `watched == dormant leaves` invariant.
   var watchedSurfaceIDs: Set<UUID> { Set(watchers.keys) }
 
@@ -382,13 +385,6 @@ final class ZmxSessionWatcherRegistry {
       startWatcher(for: surfaceID)
     }
   }
-
-  func stopAll() {
-    for watcher in watchers.values { watcher.stop() }
-    watchers.removeAll()
-  }
-
-  isolated deinit { stopAll() }
 
   private func startWatcher(for surfaceID: UUID) {
     let socketPath = "\(socketDirectory)/\(ZmxSessionID.make(surfaceID: surfaceID))"

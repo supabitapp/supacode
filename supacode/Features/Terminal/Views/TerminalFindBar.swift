@@ -18,6 +18,8 @@ final class TerminalSearchToolbar: TabContentToolbar {
     self.contentID = contentID
   }
 
+  nonisolated deinit {}
+
   var view: AnyView? {
     guard let surfaceView else { return nil }
     // Pinned to the content id so a tab switch or wake rebuilds the slot's own
@@ -317,6 +319,8 @@ private struct GhosttySearchField: NSViewRepresentable {
       self.onSubmit = onSubmit
       self.onEscape = onEscape
     }
+
+    nonisolated deinit {}
 
     func controlTextDidChange(_ obj: Notification) {
       guard let field = obj.object as? NSTextField else { return }

@@ -87,6 +87,8 @@ private struct FileExplorerRootPathControl: NSViewRepresentable {
   }
 
   final class Coordinator: NSObject {
+    nonisolated deinit {}
+
     @objc func reveal(_ sender: NSPathControl) {
       guard let clicked = sender.clickedPathItem?.url else { return }
       NSWorkspace.shared.activateFileViewerSelecting([clicked])

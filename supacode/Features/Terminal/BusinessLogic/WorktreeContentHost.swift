@@ -116,6 +116,8 @@ final class WorktreeContentHost {
     }
   }
 
+  nonisolated deinit {}
+
   // Standardized to match `loadFailuresByID` keys (built from
   // `standardizedFileURL.path`) so prune protection lines up.
   var repositoryID: Repository.ID {

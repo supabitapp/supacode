@@ -35,12 +35,7 @@ final class SecureInput: Observable {
     )
   }
 
-  isolated deinit {
-    NotificationCenter.default.removeObserver(self)
-    scoped.removeAll()
-    global = false
-    apply()
-  }
+  nonisolated deinit {}
 
   func setScoped(_ object: ObjectIdentifier, focused: Bool) {
     scoped[object] = focused

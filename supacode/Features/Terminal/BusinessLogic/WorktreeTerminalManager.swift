@@ -197,12 +197,14 @@ final class WorktreeTerminalManager {
     configureSocketServer(resolvedServer)
   }
 
-  isolated deinit {
-    for task in pendingIdleHookEvents.values { task.cancel() }
-    for task in layoutDirtyTasks.values { task.cancel() }
-    for entry in layoutFlushTasks.values { entry.task.cancel() }
-    for observer in runtimeObservers {
-      NotificationCenter.default.removeObserver(observer)
+  nonisolated deinit {
+    MainActor.assumeIsolated {
+      for task in pendingIdleHookEvents.values { task.cancel() }
+      for task in layoutDirtyTasks.values { task.cancel() }
+      for entry in layoutFlushTasks.values { entry.task.cancel() }
+      for observer in runtimeObservers {
+        NotificationCenter.default.removeObserver(observer)
+      }
     }
   }
 

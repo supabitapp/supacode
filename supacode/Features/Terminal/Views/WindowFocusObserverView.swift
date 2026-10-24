@@ -16,6 +16,8 @@ final class WindowActivityReader {
   fileprivate weak var view: WindowFocusObserverNSView?
 
   var current: WindowActivityState? { view?.currentActivity }
+
+  nonisolated deinit {}
 }
 
 struct WindowFocusObserverView: NSViewRepresentable {
@@ -116,10 +118,12 @@ final class WindowFocusObserverNSView: NSView {
     observers.removeAll()
   }
 
-  isolated deinit {
-    clearObservers()
-    if let appActivationObserver {
-      NotificationCenter.default.removeObserver(appActivationObserver)
+  nonisolated deinit {
+    MainActor.assumeIsolated {
+      clearObservers()
+      if let appActivationObserver {
+        NotificationCenter.default.removeObserver(appActivationObserver)
+      }
     }
   }
 }

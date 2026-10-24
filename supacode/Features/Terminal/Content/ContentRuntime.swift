@@ -21,6 +21,8 @@ final class ContentRuntime {
 
   nonisolated init() {}
 
+  nonisolated deinit {}
+
   /// Registers `content` and starts its session synchronously, exactly once.
   /// Refuses IDs that are tombstoned or already registered.
   func provision(_ content: any TabContent, at geometry: ContentGeometry) -> Bool {

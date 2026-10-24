@@ -16,8 +16,10 @@ struct SettingsWindowSpaceBehavior: NSViewRepresentable {
 final class SettingsWindowSpaceBehaviorNSView: NSView {
   private var keyObserver: NSObjectProtocol?
 
-  isolated deinit {
-    clearObserver()
+  nonisolated deinit {
+    MainActor.assumeIsolated {
+      clearObserver()
+    }
   }
 
   override func viewDidMoveToWindow() {

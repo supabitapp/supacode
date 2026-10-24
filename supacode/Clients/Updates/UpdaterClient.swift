@@ -12,6 +12,8 @@ nonisolated struct UpdaterClient: Sendable {
 class SparkleUpdateDelegate: NSObject, SPUUpdaterDelegate {
   var updateChannel: UpdateChannel = .stable
 
+  nonisolated deinit {}
+
   nonisolated func allowedChannels(for updater: SPUUpdater) -> Set<String> {
     MainActor.assumeIsolated {
       switch updateChannel {

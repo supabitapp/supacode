@@ -32,6 +32,8 @@ struct LayoutFeatureTests {
       self.initialState = initialState
     }
 
+    nonisolated deinit {}
+
     var renderer: NSView? { view }
 
     func startSession(at geometry: ContentGeometry) {
@@ -59,6 +61,8 @@ struct LayoutFeatureTests {
     private(set) var requests: [ContentRequest] = []
 
     var madeStates: [TerminalContentState] { requests.map { Self.terminalState(of: $0.content) } }
+
+    nonisolated deinit {}
 
     static func terminalState(of content: ContentState) -> TerminalContentState {
       guard case .terminal(let state) = content else { return TerminalContentState(workingDirectory: nil) }

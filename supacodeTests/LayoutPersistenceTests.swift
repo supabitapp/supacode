@@ -17,6 +17,8 @@ struct LayoutPersistenceTests {
       self.snapshotState = snapshotState
     }
 
+    nonisolated deinit {}
+
     var renderer: NSView? { nil }
     func startSession(at geometry: ContentGeometry) {}
     func hibernate() {}

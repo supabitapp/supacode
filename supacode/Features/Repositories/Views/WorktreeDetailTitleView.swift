@@ -78,6 +78,8 @@ final class SchemeHostingView<Content: View>: NSHostingView<Content> {
     }
   }
 
+  nonisolated deinit {}
+
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     pinToolbarHostAppearance()

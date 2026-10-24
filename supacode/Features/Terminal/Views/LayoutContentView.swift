@@ -129,6 +129,8 @@ final class LayoutAXContainerView: NSView {
   private var panesLabel = "Terminal split: 0 panes"
   private var lastPaneIDs: [ObjectIdentifier] = []
 
+  nonisolated deinit {}
+
   func update(rootView: LayoutPaneTreeView, panes: [NSView]) {
     if let hostingView {
       hostingView.rootView = rootView
@@ -471,6 +473,8 @@ private final class HoverFocusSensorView: NSView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+  nonisolated deinit {}
+
   // Never claim the pointer: clicks, drags, and selection reach the surface
   // beneath. The tracking area still delivers hover events.
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -785,6 +789,8 @@ private struct ContentHostView: NSViewRepresentable {
   final class Coordinator {
     var claimedContentID: ContentID?
     var claim: UInt64 = 0
+
+    nonisolated deinit {}
   }
 
   func makeCoordinator() -> Coordinator {

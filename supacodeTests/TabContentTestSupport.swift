@@ -14,6 +14,8 @@ final class ChromeTabContent: TabContent {
     self.id = id
   }
 
+  nonisolated deinit {}
+
   var chrome: (any TabChrome)? { terminalChrome }
 
   var renderer: NSView? { nil }

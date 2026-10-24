@@ -17,6 +17,8 @@ struct ContentRuntimeTests {
       self.id = id
     }
 
+    nonisolated deinit {}
+
     var renderer: NSView? { view }
 
     func startSession(at geometry: ContentGeometry) {

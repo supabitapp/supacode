@@ -23,6 +23,8 @@ final class CommandKeyObserver {
     configureObservers()
   }
 
+  nonisolated deinit {}
+
   func tabSelectionHint(atSlot index: Int) -> String? {
     guard tabSelectionHints.indices.contains(index) else { return nil }
     return tabSelectionHints[index]

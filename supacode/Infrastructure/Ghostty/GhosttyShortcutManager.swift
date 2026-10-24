@@ -37,6 +37,8 @@ final class GhosttyShortcutManager {
       }
   }
 
+  nonisolated deinit {}
+
   func refresh() {
     generation += 1
   }

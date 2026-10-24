@@ -72,7 +72,7 @@ private final class WorktreeFileEventMonitor {
     }
   }
 
-  deinit {
+  nonisolated deinit {
     Self.release(&stream)
   }
 
@@ -190,6 +190,8 @@ final class WorktreeInfoWatcherManager {
     }
     self.pollRemoteBranch = pollRemoteBranch
   }
+
+  nonisolated deinit {}
 
   func handleCommand(_ command: WorktreeInfoWatcherClient.Command) {
     switch command {

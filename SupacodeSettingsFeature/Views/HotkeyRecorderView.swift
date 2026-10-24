@@ -201,6 +201,8 @@ final class HotkeyRecorderNSView: NSView {
 
   override var acceptsFirstResponder: Bool { true }
 
+  nonisolated deinit {}
+
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     window?.makeFirstResponder(self)

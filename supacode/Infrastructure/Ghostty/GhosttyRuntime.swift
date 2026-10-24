@@ -27,6 +27,8 @@ final class GhosttyRuntime {
       self.surface = surface
     }
 
+    nonisolated deinit {}
+
     static func == (lhs: SurfaceReference, rhs: SurfaceReference) -> Bool {
       lhs === rhs
     }
@@ -137,18 +139,20 @@ final class GhosttyRuntime {
     setColorScheme(initialColorScheme ?? Self.resolvedLaunchColorScheme())
   }
 
-  isolated deinit {
-    Self.liveUserdataBits.remove(UInt(bitPattern: Unmanaged.passUnretained(self).toOpaque()))
-    let center = NotificationCenter.default
-    for observer in observers {
-      center.removeObserver(observer)
-    }
-    if let app {
-      Self.liveAppBits.remove(UInt(bitPattern: app))
-      ghostty_app_free(app)
-    }
-    if let config {
-      ghostty_config_free(config)
+  nonisolated deinit {
+    MainActor.assumeIsolated {
+      Self.liveUserdataBits.remove(UInt(bitPattern: Unmanaged.passUnretained(self).toOpaque()))
+      let center = NotificationCenter.default
+      for observer in observers {
+        center.removeObserver(observer)
+      }
+      if let app {
+        Self.liveAppBits.remove(UInt(bitPattern: app))
+        ghostty_app_free(app)
+      }
+      if let config {
+        ghostty_config_free(config)
+      }
     }
   }
 

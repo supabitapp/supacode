@@ -38,6 +38,8 @@ nonisolated struct PaneTabDragPayload: Codable, Sendable, Transferable {
     let direction: SplitTree<PaneID>.NewDirection
   }
 
+  nonisolated deinit {}
+
   /// Records the source at drag start, clearing any target a prior drag left.
   func startDrag(from tabID: TabID) {
     sourceTabID = tabID
@@ -1058,6 +1060,8 @@ private final class MiddleClickNSView: NSView {
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError() }
+
+  nonisolated deinit {}
 
   override func hitTest(_ point: NSPoint) -> NSView? {
     guard let event = NSApp.currentEvent,

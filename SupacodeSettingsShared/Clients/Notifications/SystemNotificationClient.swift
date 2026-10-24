@@ -13,6 +13,8 @@ private nonisolated let systemNotificationLogger = SupaLogger("SystemNotificatio
 private final class ForegroundSystemNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
   var onDeeplinkTap: ((URL) -> Void)?
 
+  nonisolated deinit {}
+
   // Both delegate methods run on the main actor so reading / writing
   // `onDeeplinkTap` is a plain isolated access with no bridging hop. The
   // leading `Task.yield()` satisfies the async-without-await lint and

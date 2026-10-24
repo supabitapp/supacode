@@ -168,6 +168,8 @@ final class OpenActionIconStore {
   @ObservationIgnored private var inFlight: Set<OpenWorktreeAction.ID> = []
   @ObservationIgnored @Dependency(\.openActionAvailability) private var availability
 
+  nonisolated deinit {}
+
   /// A pure dictionary read: a miss renders nothing and never kicks off work.
   func icon(for action: OpenWorktreeAction) -> NSImage? {
     guard case .ready(let image) = icons[action.id] else { return nil }

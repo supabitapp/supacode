@@ -50,7 +50,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
       self.fetch = fetch
     }
 
-    deinit {
+    nonisolated deinit {
       expiryTask?.cancel()
     }
 
@@ -300,29 +300,28 @@ final class GhosttySurfaceView: NSView, Identifiable {
     fatalError("init(coder:) is not supported")
   }
 
-  isolated deinit {
-    if let eventMonitor {
-      NSEvent.removeMonitor(eventMonitor)
-    }
-    clearNotificationObservers()
-    let id = ObjectIdentifier(self)
+  nonisolated deinit {
     MainActor.assumeIsolated {
-      SecureInput.shared.removeScoped(id)
-    }
-    // A live surface here means a teardown path bypassed `closeSurface`; the
-    // call below still frees it, off the turn.
-    if surface != nil {
-      assertionFailure("GhosttySurfaceView deallocated with a live surface; a teardown path bypassed closeSurface().")
-    }
-    closeSurface()
-    if let workingDirectoryCString {
-      free(workingDirectoryCString)
-    }
-    if let commandCString {
-      free(commandCString)
-    }
-    if let initialInputCString {
-      free(initialInputCString)
+      if let eventMonitor {
+        NSEvent.removeMonitor(eventMonitor)
+      }
+      clearNotificationObservers()
+      SecureInput.shared.removeScoped(ObjectIdentifier(self))
+      // A live surface here means a teardown path bypassed `closeSurface`; the
+      // call below still frees it, off the turn.
+      if surface != nil {
+        assertionFailure("GhosttySurfaceView deallocated with a live surface; a teardown path bypassed closeSurface().")
+      }
+      closeSurface()
+      if let workingDirectoryCString {
+        free(workingDirectoryCString)
+      }
+      if let commandCString {
+        free(commandCString)
+      }
+      if let initialInputCString {
+        free(initialInputCString)
+      }
     }
   }
 
@@ -349,14 +348,11 @@ final class GhosttySurfaceView: NSView, Identifiable {
     isHidden = true
     // Free off the current turn on the main queue: `ghostty_surface_free` joins
     // the surface's search, renderer, and IO threads and tears down the Metal
-    // renderer, which would otherwise block the reducer turn. The main queue,
-    // not a `Task`, runs the free outside the reducer's inherited task-local
-    // scope, where an isolated-deinit release it triggers can abort as an
-    // invalid free. Retain the runtime and bridge by hand across the free (a
-    // Sendable block can't capture them) so the Ghostty app stays alive and a
-    // synchronous callback during the free still resolves a live bridge; `self`
-    // is intentionally not captured, as the free never touches the surface's
-    // nsview.
+    // renderer, which would otherwise block the reducer turn. Retain the
+    // runtime and bridge by hand across the free (a Sendable block can't
+    // capture them) so the Ghostty app stays alive and a synchronous callback
+    // during the free still resolves a live bridge; `self` is intentionally
+    // not captured, as the free never touches the surface's nsview.
     let retainedRuntime = Unmanaged.passRetained(runtime)
     let retainedBridge = Unmanaged.passRetained(bridge)
     DispatchQueue.main.async {
@@ -2260,8 +2256,10 @@ final class GhosttySurfaceScrollView: NSView, WindowTintMaskRegion {
     fatalError("init(coder:) is not supported")
   }
 
-  isolated deinit {
-    observers.forEach { NotificationCenter.default.removeObserver($0) }
+  nonisolated deinit {
+    MainActor.assumeIsolated {
+      observers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
   }
 
   override var safeAreaInsets: NSEdgeInsets { NSEdgeInsetsZero }

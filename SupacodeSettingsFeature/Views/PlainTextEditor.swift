@@ -64,6 +64,8 @@ struct PlainTextEditor: NSViewRepresentable {
       _text = text
     }
 
+    nonisolated deinit {}
+
     func textDidChange(_ notification: Notification) {
       guard let textView = notification.object as? NSTextView else { return }
       text = textView.string

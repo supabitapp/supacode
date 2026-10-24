@@ -432,6 +432,9 @@ struct GhosttySurfaceViewTests {
 
   private final class MenuActionTarget: NSObject {
     var fired = false
+
+    nonisolated deinit {}
+
     @objc func fire(_ sender: Any?) { fired = true }
   }
 

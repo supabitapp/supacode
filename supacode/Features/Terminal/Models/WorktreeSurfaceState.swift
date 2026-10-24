@@ -11,4 +11,6 @@ final class WorktreeSurfaceState {
   var unseenNotificationCount: Int = 0
 
   var hasUnseenNotification: Bool { unseenNotificationCount > 0 }
+
+  nonisolated deinit {}
 }
