@@ -174,6 +174,62 @@ struct GithubCLIClientTests {
             exitCode: 1
           )
         }
+        let reviews = query.contains("latestOpinionatedReviews") ? #"{"nodes":[{"state":"APPROVED"}]}"# : "null"
+        // The field-omitted retry returns a real PR so the test proves PR state survives the fallback.
+        let stdout = """
+          {"data":{"repository":{"branch0":{"nodes":[{
+            "number":42,"title":"Queued","state":"OPEN","additions":1,"deletions":0,"isDraft":false,
+            "reviewDecision":null,"updatedAt":"2026-05-01T00:00:00Z",
+            "latestOpinionatedReviews":\(reviews),
+            "url":"https://github.com/khoi/repo/pull/42","headRefName":"feature-0","baseRefName":"main",
+            "headRepository":{"name":"repo","owner":{"login":"khoi"}}
+          }]}}}}
+          """
+        await probe.endGhCall()
+        return ShellOutput(stdout: stdout, stderr: "", exitCode: 0)
+      }
+    )
+    let client = GithubCLIClient.live(shell: shell)
+    let branches = ["feature-0"]
+
+    let result = try await client.batchPullRequests("github.com", "khoi", "repo", branches)
+
+    // PR state survives the field-omitted retry, and the retry fired exactly once.
+    #expect(result["feature-0"]?.number == 42)
+    #expect(result["feature-0"]?.mergeQueueEntry == nil)
+    // Only the rejected field is dropped; the reviews selection survives the retry.
+    #expect(result["feature-0"]?.fallbackReviewDecision == .approved)
+    let snapshot = await probe.snapshot()
+    #expect(snapshot.loginCallCount == 2)
+  }
+
+  @Test func batchPullRequestsRetriesWithoutLatestReviewsWhenRejected() async throws {
+    // A GHES rejecting the display-only reviews selection must not take PR state down with it.
+    let probe = GithubBatchShellProbe()
+    let shell = ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          await probe.recordWhichCall()
+          return ShellOutput(stdout: "/usr/bin/gh", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, arguments, _, _ in
+        guard executableURL.lastPathComponent == "gh" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
+        await probe.recordLoginCall()
+        _ = await probe.beginGhCall()
+        let query = arguments.first { $0.hasPrefix("query=") } ?? ""
+        if query.contains("latestOpinionatedReviews") {
+          await probe.endGhCall()
+          throw ShellClientError(
+            command: "gh api graphql",
+            stdout: "",
+            stderr: "gh: Field 'latestOpinionatedReviews' doesn't accept argument 'writersOnly'",
+            exitCode: 1
+          )
+        }
         // The field-omitted retry returns a real PR so the test proves PR state survives the fallback.
         let stdout = """
           {"data":{"repository":{"branch0":{"nodes":[{
@@ -194,12 +250,16 @@ struct GithubCLIClientTests {
 
     // PR state survives the field-omitted retry, and the retry fired exactly once.
     #expect(result["feature-0"]?.number == 42)
-    #expect(result["feature-0"]?.mergeQueueEntry == nil)
+    #expect(result["feature-0"]?.fallbackReviewDecision == nil)
     let snapshot = await probe.snapshot()
     #expect(snapshot.loginCallCount == 2)
   }
 
-  @Test func batchPullRequestsPropagatesNonRejectionErrorMentioningMergeQueue() async {
+  @Test(arguments: [
+    "gh: error fetching mergeQueueEntry: API rate limit exceeded",
+    "gh: Resource not accessible by integration (latestOpinionatedReviews)",
+  ])
+  func batchPullRequestsPropagatesNonRejectionErrorMentioningOptionalField(stderr: String) async {
     // An error that names the field but is not a "doesn't exist" rejection must propagate, not retry.
     let probe = GithubBatchShellProbe()
     let shell = ShellClient(
@@ -220,7 +280,7 @@ struct GithubCLIClientTests {
         throw ShellClientError(
           command: "gh api graphql",
           stdout: "",
-          stderr: "gh: error fetching mergeQueueEntry: API rate limit exceeded",
+          stderr: stderr,
           exitCode: 1
         )
       }

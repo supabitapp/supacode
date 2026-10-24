@@ -52,7 +52,7 @@ enum GithubCLIOutput {
   nonisolated static let undecodableMessage =
     "Could not parse GitHub CLI output. The installed GitHub CLI version may be incompatible."
 
-  nonisolated private static let logger = SupaLogger("GithubCLI")
+  nonisolated fileprivate static let logger = SupaLogger("GithubCLI")
 
   // Every balanced top-level JSON value ({...} or [...]) in `output`, in source order. An opener that
   // never balances (a stray brace from shell noise) is skipped, so leading noise cannot swallow a real
@@ -647,10 +647,12 @@ nonisolated private func fetchPullRequestsChunk(
 ) async throws -> (Int, [String: ForgePullRequest]) {
   @Dependency(\.continuousClock) var clock
 
-  func runChunkQuery(includeMergeQueueEntry: Bool) async throws -> (output: String, aliasMap: [String: String]) {
+  func runChunkQuery(
+    optionalFields: Set<GithubOptionalPullRequestField>
+  ) async throws -> (output: String, aliasMap: [String: String]) {
     let (query, aliasMap) = makeBatchPullRequestsQuery(
       branches: chunk,
-      includeMergeQueueEntry: includeMergeQueueEntry
+      optionalFields: optionalFields
     )
     let arguments = [
       "api",
@@ -675,13 +677,18 @@ nonisolated private func fetchPullRequestsChunk(
     }
   }
 
+  let allOptionalFields = Set(GithubOptionalPullRequestField.allCases)
   let result: (output: String, aliasMap: [String: String])
   do {
-    result = try await runChunkQuery(includeMergeQueueEntry: true)
-  } catch let error where isUnknownMergeQueueFieldError(error) {
-    // GHES < 3.8 rejects `mergeQueueEntry` and fails the whole request; retry without it so PR
-    // state still loads, minus the merge-queue detail that server can't provide anyway.
-    result = try await runChunkQuery(includeMergeQueueEntry: false)
+    result = try await runChunkQuery(optionalFields: allOptionalFields)
+  } catch {
+    // Older GHES rejects unknown selections; retry without just those so PR state still loads.
+    let rejected = GithubOptionalPullRequestField.rejected(by: error)
+    guard !rejected.isEmpty else { throw error }
+    GithubCLIOutput.logger.debug(
+      "\(request.host) rejected \(rejected.map(\.rawValue).sorted()); retrying without them."
+    )
+    result = try await runChunkQuery(optionalFields: allOptionalFields.subtracting(rejected))
   }
   guard !result.output.isEmpty else {
     return (chunkIndex, [:])
@@ -702,24 +709,40 @@ nonisolated private func fetchPullRequestsChunk(
   return (chunkIndex, prsByBranch)
 }
 
-// GHES < 3.8 rejects the `mergeQueueEntry` selection with a "Field 'mergeQueueEntry' doesn't exist"
-// GraphQL error. Matching both tokens avoids a needless re-fetch on an error that merely echoes the name.
-nonisolated private func isUnknownMergeQueueFieldError(_ error: Error) -> Bool {
-  guard case GithubCLIError.commandFailed(let message) = error else {
-    return false
+/// Batch-query selections older GitHub Enterprise Server may lack (`mergeQueueEntry` needs 3.8).
+nonisolated enum GithubOptionalPullRequestField: String, CaseIterable, Hashable, Sendable {
+  case mergeQueueEntry
+  case latestOpinionatedReviews
+
+  var selection: String {
+    switch self {
+    case .mergeQueueEntry: "mergeQueueEntry { position estimatedTimeToMerge state }"
+    case .latestOpinionatedReviews: "latestOpinionatedReviews(first: 100, writersOnly: true) { nodes { state } }"
+    }
   }
-  let lowered = message.lowercased()
-  return lowered.contains("mergequeueentry") && lowered.contains("doesn't exist")
+
+  /// Fields a GraphQL validation error rejects as unknown; an error merely echoing a name never matches.
+  static func rejected(by error: Error) -> Set<Self> {
+    guard case GithubCLIError.commandFailed(let message) = error else { return [] }
+    let names = GraphQLFieldRejection.rejectedFields(allCases.map(\.rawValue), in: message)
+    var rejected: Set<Self> = []
+    for name in names {
+      guard let field = Self(rawValue: name) else { continue }
+      rejected.insert(field)
+    }
+    return rejected
+  }
 }
 
 nonisolated private func makeBatchPullRequestsQuery(
   branches: [String],
-  includeMergeQueueEntry: Bool
+  optionalFields: Set<GithubOptionalPullRequestField>
 ) -> (query: String, aliasMap: [String: String]) {
-  // `mergeQueueEntry` is absent on GitHub Enterprise Server < 3.8; omitting it lets PR fetching
-  // still succeed there (see the field-rejection fallback in `fetchPullRequestsChunk`).
-  let mergeQueueSelection =
-    includeMergeQueueEntry ? "mergeQueueEntry { position estimatedTimeToMerge state }" : ""
+  var optionalSelections: [String] = []
+  for field in GithubOptionalPullRequestField.allCases where optionalFields.contains(field) {
+    optionalSelections.append(field.selection)
+  }
+  let optionalSelection = optionalSelections.joined(separator: "\n")
   var aliasMap: [String: String] = [:]
   var selections: [String] = []
   for (index, branch) in branches.enumerated() {
@@ -750,7 +773,7 @@ nonisolated private func makeBatchPullRequestsQuery(
           author {
             login
           }
-          \(mergeQueueSelection)
+          \(optionalSelection)
           headRepository {
             name
             owner { login }
