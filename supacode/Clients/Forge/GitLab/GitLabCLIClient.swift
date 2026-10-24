@@ -212,13 +212,11 @@ nonisolated private func fetchMergeRequestsFetcher(
       }
     }
     var results = GitLabMergeRequest.pullRequestsByBranch(mergeRequests, branches: branches)
-    // One GraphQL call attaches each matched MR's head pipeline so unselected
-    // rows still show CI state; a failure degrades to no badge, never a
-    // failed sweep.
+    // One GraphQL call adds each MR's pipeline and review verdict; a failure only drops badges.
     let numbers = Set(results.values.map(\.number)).sorted()
     if !numbers.isEmpty {
       do {
-        let rollups = try await fetchHeadPipelineRollups(
+        let enrichments = try await GitLabSweepEnrichments.fetch(
           shell: shell,
           resolver: resolver,
           host: host,
@@ -226,55 +224,36 @@ nonisolated private func fetchMergeRequestsFetcher(
           numbers: numbers
         )
         for (branch, pullRequest) in results {
-          guard let rollup = rollups[pullRequest.number] else { continue }
-          results[branch] = pullRequest.applying(ForgePullRequestDetail(statusCheckRollup: rollup))
+          guard let enrichment = enrichments[pullRequest.number] else { continue }
+          var enriched = pullRequest
+          if let rollup = enrichment.rollup {
+            enriched = enriched.applying(ForgePullRequestDetail(statusCheckRollup: rollup))
+          }
+          enriched.fallbackReviewDecision = enrichment.reviewDecision
+          results[branch] = enriched
         }
       } catch {
-        gitlabLogger.warning("Head pipeline fetch failed for \(projectPath): \(error)")
+        gitlabLogger.warning("Sweep enrichment fetch failed for \(projectPath): \(error)")
       }
     }
     return results
   }
 }
 
-/// GraphQL is the only per-MR head-pipeline source that costs one request for
-/// the whole sweep; the REST list endpoint carries no pipeline data and
-/// branch-scoped pipeline lists misattribute merge-request and fork pipelines.
-nonisolated private func fetchHeadPipelineRollups(
-  shell: ShellClient,
-  resolver: ForgeCLIExecutableResolver,
-  host: String,
-  projectPath: String,
-  numbers: [Int]
-) async throws -> [Int: ForgePullRequestStatusCheckRollup] {
-  let iidList = numbers.map { "\"\($0)\"" }.joined(separator: ", ")
-  let query =
-    "query { project(fullPath: \"\(projectPath)\") { mergeRequests(iids: [\(iidList)]) "
-    + "{ nodes { iid headPipeline { status path } } } } }"
-  let output = try await runGlab(
-    shell: shell,
-    resolver: resolver,
-    arguments: ["api", "graphql", "--hostname", host, "-f", "query=\(query)"],
-    repoRoot: nil
-  )
-  let response = try GitLabCLIOutput.decode(
-    GitLabHeadPipelines.self,
-    from: output,
-    decoder: GitLabAPI.makeDecoder()
-  )
-  var rollups: [Int: ForgePullRequestStatusCheckRollup] = [:]
-  for node in response.data?.project?.mergeRequests?.nodes ?? [] {
-    guard let iid = Int(node.iid), let pipeline = node.headPipeline else { continue }
-    let detailsUrl = pipeline.path.map { "https://\(host)\($0)" }
-    rollups[iid] = GitLabMergeStatusMapping.rollup(status: pipeline.status, detailsUrl: detailsUrl)
-  }
-  return rollups
-}
-
-/// GraphQL response for the sweep's head-pipeline enrichment; iids come back
-/// as strings.
-nonisolated struct GitLabHeadPipelines: Decodable, Equatable {
+/// GraphQL response for the sweep's per-MR enrichment; iids come back as strings.
+nonisolated struct GitLabSweepEnrichments: Decodable, Equatable {
   let data: Payload?
+  let errors: [GraphQLError]?
+
+  /// One matched MR's sweep extras.
+  nonisolated struct Enrichment: Equatable {
+    let rollup: ForgePullRequestStatusCheckRollup?
+    let reviewDecision: PullRequestReviewDecision?
+  }
+
+  nonisolated struct GraphQLError: Decodable, Equatable {
+    let message: String
+  }
 
   nonisolated struct Payload: Decodable, Equatable {
     let project: Project?
@@ -291,11 +270,123 @@ nonisolated struct GitLabHeadPipelines: Decodable, Equatable {
   nonisolated struct Node: Decodable, Equatable {
     let iid: String
     let headPipeline: Pipeline?
+    let approved: Bool?
+    let approvedBy: Approvers?
+    let detailedMergeStatus: String?
+    let reviewers: Reviewers?
+
+    /// The merge status only reports the dominant check, so reviewer states and partial approvals
+    /// are read too; approved needs complete reviewer data.
+    var reviewDecision: PullRequestReviewDecision? {
+      let status = detailedMergeStatus?.uppercased()
+      if status == "REQUESTED_CHANGES" { return .changesRequested }
+      var reviewersAreComplete = reviewers?.pageInfo?.hasNextPage == false
+      for reviewer in reviewers?.nodes ?? [] {
+        guard let state = reviewer?.mergeRequestInteraction?.reviewState else {
+          reviewersAreComplete = false
+          continue
+        }
+        if state.uppercased() == "REQUESTED_CHANGES" { return .changesRequested }
+      }
+      if status == "NOT_APPROVED" { return .reviewRequired }
+      guard approvedBy?.nodes?.isEmpty == false else { return nil }
+      if approved == false { return .reviewRequired }
+      return reviewersAreComplete ? .approved : nil
+    }
+  }
+
+  nonisolated struct Approvers: Decodable, Equatable {
+    let nodes: [Approver?]?
+  }
+
+  nonisolated struct Approver: Decodable, Equatable {
+    let id: String?
+  }
+
+  nonisolated struct Reviewers: Decodable, Equatable {
+    let pageInfo: PageInfo?
+    let nodes: [Reviewer?]?
+  }
+
+  nonisolated struct PageInfo: Decodable, Equatable {
+    let hasNextPage: Bool?
+  }
+
+  nonisolated struct Reviewer: Decodable, Equatable {
+    let mergeRequestInteraction: Interaction?
+  }
+
+  nonisolated struct Interaction: Decodable, Equatable {
+    let reviewState: String?
   }
 
   nonisolated struct Pipeline: Decodable, Equatable {
     let status: String?
     let path: String?
+  }
+
+  static func query(projectPath: String, numbers: [Int], includeReview: Bool) -> String {
+    let iidList = numbers.map { "\"\($0)\"" }.joined(separator: ", ")
+    let reviewSelection =
+      includeReview
+      ? " approved approvedBy(first: 1) { nodes { id } } detailedMergeStatus"
+        + " reviewers(first: 100) { pageInfo { hasNextPage } nodes { mergeRequestInteraction { reviewState } } }"
+      : ""
+    return "query { project(fullPath: \"\(projectPath)\") { mergeRequests(iids: [\(iidList)], first: \(numbers.count)) "
+      + "{ nodes { iid headPipeline { status path }\(reviewSelection) } } } }"
+  }
+
+  func enrichments(host: String) -> [Int: Enrichment] {
+    var enrichments: [Int: Enrichment] = [:]
+    for node in data?.project?.mergeRequests?.nodes ?? [] {
+      guard let iid = Int(node.iid) else { continue }
+      let rollup = node.headPipeline.map { pipeline in
+        GitLabMergeStatusMapping.rollup(
+          status: pipeline.status,
+          detailsUrl: pipeline.path.map { "https://\(host)\($0)" }
+        )
+      }
+      enrichments[iid] = Enrichment(rollup: rollup, reviewDecision: node.reviewDecision)
+    }
+    return enrichments
+  }
+}
+
+nonisolated extension GitLabSweepEnrichments {
+  /// One request per sweep for pipelines and approvals (two when the review fields fail).
+  fileprivate static func fetch(
+    shell: ShellClient,
+    resolver: ForgeCLIExecutableResolver,
+    host: String,
+    projectPath: String,
+    numbers: [Int]
+  ) async throws -> [Int: Enrichment] {
+    func run(includeReview: Bool) async throws -> GitLabSweepEnrichments {
+      let graphQL = Self.query(projectPath: projectPath, numbers: numbers, includeReview: includeReview)
+      let output = try await runGlab(
+        shell: shell,
+        resolver: resolver,
+        arguments: ["api", "graphql", "--hostname", host, "-f", "query=\(graphQL)"],
+        repoRoot: nil
+      )
+      return try GitLabCLIOutput.decode(Self.self, from: output, decoder: GitLabAPI.makeDecoder())
+    }
+
+    // No data (unknown field, complexity limit) retries without review fields; partial errors keep usable nodes.
+    do {
+      let response = try await run(includeReview: true)
+      guard let errors = response.errors, !errors.isEmpty, response.data?.project?.mergeRequests?.nodes == nil else {
+        return response.enrichments(host: host)
+      }
+      gitlabLogger.debug("Review enrichment for \(projectPath) failed: \(errors.map(\.message)); retrying without it.")
+    } catch GitLabCLIError.commandFailed(let message) {
+      gitlabLogger.debug("Review enrichment for \(projectPath) failed: \(message); retrying without it.")
+    }
+    let response = try await run(includeReview: false)
+    if let errors = response.errors, !errors.isEmpty {
+      gitlabLogger.warning("Sweep enrichment for \(projectPath) returned errors: \(errors.map(\.message))")
+    }
+    return response.enrichments(host: host)
   }
 }
 

@@ -220,6 +220,10 @@ nonisolated enum GitLabMergeStatusMapping {
       mergeable = "CONFLICTING"
     case "requested_changes":
       reviewDecision = "CHANGES_REQUESTED"
+    case "not_approved":
+      reviewDecision = "REVIEW_REQUIRED"
+      // Still blocks (or conflicts) via the default arm; readiness ignores review required.
+      fallthrough
     default:
       if detail.hasConflicts == true {
         mergeable = "CONFLICTING"

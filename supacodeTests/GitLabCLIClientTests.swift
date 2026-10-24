@@ -65,6 +65,32 @@ struct GitLabCLIClientTests {
     )
   }
 
+  /// Serves the MR list for REST calls and `graphQL(query)` for the sweep's GraphQL call.
+  private static func sweepShell(
+    recorded: LockIsolated<[[String]]>,
+    graphQL: @escaping @Sendable (String) throws -> String
+  ) -> ShellClient {
+    ShellClient(
+      run: { executableURL, _, _ in
+        if executableURL.lastPathComponent == "which" {
+          return ShellOutput(stdout: "/usr/local/bin/glab", stderr: "", exitCode: 0)
+        }
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { executableURL, arguments, _, _ in
+        guard executableURL.lastPathComponent == "glab" else {
+          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+        }
+        recorded.withValue { $0.append(arguments) }
+        guard arguments.contains("graphql") else {
+          return ShellOutput(stdout: mergeRequestListJSON, stderr: "", exitCode: 0)
+        }
+        let query = arguments.first { $0.hasPrefix("query=") } ?? ""
+        return ShellOutput(stdout: try graphQL(query), stderr: "", exitCode: 0)
+      }
+    )
+  }
+
   @Test func fetchMergeRequestsMatchesBranchesAndPrefersOpenState() async throws {
     let client = GitLabCLIClient.live(shell: Self.glabShell(stdout: mergeRequestListJSON))
 
@@ -148,24 +174,100 @@ struct GitLabCLIClientTests {
     #expect(graphQLCall.contains(where: { $0.contains("fullPath: \"group/sub/proj\"") }))
   }
 
-  @Test func fetchMergeRequestsSurvivesAFailedHeadPipelineCall() async throws {
-    let shell = ShellClient(
-      run: { executableURL, _, _ in
-        if executableURL.lastPathComponent == "which" {
-          return ShellOutput(stdout: "/usr/local/bin/glab", stderr: "", exitCode: 0)
+  @Test func fetchMergeRequestsAttachesReviewVerdictsFromTheSameGraphQLCall() async throws {
+    let graphQLJSON = """
+      {"data": {"project": {"mergeRequests": {"nodes": [
+        {"iid": "12", "headPipeline": null, "approved": true,
+         "approvedBy": {"nodes": [{"id": "gid://gitlab/User/1"}]}, "detailedMergeStatus": "MERGEABLE",
+         "reviewers": {"pageInfo": {"hasNextPage": false}, "nodes": []}}
+      ]}}}}
+      """
+    let recorded = LockIsolated<[[String]]>([])
+    let client = GitLabCLIClient.live(shell: Self.sweepShell(recorded: recorded) { _ in graphQLJSON })
+
+    let results = try await client.fetchMergeRequests("gitlab.com", "group/sub/proj", ["feature"])
+
+    #expect(results["feature"]?.reviewStatus == .approved)
+    // Review fields ride on the pipeline query, so the sweep makes no extra call.
+    #expect(recorded.value.count == 2)
+    #expect(recorded.value.last?.contains(where: { $0.contains("detailedMergeStatus") }) == true)
+  }
+
+  @Test func fetchMergeRequestsDecodesAHiddenReviewerChangesRequest() async throws {
+    let graphQLJSON = """
+      {"data": {"project": {"mergeRequests": {"nodes": [
+        {"iid": "12", "headPipeline": null, "approved": true,
+         "approvedBy": {"nodes": [{"id": "gid://gitlab/User/1"}]}, "detailedMergeStatus": "DISCUSSIONS_NOT_RESOLVED",
+         "reviewers": {"nodes": [{"mergeRequestInteraction": {"reviewState": "REQUESTED_CHANGES"}}, null]}}
+      ]}}}}
+      """
+    let recorded = LockIsolated<[[String]]>([])
+    let client = GitLabCLIClient.live(shell: Self.sweepShell(recorded: recorded) { _ in graphQLJSON })
+
+    let results = try await client.fetchMergeRequests("gitlab.com", "group/sub/proj", ["feature"])
+
+    #expect(results["feature"]?.reviewStatus == .changesRequested)
+    #expect(recorded.value.last?.contains(where: { $0.contains("reviewState") }) == true)
+  }
+
+  @Test(
+    arguments: zip(
+      [true, false, false],
+      [
+        "Field 'detailedMergeStatus' doesn't exist on type 'MergeRequest'",
+        "Field 'detailedMergeStatus' doesn't exist on type 'MergeRequest'",
+        "Query has complexity of 300, which exceeds max complexity of 250",
+      ]
+    )
+  )
+  func fetchMergeRequestsRetriesWithoutReviewFieldsOnFailure(throwsOnRejection: Bool, rejection: String) async throws {
+    let pipelineJSON = """
+      {"data": {"project": {"mergeRequests": {"nodes": [
+        {"iid": "12", "headPipeline": {"status": "SUCCESS", "path": "/group/sub/proj/-/pipelines/1"}}
+      ]}}}}
+      """
+    let recorded = LockIsolated<[[String]]>([])
+    let client = GitLabCLIClient.live(
+      shell: Self.sweepShell(recorded: recorded) { query in
+        guard query.contains("detailedMergeStatus") else { return pipelineJSON }
+        if throwsOnRejection {
+          throw ShellClientError(command: "glab api graphql", stdout: "", stderr: rejection, exitCode: 1)
         }
-        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
-      },
-      runLoginImpl: { executableURL, arguments, _, _ in
-        guard executableURL.lastPathComponent == "glab" else {
-          return ShellOutput(stdout: "", stderr: "", exitCode: 0)
-        }
-        if arguments.contains("graphql") {
-          throw ShellClientError(command: "glab api graphql", stdout: "", stderr: "boom", exitCode: 1)
-        }
-        return ShellOutput(stdout: mergeRequestListJSON, stderr: "", exitCode: 0)
+        return #"{"data": null, "errors": [{"message": "\#(rejection)"}]}"#
       }
     )
+
+    let results = try await client.fetchMergeRequests("gitlab.com", "group/sub/proj", ["feature"])
+
+    // Old GitLab keeps its pipeline badge; only the review verdict is lost.
+    #expect(results["feature"]?.statusCheckRollup?.checks.first?.conclusion == "SUCCESS")
+    #expect(results["feature"]?.reviewStatus == nil)
+    #expect(recorded.value.count == 3)
+  }
+
+  @Test func fetchMergeRequestsKeepsUsableNodesFromAPartialError() async throws {
+    let partialJSON = """
+      {"data": {"project": {"mergeRequests": {"nodes": [
+        {"iid": "12", "headPipeline": null, "approved": true,
+         "approvedBy": {"nodes": [{"id": "gid://gitlab/User/1"}]}, "detailedMergeStatus": "MERGEABLE",
+         "reviewers": {"pageInfo": {"hasNextPage": false}, "nodes": []}}
+      ]}}},
+       "errors": [{"message": "Failed to resolve reviewers for another merge request"}]}
+      """
+    let recorded = LockIsolated<[[String]]>([])
+    let client = GitLabCLIClient.live(shell: Self.sweepShell(recorded: recorded) { _ in partialJSON })
+
+    let results = try await client.fetchMergeRequests("gitlab.com", "group/sub/proj", ["feature"])
+
+    #expect(results["feature"]?.reviewStatus == .approved)
+    // No retry: the list call plus the one enrichment call.
+    #expect(recorded.value.count == 2)
+  }
+
+  @Test func fetchMergeRequestsSurvivesAFailedHeadPipelineCall() async throws {
+    let shell = Self.sweepShell(recorded: LockIsolated([])) { _ in
+      throw ShellClientError(command: "glab api graphql", stdout: "", stderr: "boom", exitCode: 1)
+    }
     let client = GitLabCLIClient.live(shell: shell)
 
     let results = try await client.fetchMergeRequests("gitlab.com", "group/sub/proj", ["feature"])
