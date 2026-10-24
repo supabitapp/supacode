@@ -352,11 +352,10 @@ public struct SettingsFeature {
           await withTaskGroup(of: (AgentInstallTarget, Result<AgentIntegrationState, Error>).self) { group in
             for target in targets {
               group.addTask {
-                do {
-                  return (target, .success(try await agentIntegrationClient.state(target)))
-                } catch {
-                  return (target, .failure(error))
-                }
+                // Build the result first: inlining the throwing await into the
+                // returned tuple miscompiles under -O, zeroing `target`.
+                let probe = await Result { try await agentIntegrationClient.state(target) }
+                return (target, probe)
               }
             }
             for await (target, probe) in group {
