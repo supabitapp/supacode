@@ -81,6 +81,10 @@ struct LayoutSurfaceConduit {
       guard let view, isLive(view) else { return }
       host.handleContextSignal(surfaceID: surfaceID, id: id, metadata: metadata)
     }
+    view.bridge.onProgramStatus = { [weak view] event in
+      guard let view, isLive(view) else { return }
+      host.handleProgramStatus(surfaceID: surfaceID, event: event)
+    }
     view.bridge.onColorChanged = { [weak view] in
       guard let view, isLive(view) else { return }
       host.handleSurfaceColorChanged(surfaceID)

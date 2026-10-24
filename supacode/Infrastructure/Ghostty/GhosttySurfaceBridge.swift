@@ -74,6 +74,9 @@ final class GhosttySurfaceBridge {
   // metadata). Forwarded raw; the per-surface capability token carried in the
   // metadata is verified one layer up where the surface's nonce lives.
   var onContextSignal: ((UInt8, String, String) -> Void)?
+  // OSC 7501 reports and the OSC 133 boundaries their lifetime rules need,
+  // in stream order.
+  var onProgramStatus: ((ProgramStatusEvent) -> Void)?
 
   // Coalesce OSC-9 progress: a flush task applies the latest value at the
   // throttle cadence while it moves, and a slow stale-watch clears a bar whose
@@ -118,6 +121,7 @@ final class GhosttySurfaceBridge {
     if let handled = handleSplitAction(action) { return handled }
     if handleTitleAndPath(action) { return false }
     if handleContextSignal(action) { return false }
+    if handleProgramStatus(action) { return false }
     if handleCommandStatus(action) { return false }
     if handleMouseAndLink(action) {
       return action.tag == GHOSTTY_ACTION_OPEN_URL
@@ -312,6 +316,16 @@ final class GhosttySurfaceBridge {
       return true
     }
     onContextSignal?(signal.action, id, metadata)
+    return true
+  }
+
+  private func handleProgramStatus(_ action: ghostty_action_s) -> Bool {
+    guard action.tag == GHOSTTY_ACTION_PROGRAM_STATUS else { return false }
+    guard let value = action.action.program_status?.pointee, let event = ProgramStatusEvent(value) else {
+      terminalStateLogger.warning("Dropped an OSC 7501 program status action Supacode can't read")
+      return true
+    }
+    onProgramStatus?(event)
     return true
   }
 
