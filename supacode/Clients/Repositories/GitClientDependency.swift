@@ -14,10 +14,14 @@ nonisolated struct GitClientDependency: Sendable {
   /// `/tmp/...` paths keep working; tests that exercise the
   /// missing-directory path override explicitly.
   var rootDirectoryExists: @Sendable (URL) async -> Bool
+  /// What sits at a worktree target before `wt` runs; a symlink always counts as occupied.
+  var worktreeTargetState: @Sendable (URL) async -> WorktreeTargetState = { GitClient.targetState(at: $0) }
   /// One-shot `git --version` probe classifying an environment-level git
   /// failure (e.g. an unaccepted Xcode license). `nil` means git is usable.
   var checkGitEnvironment: @Sendable () async -> GitEnvironmentError?
   var worktrees: @Sendable (URL) async throws -> [Worktree]
+  /// Git's registered worktrees in one `git worktree list` call, cheaper than `worktrees`.
+  var registeredWorktrees: @Sendable (URL) async throws -> [Worktree]
   var reconcileSupacodeLocks: @Sendable (URL) async -> Void
   var localBranchNames: @Sendable (URL) async throws -> Set<String>
   var renameBranch: @Sendable (_ oldName: String, _ newName: String, _ repoRoot: URL) async throws -> Void
@@ -80,6 +84,9 @@ nonisolated struct GitClientDependency: Sendable {
       _ branch: String?,
       _ depth: Int?
     ) -> AsyncThrowingStream<GitCloneEvent, Error>
+  /// Deletes a branch only while it still points at the expected commit.
+  var deleteBranch: @Sendable (_ name: String, _ expectedCommit: String, _ repoRoot: URL) async throws -> Void
+  var resolveCommit: @Sendable (_ revision: String, _ repoRoot: URL) async -> String?
   var removeWorktree: @Sendable (_ worktree: Worktree, _ deleteBranch: Bool) async throws -> URL
   var isBareRepository: @Sendable (_ repoRoot: URL) async throws -> Bool
   var branchName: @Sendable (URL) async -> String?
@@ -211,6 +218,7 @@ nonisolated extension GitClientDependency: DependencyKey {
       rootDirectoryExists: { Self.directoryExists(at: $0) },
       checkGitEnvironment: { await GitClient(shell: shell).gitEnvironmentError() },
       worktrees: { try await GitClient(shell: shell).worktrees(for: $0) },
+      registeredWorktrees: { try await GitClient(shell: shell).gitWorktrees(for: $0) },
       reconcileSupacodeLocks: { await GitClient(shell: shell).reconcileSupacodeLocks(for: $0) },
       localBranchNames: { try await GitClient(shell: shell).localBranchNames(for: $0) },
       renameBranch: { oldName, newName, repoRoot in
@@ -271,12 +279,12 @@ nonisolated extension GitClientDependency: DependencyKey {
           depth: depth
         )
       },
+      deleteBranch: { try await GitClient(shell: shell).deleteBranch($0, ifAt: $1, for: $2) },
+      resolveCommit: { await GitClient(shell: shell).resolveCommit($0, for: $1) },
       removeWorktree: { worktree, deleteBranch in
         try await GitClient(shell: shell).removeWorktree(worktree, deleteBranch: deleteBranch)
       },
-      isBareRepository: { repoRoot in
-        try await GitClient(shell: shell).isBareRepository(for: repoRoot)
-      },
+      isBareRepository: { try await GitClient(shell: shell).isBareRepository(for: $0) },
       branchName: { await GitClient(shell: shell).symbolicHeadBranch(at: $0) },
       lineChanges: { await GitClient(shell: shell).lineChanges(at: $0) },
       fileStatus: { await GitClient(shell: shell).fileStatus(at: $0) },
@@ -312,6 +320,10 @@ nonisolated extension GitClientDependency: DependencyKey {
     var value = liveValue
     value.isGitRepository = { _ in true }
     value.rootDirectoryExists = { _ in true }
+    value.worktreeTargetState = { _ in .absent }
+    value.registeredWorktrees = { _ in [] }
+    value.deleteBranch = { _, _, _ in }
+    value.resolveCommit = { _, _ in nil }
     // Default to a healthy git environment so tests don't shell out to real
     // `git --version`; the license-gate tests override this explicitly.
     value.checkGitEnvironment = { nil }

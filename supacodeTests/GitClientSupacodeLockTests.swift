@@ -217,6 +217,57 @@ struct GitClientSupacodeLockTests {
     #expect(!branches.contains("feature-orphan-branch"))
   }
 
+  @Test func localBranchNamesKeepsBranchesShadowedByTags() async throws {
+    let fixture = try await GitWorktreeFixture()
+    defer { fixture.cleanup() }
+    let workPath = fixture.workURL.path(percentEncoded: false)
+    try await GitWorktreeFixture.git(["-C", workPath, "branch", "foo"])
+    try await GitWorktreeFixture.git(["-C", workPath, "tag", "foo"])
+    try await GitWorktreeFixture.git(["-C", workPath, "branch", "team/feature"])
+
+    let branches = try await GitClient().localBranchNames(for: fixture.workURL)
+    #expect(branches == ["main", "foo", "team/feature"])
+  }
+
+  @Test func deleteBranchOnlyWhileAtExpectedCommit() async throws {
+    let fixture = try await GitWorktreeFixture()
+    defer { fixture.cleanup() }
+    let workPath = fixture.workURL.path(percentEncoded: false)
+    try await GitWorktreeFixture.git(["-C", workPath, "branch", "stray"])
+    let client = GitClient()
+    let base = try #require(await client.resolveCommit("main", for: fixture.workURL))
+    #expect(await client.resolveCommit("refs/heads/missing", for: fixture.workURL) == nil)
+
+    await #expect(throws: (any Error).self) {
+      try await client.deleteBranch("stray", ifAt: "1234567890123456789012345678901234567890", for: fixture.workURL)
+    }
+    #expect(try await client.localBranchNames(for: fixture.workURL).contains("stray"))
+
+    try await client.deleteBranch("stray", ifAt: base, for: fixture.workURL)
+    #expect(try await !client.localBranchNames(for: fixture.workURL).contains("stray"))
+  }
+
+  @Test func deleteBranchRefusesSymbolicAndCaseFoldedRefs() async throws {
+    let fixture = try await GitWorktreeFixture()
+    defer { fixture.cleanup() }
+    let workPath = fixture.workURL.path(percentEncoded: false)
+    try await GitWorktreeFixture.git(["-C", workPath, "symbolic-ref", "refs/heads/alias", "refs/heads/main"])
+    try await GitWorktreeFixture.git(["-C", workPath, "branch", "Upper"])
+    let client = GitClient()
+    let base = try #require(await client.resolveCommit("main", for: fixture.workURL))
+
+    await #expect(throws: (any Error).self) {
+      try await client.deleteBranch("alias", ifAt: base, for: fixture.workURL)
+    }
+    await #expect(throws: (any Error).self) {
+      try await client.deleteBranch("upper", ifAt: base, for: fixture.workURL)
+    }
+    let branches = try await client.localBranchNames(for: fixture.workURL)
+    #expect(branches.contains("main"))
+    #expect(branches.contains("alias"))
+    #expect(branches.contains("upper"))
+  }
+
   @Test func writeSupacodeLockProducesParseableMetadata() async throws {
     let fixture = try await GitWorktreeFixture()
     defer { fixture.cleanup() }

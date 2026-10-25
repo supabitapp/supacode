@@ -36,6 +36,7 @@ enum GitOperation: String {
   case setUpstream = "set_upstream"
   case unsetUpstream = "unset_upstream"
   case upstreamRefCheck = "upstream_ref_check"
+  case resolveCommit = "resolve_commit"
 }
 
 enum GitClientError: LocalizedError {
@@ -484,16 +485,20 @@ struct GitClient {
         "-C",
         path,
         "for-each-ref",
-        "--format=%(refname:short)",
+        // `refname:short` turns `foo` into `heads/foo` when a tag shares the name, and
+        // `lstrip` needs git 2.13, which older SSH hosts lack; strip the prefix here.
+        "--format=%(refname)",
         "refs/heads",
       ]
     )
-    let names =
-      output
-      .split(whereSeparator: \.isNewline)
-      .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-      .filter { !$0.isEmpty }
-    return Set(names)
+    let prefix = "refs/heads/"
+    var names: Set<String> = []
+    for line in output.split(whereSeparator: \.isNewline) {
+      let refname = line.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard refname.hasPrefix(prefix), refname.count > prefix.count else { continue }
+      names.insert(String(refname.dropFirst(prefix.count)).lowercased())
+    }
+    return names
   }
 
   // Failures (collision, invalid ref, missing source) surface as
@@ -1014,11 +1019,30 @@ struct GitClient {
   /// file, symlink, or non-empty dir), so a failed clone must not remove it. An
   /// absent path or an empty dir returns false: that is the clone's to clean up.
   nonisolated static func destinationHasContent(at destination: URL) -> Bool {
-    let path = destination.path(percentEncoded: false)
-    var isDirectory: ObjCBool = false
-    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return false }
-    guard isDirectory.boolValue else { return true }
-    return (try? FileManager.default.contentsOfDirectory(atPath: path))?.isEmpty != true
+    targetState(at: destination) == .occupied
+  }
+
+  /// What sits at `url` without following a final symlink, failing closed on anything unreadable.
+  nonisolated static func targetState(at url: URL) -> WorktreeTargetState {
+    // A trailing slash makes lstat resolve a final symlink, so probe the bare path.
+    var path = url.standardizedFileURL.path(percentEncoded: false)
+    while path.count > 1, path.hasSuffix("/") {
+      path.removeLast()
+    }
+    let attributes: [FileAttributeKey: Any]
+    do {
+      attributes = try FileManager.default.attributesOfItem(atPath: path)
+    } catch CocoaError.fileReadNoSuchFile, CocoaError.fileNoSuchFile {
+      return .absent
+    } catch {
+      gitLogger.warning("Treating unreadable target \(path) as occupied: \(error.localizedDescription)")
+      return .occupied
+    }
+    guard attributes[.type] as? FileAttributeType == .typeDirectory else { return .occupied }
+    guard let contents = try? FileManager.default.contentsOfDirectory(atPath: path), contents.isEmpty else {
+      return .occupied
+    }
+    return .emptyDirectory
   }
 
   /// Remove a clone directory Supacode created, logging a cleanup failure. Never
@@ -1363,6 +1387,40 @@ struct GitClient {
       }
     }
     return worktree.workingDirectory
+  }
+
+  /// Deletes `refs/heads/<name>` only while it still points at `expectedCommit`, so no work is lost.
+  nonisolated func deleteBranch(_ name: String, ifAt expectedCommit: String, for repoRoot: URL) async throws {
+    // An all-zero old value makes `update-ref -d` skip the check entirely.
+    guard expectedCommit.contains(where: { $0 != "0" }) else {
+      throw GitClientError.commandFailed(command: "git update-ref -d", message: "Missing expected commit.")
+    }
+    let rootPath = repoRoot.path(percentEncoded: false)
+    let ref = "refs/heads/\(name)"
+    // Only an exact-case, non-symbolic ref: APFS case folding or a symref would retarget the delete.
+    let listing = try await runGit(
+      operation: .branchRefs,
+      arguments: ["-C", rootPath, "for-each-ref", "--format=%(refname)%00%(symref)", ref]
+    )
+    guard listing.split(whereSeparator: \.isNewline).contains(where: { $0 == "\(ref)\u{0}" }) else {
+      throw GitClientError.commandFailed(command: "git update-ref -d", message: "\(ref) is not a plain branch.")
+    }
+    _ = try await runGit(
+      operation: .branchDelete,
+      arguments: ["-C", rootPath, "update-ref", "--no-deref", "-d", ref, expectedCommit]
+    )
+  }
+
+  /// The commit `revision` points at, or nil when it doesn't resolve.
+  nonisolated func resolveCommit(_ revision: String, for repoRoot: URL) async -> String? {
+    let output = try? await runGit(
+      operation: .resolveCommit,
+      arguments: [
+        "-C", repoRoot.path(percentEncoded: false), "rev-parse", "--verify", "--quiet", "\(revision)^{commit}",
+      ]
+    )
+    let commit = output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return commit.isEmpty ? nil : commit
   }
 
   nonisolated private func parseShortstat(_ output: String) -> (added: Int, removed: Int) {
