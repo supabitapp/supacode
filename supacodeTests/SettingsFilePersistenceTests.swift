@@ -445,6 +445,25 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.terminalThemeSyncEnabled == false)
   }
 
+  @Test func terminalBackgroundTransparencyFollowsOSUntilSet() throws {
+    // A missing key follows the OS default instead of pinning one on upgrade.
+    let decoded = try JSONDecoder().decode(GlobalSettings.self, from: JSONEncoder().encode(GlobalSettings.default))
+    #expect(decoded.terminalBackgroundTransparencyEnabled == nil)
+    for value in [true, false] {
+      var settings = GlobalSettings.default
+      settings.terminalBackgroundTransparencyEnabled = value
+      let pinned = try JSONDecoder().decode(GlobalSettings.self, from: JSONEncoder().encode(settings))
+      #expect(pinned.terminalBackgroundTransparencyEnabled == value)
+      #expect(pinned.resolvedTerminalBackgroundTransparency == value)
+    }
+  }
+
+  @Test func terminalBackgroundTransparencyDefaultsOffFromMacOS27() {
+    #expect(GlobalSettings.defaultTerminalBackgroundTransparency(osMajorVersion: 26))
+    #expect(!GlobalSettings.defaultTerminalBackgroundTransparency(osMajorVersion: 27))
+    #expect(!GlobalSettings.defaultTerminalBackgroundTransparency(osMajorVersion: 28))
+  }
+
   @Test func freshInstallDefaultsTerminalThemeSyncEnabledToTrue() {
     #expect(GlobalSettings.default.terminalThemeSyncEnabled == true)
   }

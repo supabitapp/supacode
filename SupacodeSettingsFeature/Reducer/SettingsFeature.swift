@@ -70,6 +70,7 @@ public struct SettingsFeature {
     public var copyUntrackedOnWorktreeCreate: Bool
     public var pullRequestMergeStrategy: PullRequestMergeStrategy
     public var terminalThemeSyncEnabled: Bool
+    public var terminalBackgroundTransparencyEnabled: Bool?
     public var ghosttyUserConfigMode: GhosttyUserConfigMode
     public var automatedActionPolicy: AutomatedActionPolicy
     public var defaultWorktreeBaseDirectoryPath: String
@@ -120,6 +121,12 @@ public struct SettingsFeature {
     /// the fallback sound) can fire, so surface-mute has something to mute.
     public var hasActiveNotificationChannel: Bool {
       systemNotificationsEnabled || notificationSound != .never
+    }
+
+    /// Resolves the OS default until the user picks a value, which then sticks.
+    public var isTerminalBackgroundTransparent: Bool {
+      get { terminalBackgroundTransparencyEnabled ?? GlobalSettings.defaultTerminalBackgroundTransparency }
+      set { terminalBackgroundTransparencyEnabled = newValue }
     }
 
     /// Custom-folder targets present in state for an agent, ordered by path.
@@ -207,6 +214,7 @@ public struct SettingsFeature {
       copyUntrackedOnWorktreeCreate = settings.copyUntrackedOnWorktreeCreate
       pullRequestMergeStrategy = settings.pullRequestMergeStrategy
       terminalThemeSyncEnabled = settings.terminalThemeSyncEnabled
+      terminalBackgroundTransparencyEnabled = settings.terminalBackgroundTransparencyEnabled
       ghosttyUserConfigMode = settings.ghosttyUserConfigMode
       automatedActionPolicy = settings.automatedActionPolicy
       autoDeleteArchivedWorktreesAfterDays = settings.autoDeleteArchivedWorktreesAfterDays
@@ -399,6 +407,7 @@ public struct SettingsFeature {
         state.copyUntrackedOnWorktreeCreate = normalizedSettings.copyUntrackedOnWorktreeCreate
         state.pullRequestMergeStrategy = normalizedSettings.pullRequestMergeStrategy
         state.terminalThemeSyncEnabled = normalizedSettings.terminalThemeSyncEnabled
+        state.terminalBackgroundTransparencyEnabled = normalizedSettings.terminalBackgroundTransparencyEnabled
         state.ghosttyUserConfigMode = normalizedSettings.ghosttyUserConfigMode
         state.automatedActionPolicy = normalizedSettings.automatedActionPolicy
         state.autoDeleteArchivedWorktreesAfterDays = normalizedSettings.autoDeleteArchivedWorktreesAfterDays
@@ -1193,6 +1202,7 @@ extension SettingsFeature.State {
     settings.copyUntrackedOnWorktreeCreate = copyUntrackedOnWorktreeCreate
     settings.pullRequestMergeStrategy = pullRequestMergeStrategy
     settings.terminalThemeSyncEnabled = terminalThemeSyncEnabled
+    settings.terminalBackgroundTransparencyEnabled = terminalBackgroundTransparencyEnabled
     settings.ghosttyUserConfigMode = ghosttyUserConfigMode
     settings.automatedActionPolicy = automatedActionPolicy
     settings.defaultWorktreeBaseDirectoryPath =

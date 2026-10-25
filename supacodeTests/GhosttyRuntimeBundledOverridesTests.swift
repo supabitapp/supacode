@@ -66,6 +66,18 @@ struct GhosttyRuntimeBundledOverridesTests {
     #expect(!GhosttyRuntime.bundledOverridesString.contains("shell-integration"))
   }
 
+  @Test func bundledThemeTogglesTransparency() {
+    let translucent = GhosttyRuntime.bundledThemeString(lightPath: "/l", darkPath: "/d", transparent: true)
+      .split(separator: "\n")
+    #expect(translucent.contains("theme = light:/l,dark:/d"))
+    #expect(translucent.contains("background-opacity = 0.9"))
+    #expect(translucent.contains("background-blur = true"))
+    let opaque = GhosttyRuntime.bundledThemeString(lightPath: "/l", darkPath: "/d", transparent: false)
+      .split(separator: "\n")
+    #expect(opaque.contains("background-opacity = 1"))
+    #expect(opaque.contains("background-blur = false"))
+  }
+
   @Test func appOwnedOverridesKeepSurfaceCloseDetectionEnabled() {
     // The close-safety predicate is app-owned, so it lives in the final tier,
     // not the cosmetic defaults.

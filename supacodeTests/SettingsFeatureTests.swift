@@ -130,6 +130,25 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.terminalHibernationEnabled == false)
   }
 
+  @Test(.dependencies) func togglingTerminalBackgroundTransparencyPinsExplicitValue() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    // Flip away from the OS default so the test changes the resolved value on any host.
+    let flipped = !GlobalSettings.defaultTerminalBackgroundTransparency
+    #expect(store.state.terminalBackgroundTransparencyEnabled == nil)
+    await store.send(.binding(.set(\.isTerminalBackgroundTransparent, flipped))) {
+      $0.terminalBackgroundTransparencyEnabled = flipped
+    }
+    await store.receive(\.delegate.settingsChanged)
+    #expect(settingsFile.global.terminalBackgroundTransparencyEnabled == flipped)
+    #expect(settingsFile.global.resolvedTerminalBackgroundTransparency == flipped)
+  }
+
   @Test(.dependencies) func chromeTextSizePersistsChanges() async {
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global = .default }

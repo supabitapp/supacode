@@ -13,20 +13,19 @@ final class GhosttyShortcutManager {
   @ObservationIgnored
   @Shared(.settingsFile) private var settingsFile: SettingsFile
   @ObservationIgnored
-  private var overridesSubscription: AnyCancellable?
+  private var configInputsSubscription: AnyCancellable?
 
   init(runtime: GhosttyRuntime) {
     self.runtime = runtime
     runtime.onConfigChange = { [weak self] in
       self?.refresh()
     }
-    // Rebinding a shortcut regenerates the app's unbind config lines; reload
-    // here, not in a window's view tree, so the terminal releases the new chord
-    // even while no window is open. A key-path map keeps the transform
-    // nonisolated: the publisher emits off the main actor, so an inline closure
-    // here (main-actor-isolated) would trap before the receive(on:) hop.
-    overridesSubscription = $settingsFile.publisher
-      .map(\.global.shortcutOverrides)
+    // Reload here, not in a window's view tree, so settings that feed the
+    // generated config apply even while no window is open. A nonisolated
+    // initializer keeps the transform off the main actor: the publisher emits
+    // off it, so an inline closure here would trap before the receive(on:) hop.
+    configInputsSubscription = $settingsFile.publisher
+      .map(GhosttyConfigInputs.init)
       .removeDuplicates()
       .dropFirst()
       .receive(on: DispatchQueue.main)
@@ -64,4 +63,19 @@ final class GhosttyShortcutManager {
     return shortcut.display
   }
 
+}
+
+/// The settings that feed the generated Ghostty config; any change reloads it.
+nonisolated struct GhosttyConfigInputs: Equatable {
+  let shortcutOverrides: [AppShortcutID: AppShortcutOverride]
+  let themeSyncEnabled: Bool
+  let backgroundTransparent: Bool
+  let userConfigMode: GhosttyUserConfigMode
+
+  init(_ settingsFile: SettingsFile) {
+    shortcutOverrides = settingsFile.global.shortcutOverrides
+    themeSyncEnabled = settingsFile.global.terminalThemeSyncEnabled
+    backgroundTransparent = settingsFile.global.resolvedTerminalBackgroundTransparency
+    userConfigMode = settingsFile.global.ghosttyUserConfigMode
+  }
 }

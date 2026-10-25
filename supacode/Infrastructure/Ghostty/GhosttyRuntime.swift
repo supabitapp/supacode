@@ -624,6 +624,7 @@ final class GhosttyRuntime {
   private static func loadConfig() -> (config: ghostty_config_t, userBackgroundOpacity: Double)? {
     @Shared(.settingsFile) var settingsFile
     let themeSyncEnabled = settingsFile.global.terminalThemeSyncEnabled
+    let transparent = settingsFile.global.resolvedTerminalBackgroundTransparency
     let supacodeUserConfigURL = SupacodePaths.ghosttyUserConfigURL
     let plan = ConfigResolution.plan(
       mode: settingsFile.global.ghosttyUserConfigMode,
@@ -645,7 +646,7 @@ final class GhosttyRuntime {
     // mirroring the user tiers so the tint matches the active mode.
     let userOpacity: Double
     if let userView = ghostty_config_clone(config) {
-      loadBundledTheme(into: userView, enabled: themeSyncEnabled)
+      loadBundledTheme(into: userView, enabled: themeSyncEnabled, transparent: transparent)
       if plan.loadSupacodeUserConfig {
         loadUserFile(at: supacodeUserConfigURL, into: userView)
       }
@@ -657,7 +658,7 @@ final class GhosttyRuntime {
     }
     // Tier 2: the always-applied Supacode overlay (theme, then cosmetic
     // overrides). The user's config may override these.
-    loadBundledTheme(into: config, enabled: themeSyncEnabled)
+    loadBundledTheme(into: config, enabled: themeSyncEnabled, transparent: transparent)
     loadBundledOverrides(into: config)
     // Tier 3: the user-authored Supacode config, layered on top so it overrides.
     // Its `config-file` includes are not followed: re-running the recursive pass
@@ -801,8 +802,17 @@ final class GhosttyRuntime {
     }
   }
 
+  /// The bundled Supacode light/dark theme, translucent and blurred or fully opaque.
+  nonisolated static func bundledThemeString(lightPath: String, darkPath: String, transparent: Bool) -> String {
+    """
+    theme = light:\(lightPath),dark:\(darkPath)
+    background-opacity = \(transparent ? "0.9" : "1")
+    background-blur = \(transparent)
+    """
+  }
+
   /// Loads the bundled Supacode light/dark theme plus its opacity and blur. No-op when sync is disabled.
-  private static func loadBundledTheme(into config: ghostty_config_t, enabled: Bool) {
+  private static func loadBundledTheme(into config: ghostty_config_t, enabled: Bool, transparent: Bool) {
     guard enabled else { return }
     guard
       let lightPath = Bundle.main.path(forResource: "Supacode Light", ofType: nil),
@@ -812,11 +822,7 @@ final class GhosttyRuntime {
       logger.warning("Bundled Supacode themes missing from app bundle.")
       return
     }
-    let contents = """
-      theme = light:\(lightPath),dark:\(darkPath)
-      background-opacity = 0.9
-      background-blur = true
-      """
+    let contents = bundledThemeString(lightPath: lightPath, darkPath: darkPath, transparent: transparent)
     let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("supacode-theme.conf")
     do {
       try contents.write(to: tempURL, atomically: true, encoding: .utf8)

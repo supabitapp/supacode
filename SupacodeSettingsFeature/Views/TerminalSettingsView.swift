@@ -69,6 +69,13 @@ public struct TerminalSettingsView: View {
           Text("Supacode terminal theme")
           Text("When off, honors your Ghostty config theme.")
         }
+        Toggle(isOn: $store.isTerminalBackgroundTransparent) {
+          Text("Transparent background")
+          Text("Render the Supacode theme with a translucent, blurred background.")
+        }
+        .disabled(!store.terminalThemeSyncEnabled)
+      } footer: {
+        Text("Transparent background preferences only apply to the Supacode theme.")
       }
       Section("Persistence") {
         Toggle(isOn: $store.terminateSessionsOnQuit) {
