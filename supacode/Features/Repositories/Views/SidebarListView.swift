@@ -23,13 +23,6 @@ struct SidebarListView: View {
     let state = store.state
     let structure = state.sidebarStructure
     let currentSelections = state.sidebarSelections
-    let selection = Binding<Set<SidebarSelection>>(
-      get: { currentSelections },
-      set: { newValue in
-        guard newValue != currentSelections else { return }
-        store.send(.selectionChanged(newValue, focusTerminal: true))
-      }
-    )
     let pendingSidebarReveal = state.pendingSidebarReveal
 
     // The only legal view-side computation: a trivial join from the
@@ -46,7 +39,7 @@ struct SidebarListView: View {
     }
 
     return ScrollViewReader { scrollProxy in
-      List(selection: selection) {
+      List(selection: $store.sidebarListSelection) {
         ForEach(structure.sections) { section in
           SidebarSectionDispatcher(
             section: section,
@@ -108,7 +101,7 @@ struct SidebarListView: View {
         host.focusAndInsertText(keyPress.characters)
         return .handled
       }
-      .background(
+      .background {
         // NSOutlineView consumes arrow keys before SwiftUI `onKeyPress` runs.
         SidebarRightArrowMonitor(isSidebarFocused: isSidebarFocused) {
           guard let worktreeID = store.selectedWorktreeID,
@@ -119,7 +112,13 @@ struct SidebarListView: View {
           host.focusSelectedTab()
           return true
         }
-      )
+      }
+      .background {
+        SidebarSelectedRowClickMonitor(
+          isSingleSelection: currentSelections.count == 1,
+          isSidebarFocused: $isSidebarFocused
+        )
+      }
       .task(id: pendingSidebarReveal?.id) {
         await revealPendingSidebarWorktree(pendingSidebarReveal, with: scrollProxy)
       }
@@ -622,8 +621,7 @@ private struct SidebarRightArrowMonitor: NSViewRepresentable {
       // stale `@FocusState` in another window can't steal the keystroke.
       monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak host] event in
         guard event.specialKey == .rightArrow else { return event }
-        let userModifiers: NSEvent.ModifierFlags = [.command, .shift, .option, .control]
-        guard event.modifierFlags.isDisjoint(with: userModifiers) else { return event }
+        guard event.modifierFlags.isDisjoint(with: .userModifiers) else { return event }
         guard let host, event.window === host.window else { return event }
         let consumed = MainActor.assumeIsolated {
           (self?.isSidebarFocused ?? false) && (self?.handle() ?? false)
@@ -635,6 +633,96 @@ private struct SidebarRightArrowMonitor: NSViewRepresentable {
     func uninstall() {
       if let monitor { NSEvent.removeMonitor(monitor) }
       monitor = nil
+    }
+  }
+}
+
+/// Focuses the sidebar when the already-selected row is clicked; the outline
+/// view no longer takes first responder on click by itself.
+private struct SidebarSelectedRowClickMonitor: NSViewRepresentable {
+  let isSingleSelection: Bool
+  let isSidebarFocused: FocusState<Bool>.Binding
+
+  func makeCoordinator() -> Coordinator { Coordinator() }
+
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView(frame: .zero)
+    context.coordinator.update(isSingleSelection: isSingleSelection, isSidebarFocused: isSidebarFocused)
+    context.coordinator.install(host: view)
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {
+    context.coordinator.update(isSingleSelection: isSingleSelection, isSidebarFocused: isSidebarFocused)
+  }
+
+  static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+    coordinator.uninstall()
+  }
+
+  @MainActor
+  final class Coordinator {
+    private var isSingleSelection = false
+    private var isSidebarFocused: FocusState<Bool>.Binding?
+    private var monitor: Any?
+
+    nonisolated deinit {}
+
+    func update(isSingleSelection: Bool, isSidebarFocused: FocusState<Bool>.Binding) {
+      self.isSingleSelection = isSingleSelection
+      self.isSidebarFocused = isSidebarFocused
+    }
+
+    func install(host: NSView) {
+      guard monitor == nil else { return }
+      // Never consumes the click, so selection, drag, and window activation stay native.
+      monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self, weak host] event in
+        // Ignores a multi-click's follow-up presses, which see the row the first press selected.
+        guard event.clickCount == 1 else { return event }
+        guard event.modifierFlags.isDisjoint(with: .userModifiers) else { return event }
+        guard let host, let window = host.window, event.window === window else { return event }
+        MainActor.assumeIsolated {
+          self?.handleClick(event, host: host, window: window)
+        }
+        return event
+      }
+    }
+
+    func uninstall() {
+      if let monitor { NSEvent.removeMonitor(monitor) }
+      monitor = nil
+    }
+
+    private func handleClick(_ event: NSEvent, host: NSView, window: NSWindow) {
+      // Leaves focus alone when the click only activates the window.
+      guard isSingleSelection, NSApp.isActive, window.isKeyWindow else { return }
+      let location = event.locationInWindow
+      // Hit-test from the frame view so toolbar items over the sidebar win.
+      guard host.convert(host.bounds, to: nil).contains(location),
+        let hitView = window.contentView?.superview?.hitTest(location)
+      else { return }
+      for case let table as NSTableView in sequence(first: hitView, next: \.superview) {
+        // Checked before dispatch: afterwards the clicked row is always selected.
+        let row = table.row(at: table.convert(location, from: nil))
+        guard row >= 0, table.selectedRowIndexes == IndexSet(integer: row) else { return }
+        isSidebarFocused?.wrappedValue = true
+        return
+      }
+    }
+  }
+}
+
+extension NSEvent.ModifierFlags {
+  fileprivate static let userModifiers: Self = [.command, .shift, .option, .control]
+}
+
+extension StoreOf<RepositoriesFeature> {
+  fileprivate var sidebarListSelection: Set<SidebarSelection> {
+    get { state.sidebarSelections }
+    set {
+      // Re-clicking the selected row must not pull focus back to the terminal.
+      guard newValue != state.sidebarSelections else { return }
+      send(.selectionChanged(newValue, focusTerminal: true))
     }
   }
 }
