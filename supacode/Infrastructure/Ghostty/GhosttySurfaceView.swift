@@ -39,37 +39,35 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
   }
 
-  private final class CachedValue<T> {
-    private var value: T?
-    private let fetch: () -> T
+  // Expiry is checked on read, so no timer or task outlives a fetch.
+  final class CachedValue<T, C: Clock<Duration>> {
+    private var entry: (value: T, fetchedAt: C.Instant)?
+    private let clock: C
     private let duration: Duration
-    private var expiryTask: Task<Void, Never>?
 
-    init(duration: Duration, fetch: @escaping () -> T) {
+    init(clock: C, duration: Duration) {
+      self.clock = clock
       self.duration = duration
-      self.fetch = fetch
     }
 
-    nonisolated deinit {
-      expiryTask?.cancel()
+    nonisolated deinit {}
+
+    // A nil fetch is a failed read: return nil and drop any stale entry rather than cache it.
+    func value(orFetch fetch: () -> T?) -> T? {
+      let now = clock.now
+      if let entry, entry.fetchedAt.duration(to: now) < duration {
+        return entry.value
+      }
+      guard let value = fetch() else {
+        entry = nil
+        return nil
+      }
+      entry = (value, now)
+      return value
     }
 
-    func get() -> T {
-      if let value {
-        return value
-      }
-
-      let fetched = fetch()
-      value = fetched
-      expiryTask?.cancel()
-      expiryTask = Task { [weak self] in
-        guard let self else { return }
-        try? await ContinuousClock().sleep(for: self.duration)
-        guard !Task.isCancelled else { return }
-        self.value = nil
-        self.expiryTask = nil
-      }
-      return fetched
+    func invalidate() {
+      entry = nil
     }
   }
 
@@ -123,10 +121,10 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private var eventMonitor: Any?
   private var notificationObservers: [NSObjectProtocol] = []
   private var prevPressureStage: Int = 0
-  private lazy var cachedScreenContents = CachedValue<String>(duration: .milliseconds(500)) {
-    [weak self] in
-    self?.readScreenContents() ?? ""
-  }
+  private let cachedScreenContents = CachedValue<String, ContinuousClock>(
+    clock: ContinuousClock(),
+    duration: .milliseconds(500)
+  )
   var passwordInput: Bool = false {
     didSet {
       let input = SecureInput.shared
@@ -226,14 +224,21 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   static func accessibilityLine(for index: Int, in content: String) -> Int {
-    let clampedIndex = min(max(index, 0), content.count)
-    let prefix = String(content.prefix(clampedIndex))
+    // Accessibility indices are UTF-16 offsets.
+    let clampedIndex = min(max(index, 0), content.utf16.count)
+    let prefix = String(decoding: content.utf16.prefix(clampedIndex), as: UTF16.self)
     return max(0, prefix.components(separatedBy: .newlines).count - 1)
   }
 
   static func accessibilityString(for range: NSRange, in content: String) -> String? {
-    guard let swiftRange = Range(range, in: content) else { return nil }
-    return String(content[swiftRange])
+    let utf16 = content.utf16
+    guard range.location >= 0, range.length >= 0, range.location <= utf16.count,
+      range.length <= utf16.count - range.location
+    else { return nil }
+    let start = utf16.index(utf16.startIndex, offsetBy: range.location)
+    let end = utf16.index(start, offsetBy: range.length)
+    // Decode lossily so a range splitting a surrogate pair yields U+FFFD instead of nil.
+    return String(decoding: utf16[start..<end], as: UTF16.self)
   }
 
   override var acceptsFirstResponder: Bool { true }
@@ -322,6 +327,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
       if let initialInputCString {
         free(initialInputCString)
       }
+    cachedScreenContents.invalidate()
     }
   }
 
@@ -622,7 +628,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   override func accessibilityValue() -> Any? {
-    cachedScreenContents.get()
+    screenContents
   }
 
   override func accessibilityHelp() -> String? {
@@ -643,20 +649,19 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   override func accessibilityNumberOfCharacters() -> Int {
-    cachedScreenContents.get().count
+    screenContents.utf16.count
   }
 
   override func accessibilityVisibleCharacterRange() -> NSRange {
-    let content = cachedScreenContents.get()
-    return NSRange(location: 0, length: content.count)
+    NSRange(location: 0, length: screenContents.utf16.count)
   }
 
   override func accessibilityLine(for index: Int) -> Int {
-    Self.accessibilityLine(for: index, in: cachedScreenContents.get())
+    Self.accessibilityLine(for: index, in: screenContents)
   }
 
   override func accessibilityString(for range: NSRange) -> String? {
-    Self.accessibilityString(for: range, in: cachedScreenContents.get())
+    Self.accessibilityString(for: range, in: screenContents)
   }
 
   override func accessibilityAttributedString(for range: NSRange) -> NSAttributedString? {
@@ -700,8 +705,12 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
   }
 
-  private func readScreenContents() -> String {
-    guard let surface else { return "" }
+  private var screenContents: String {
+    cachedScreenContents.value(orFetch: readScreenContents) ?? ""
+  }
+
+  private func readScreenContents() -> String? {
+    guard let surface else { return nil }
     var text = ghostty_text_s()
     let selection = ghostty_selection_s(
       top_left: ghostty_point_s(
@@ -718,7 +727,10 @@ final class GhosttySurfaceView: NSView, Identifiable {
       ),
       rectangle: false
     )
-    guard ghostty_surface_read_text(surface, selection, &text) else { return "" }
+    guard ghostty_surface_read_text(surface, selection, &text) else {
+      surfaceLogger.debug("Failed to read screen contents for accessibility.")
+      return nil
+    }
     defer { ghostty_surface_free_text(surface, &text) }
     return String(cString: text.text)
   }

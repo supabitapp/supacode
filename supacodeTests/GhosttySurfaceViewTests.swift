@@ -1,4 +1,5 @@
 import AppKit
+import Clocks
 import Foundation
 import GhosttyKit
 import SupacodeSettingsShared
@@ -32,6 +33,13 @@ struct GhosttySurfaceViewTests {
     #expect(GhosttySurfaceView.accessibilityLine(for: content.count, in: content) == 2)
   }
 
+  @Test func accessibilityLineCountsUTF16Offsets() {
+    let content = "👋\nbeta"
+
+    #expect(GhosttySurfaceView.accessibilityLine(for: 2, in: content) == 0)
+    #expect(GhosttySurfaceView.accessibilityLine(for: 3, in: content) == 1)
+  }
+
   @Test func accessibilityStringReturnsSubstringForValidRange() {
     let content = "alpha\nbeta"
 
@@ -47,6 +55,24 @@ struct GhosttySurfaceViewTests {
         in: content
       ) == nil
     )
+  }
+
+  @Test func accessibilityStringDecodesRangesSplittingASurrogatePair() {
+    let content = "a👋b"
+
+    #expect(GhosttySurfaceView.accessibilityString(for: NSRange(location: 1, length: 2), in: content) == "👋")
+    #expect(GhosttySurfaceView.accessibilityString(for: NSRange(location: 0, length: 2), in: content) == "a\u{FFFD}")
+    #expect(GhosttySurfaceView.accessibilityString(for: NSRange(location: 1, length: Int.max), in: content) == nil)
+  }
+
+  @Test func accessibilityStringRejectsRangesOutsideTheUTF16Bounds() {
+    let content = "a👋"
+
+    #expect(GhosttySurfaceView.accessibilityString(for: NSRange(location: 3, length: 0), in: content) == "")
+    #expect(GhosttySurfaceView.accessibilityString(for: NSRange(location: 4, length: 0), in: content) == nil)
+    #expect(GhosttySurfaceView.accessibilityString(for: NSRange(location: 2, length: 2), in: content) == nil)
+    #expect(GhosttySurfaceView.accessibilityString(for: NSRange(location: -1, length: 1), in: content) == nil)
+    #expect(GhosttySurfaceView.accessibilityString(for: NSRange(location: 0, length: -1), in: content) == nil)
   }
 
   @Test func shouldHealOcclusionOnlyFiresForLatchedSurfaceAtKeyWindow() {
@@ -589,5 +615,76 @@ struct GhosttySurfaceViewTests {
     // Idempotent: the surface is already gone, so this must not double-free.
     surfaceView.closeSurface()
     #expect(surfaceView.surface == nil)
+  }
+
+  @Test func cachedValueServesTheFetchUntilTheDurationElapses() async {
+    let clock = TestClock()
+    let cache = GhosttySurfaceView.CachedValue<Int, TestClock<Duration>>(
+      clock: clock,
+      duration: .milliseconds(500)
+    )
+    var fetches = 0
+    let fetch = {
+      fetches += 1
+      return fetches
+    }
+
+    #expect(cache.value(orFetch: fetch) == 1)
+    #expect(cache.value(orFetch: fetch) == 1)
+    await clock.advance(by: .milliseconds(499))
+    #expect(cache.value(orFetch: fetch) == 1)
+    await clock.advance(by: .milliseconds(1))
+    #expect(cache.value(orFetch: fetch) == 2)
+    // The refetch restarts the window.
+    await clock.advance(by: .milliseconds(499))
+    #expect(cache.value(orFetch: fetch) == 2)
+    await clock.advance(by: .milliseconds(1))
+    #expect(cache.value(orFetch: fetch) == 3)
+  }
+
+  @Test func cachedValueRefetchesAfterInvalidation() {
+    let cache = GhosttySurfaceView.CachedValue<Int, TestClock<Duration>>(
+      clock: TestClock(),
+      duration: .milliseconds(500)
+    )
+    var fetches = 0
+    let fetch = {
+      fetches += 1
+      return fetches
+    }
+
+    #expect(cache.value(orFetch: fetch) == 1)
+    cache.invalidate()
+    #expect(cache.value(orFetch: fetch) == 2)
+  }
+
+  @Test func cachedValueDoesNotCacheAFailedFetch() {
+    let cache = GhosttySurfaceView.CachedValue<Int, TestClock<Duration>>(
+      clock: TestClock(),
+      duration: .milliseconds(500)
+    )
+    var results: [Int?] = [nil, 7, 8]
+    let fetch = { results.removeFirst() }
+
+    #expect(cache.value(orFetch: fetch) == nil)
+    #expect(cache.value(orFetch: fetch) == 7)
+    #expect(cache.value(orFetch: fetch) == 7)
+    #expect(results == [8])
+  }
+
+  @Test func cachedValueDropsTheExpiredValueWhenTheRefetchFails() async {
+    let clock = TestClock()
+    let cache = GhosttySurfaceView.CachedValue<Int, TestClock<Duration>>(
+      clock: clock,
+      duration: .milliseconds(500)
+    )
+    var results: [Int?] = [5, nil, 6]
+    let fetch = { results.removeFirst() }
+
+    #expect(cache.value(orFetch: fetch) == 5)
+    await clock.advance(by: .milliseconds(500))
+    #expect(cache.value(orFetch: fetch) == nil)
+    #expect(cache.value(orFetch: fetch) == 6)
+    #expect(results.isEmpty)
   }
 }
