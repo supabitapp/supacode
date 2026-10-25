@@ -687,4 +687,273 @@ struct GhosttySurfaceViewTests {
     #expect(cache.value(orFetch: fetch) == 6)
     #expect(results.isEmpty)
   }
+
+  @Test func flagsChangedReachesTheHoveredSurfaceUnlessItIsTheKeyResponder() {
+    let hovered = NSObject()
+    let holder = NSObject()
+
+    #expect(targets(hovered: hovered, holders: [], isRelease: false, keyResponder: nil) == [hovered])
+    #expect(targets(hovered: hovered, holders: [], isRelease: false, keyResponder: hovered).isEmpty)
+    // A press never reaches a holder the pointer has left.
+    #expect(targets(hovered: hovered, holders: [holder], isRelease: false, keyResponder: nil) == [hovered])
+    #expect(targets(hovered: nil, holders: [holder], isRelease: false, keyResponder: nil).isEmpty)
+  }
+
+  @Test func flagsChangedReleaseReachesEverySurfaceThatTookThePress() {
+    let hovered = NSObject()
+    let first = NSObject()
+    let second = NSObject()
+
+    #expect(targets(hovered: nil, holders: [first, second], isRelease: true, keyResponder: nil) == [first, second])
+    #expect(targets(hovered: hovered, holders: [first], isRelease: true, keyResponder: nil) == [hovered, first])
+    #expect(targets(hovered: first, holders: [first], isRelease: true, keyResponder: nil) == [first])
+    // The key responder already gets the release through the responder chain.
+    #expect(
+      targets(hovered: hovered, holders: [first, second], isRelease: true, keyResponder: first) == [hovered, second])
+    #expect(targets(hovered: hovered, holders: [first], isRelease: true, keyResponder: hovered) == [first])
+  }
+
+  @Test func modifierActionDistinguishesPressReleaseAndNonModifiers() throws {
+    let leftCommand = CGEventFlags(rawValue: UInt64(NX_DEVICELCMDKEYMASK))
+    let rightCommand = CGEventFlags(rawValue: UInt64(NX_DEVICERCMDKEYMASK))
+    let leftShift = CGEventFlags(rawValue: UInt64(NX_DEVICELSHIFTKEYMASK))
+    let rightShift = CGEventFlags(rawValue: UInt64(NX_DEVICERSHIFTKEYMASK))
+
+    #expect(try modifierAction(keyCode: 0x37, flags: .maskCommand) == GHOSTTY_ACTION_PRESS)
+    #expect(try modifierAction(keyCode: 0x37, flags: []) == GHOSTTY_ACTION_RELEASE)
+    #expect(try modifierAction(keyCode: 0x00, flags: .maskCommand) == nil)
+    // Each side reads its own device bit, since the aggregate flag stays set while the other side is held.
+    #expect(try modifierAction(keyCode: 0x36, flags: [.maskCommand, leftCommand]) == GHOSTTY_ACTION_RELEASE)
+    #expect(try modifierAction(keyCode: 0x36, flags: [.maskCommand, rightCommand]) == GHOSTTY_ACTION_PRESS)
+    #expect(try modifierAction(keyCode: 0x38, flags: [.maskShift, rightShift]) == GHOSTTY_ACTION_RELEASE)
+    #expect(try modifierAction(keyCode: 0x38, flags: [.maskShift, leftShift, rightShift]) == GHOSTTY_ACTION_PRESS)
+    #expect(try modifierAction(keyCode: 0x3C, flags: [.maskShift, leftShift]) == GHOSTTY_ACTION_RELEASE)
+    // Without device bits the aggregate flag decides.
+    #expect(try modifierAction(keyCode: 0x36, flags: .maskCommand) == GHOSTTY_ACTION_PRESS)
+    #expect(try modifierAction(keyCode: 0x39, flags: .maskAlphaShift) == GHOSTTY_ACTION_PRESS)
+    #expect(try modifierAction(keyCode: 0x39, flags: []) == GHOSTTY_ACTION_RELEASE)
+  }
+
+  @Test func hoveredSurfaceSurvivesAnOutOfOrderExit() {
+    let first = makeSurfaceView()
+    let second = makeSurfaceView()
+    defer {
+      first.closeSurface()
+      second.closeSurface()
+    }
+
+    GhosttySurfaceView.LocalEventMonitor.pointerEntered(first)
+    GhosttySurfaceView.LocalEventMonitor.pointerEntered(second)
+    GhosttySurfaceView.LocalEventMonitor.pointerExited(first)
+    #expect(GhosttySurfaceView.LocalEventMonitor.hoveredSurface === second)
+    GhosttySurfaceView.LocalEventMonitor.pointerExited(second)
+    #expect(GhosttySurfaceView.LocalEventMonitor.hoveredSurface == nil)
+  }
+
+  @Test func detachingDropsTheHover() {
+    let surfaceView = makeSurfaceView()
+    defer { surfaceView.closeSurface() }
+
+    GhosttySurfaceView.LocalEventMonitor.pointerEntered(surfaceView)
+    #expect(GhosttySurfaceView.LocalEventMonitor.hoveredSurface === surfaceView)
+    // AppKit calls this with a nil window when the view detaches.
+    surfaceView.viewDidMoveToWindow()
+
+    #expect(GhosttySurfaceView.LocalEventMonitor.hoveredSurface == nil)
+  }
+
+  @Test func closeSurfaceDropsItsMonitorState() {
+    let surfaceView = makeSurfaceView()
+    let other = makeSurfaceView()
+    defer { other.closeSurface() }
+    typealias Monitor = GhosttySurfaceView.LocalEventMonitor
+
+    Monitor.pointerEntered(surfaceView)
+    Monitor.modifierPressed(by: surfaceView)
+    Monitor.keyPressed(0x0C, by: surfaceView)
+    Monitor.keyPressed(0x0D, by: other)
+    #expect(Monitor.hoveredSurface === surfaceView)
+    #expect(Monitor.isModifierHolder(surfaceView))
+    surfaceView.closeSurface()
+
+    #expect(Monitor.hoveredSurface == nil)
+    #expect(!Monitor.isModifierHolder(surfaceView))
+    #expect(Monitor.takeKeyHolder(for: 0x0C) == nil)
+    #expect(Monitor.takeKeyHolder(for: 0x0D) === other)
+  }
+
+  @Test func keyHolderTracksTheLatestSurfaceToTakeEachKeyDown() {
+    let first = makeSurfaceView()
+    let second = makeSurfaceView()
+    defer {
+      first.closeSurface()
+      second.closeSurface()
+    }
+    typealias Monitor = GhosttySurfaceView.LocalEventMonitor
+
+    Monitor.keyPressed(0x11, by: first)
+    Monitor.keyPressed(0x2D, by: second)
+    #expect(Monitor.takeKeyHolder(for: 0x11) === first)
+    #expect(Monitor.takeKeyHolder(for: 0x2D) === second)
+    Monitor.keyPressed(0x11, by: second)
+    #expect(Monitor.takeKeyHolder(for: 0x11) === second)
+    // Taking the holder clears it.
+    #expect(Monitor.takeKeyHolder(for: 0x11) == nil)
+  }
+
+  @Test func releaseKeysDropsOnlyHoldersWhoseKeyIsUp() {
+    let surfaceView = makeSurfaceView()
+    defer { surfaceView.closeSurface() }
+    typealias Monitor = GhosttySurfaceView.LocalEventMonitor
+
+    Monitor.keyPressed(0x00, by: surfaceView)
+    Monitor.keyPressed(0x01, by: surfaceView)
+    Monitor.releaseKeys { $0 == 0x00 }
+
+    #expect(Monitor.takeKeyHolder(for: 0x00) == nil)
+    #expect(Monitor.takeKeyHolder(for: 0x01) === surfaceView)
+  }
+
+  @Test func keyUpActionReleasesInTheSurfaceThatTookTheKeyDown() {
+    let holder = NSObject()
+    let otherSurface = NSObject()
+
+    // AppKit never delivers a Cmd chord's key-up, so the holder always gets it, even as the responder.
+    #expect(
+      isRelease(keyUpAction(command: true, holder: holder, responder: otherSurface), holder: holder, consume: true))
+    #expect(isRelease(keyUpAction(command: true, holder: holder, responder: holder), holder: holder, consume: true))
+    // A Cmd chord no surface took (a menu shortcut) never reaches a surface.
+    #expect(isPass(keyUpAction(command: true, holder: nil, responder: nil)))
+    #expect(isDrop(keyUpAction(command: true, holder: nil, responder: otherSurface)))
+    // After focus moved, the holder gets the release and another surface never does.
+    #expect(
+      isRelease(keyUpAction(command: false, holder: holder, responder: otherSurface), holder: holder, consume: true))
+    // A responder that is not a surface still receives its key-up.
+    #expect(isRelease(keyUpAction(command: false, holder: holder, responder: nil), holder: holder, consume: false))
+    #expect(isPass(keyUpAction(command: false, holder: holder, responder: holder)))
+    // No surface saw the press, so none gets a release.
+    #expect(isDrop(keyUpAction(command: false, holder: nil, responder: otherSurface)))
+    #expect(isPass(keyUpAction(command: false, holder: nil, responder: nil)))
+  }
+
+  @Test func mouseUpClearsTheForwardedPressNumberOnlyOnItsMatchingRelease() throws {
+    let surfaceView = makeSurfaceView()
+    defer { surfaceView.closeSurface() }
+
+    surfaceView.mouseDown(with: try mouseEvent(.leftMouseDown, eventNumber: 5))
+    #expect(surfaceView.forwardedLeftPressNumber == 5)
+    surfaceView.mouseUp(with: try mouseEvent(.leftMouseUp, eventNumber: 5))
+    #expect(surfaceView.forwardedLeftPressNumber == nil)
+    // An unmatched release keeps the press pending for its real release.
+    surfaceView.mouseDown(with: try mouseEvent(.leftMouseDown, eventNumber: 7))
+    surfaceView.mouseUp(with: try mouseEvent(.leftMouseUp, eventNumber: 8))
+    #expect(surfaceView.forwardedLeftPressNumber == 7)
+    surfaceView.mouseUp(with: try mouseEvent(.leftMouseUp, eventNumber: 7))
+    #expect(surfaceView.forwardedLeftPressNumber == nil)
+    // A release with no forwarded press leaves nothing pending.
+    surfaceView.mouseUp(with: try mouseEvent(.leftMouseUp, eventNumber: 9))
+    #expect(surfaceView.forwardedLeftPressNumber == nil)
+  }
+
+  @Test func closeSurfaceDropsAPendingLeftPress() throws {
+    let surfaceView = makeSurfaceView()
+
+    surfaceView.mouseDown(with: try mouseEvent(.leftMouseDown, eventNumber: 11))
+    surfaceView.closeSurface()
+
+    #expect(surfaceView.forwardedLeftPressNumber == nil)
+  }
+
+  @Test(arguments: [
+    (UInt16(0x38), NX_DEVICELSHIFTKEYMASK, NX_DEVICERSHIFTKEYMASK, CGEventFlags.maskShift),
+    (UInt16(0x3C), NX_DEVICERSHIFTKEYMASK, NX_DEVICELSHIFTKEYMASK, CGEventFlags.maskShift),
+    (UInt16(0x3B), NX_DEVICELCTLKEYMASK, NX_DEVICERCTLKEYMASK, CGEventFlags.maskControl),
+    (UInt16(0x3E), NX_DEVICERCTLKEYMASK, NX_DEVICELCTLKEYMASK, CGEventFlags.maskControl),
+    (UInt16(0x3A), NX_DEVICELALTKEYMASK, NX_DEVICERALTKEYMASK, CGEventFlags.maskAlternate),
+    (UInt16(0x3D), NX_DEVICERALTKEYMASK, NX_DEVICELALTKEYMASK, CGEventFlags.maskAlternate),
+    (UInt16(0x37), NX_DEVICELCMDKEYMASK, NX_DEVICERCMDKEYMASK, CGEventFlags.maskCommand),
+    (UInt16(0x36), NX_DEVICERCMDKEYMASK, NX_DEVICELCMDKEYMASK, CGEventFlags.maskCommand),
+  ])
+  func modifierActionReadsEachKeysOwnSide(
+    keyCode: UInt16,
+    side: Int32,
+    otherSide: Int32,
+    flag: CGEventFlags
+  ) throws {
+    let own = CGEventFlags(rawValue: UInt64(side))
+    let other = CGEventFlags(rawValue: UInt64(otherSide))
+
+    #expect(try modifierAction(keyCode: keyCode, flags: [flag, own]) == GHOSTTY_ACTION_PRESS)
+    #expect(try modifierAction(keyCode: keyCode, flags: [flag, other]) == GHOSTTY_ACTION_RELEASE)
+    #expect(try modifierAction(keyCode: keyCode, flags: []) == GHOSTTY_ACTION_RELEASE)
+  }
+
+  private typealias KeyUpAction = GhosttySurfaceView.LocalEventMonitor.KeyUpAction<NSObject>
+
+  private func keyUpAction(command: Bool, holder: NSObject?, responder: NSObject?) -> KeyUpAction {
+    GhosttySurfaceView.LocalEventMonitor.keyUpAction(
+      isCommandChord: command, holder: holder, responderSurface: responder)
+  }
+
+  private func isRelease(_ action: KeyUpAction, holder: NSObject, consume: Bool) -> Bool {
+    guard case .release(let surface, let consumes) = action else { return false }
+    return surface === holder && consumes == consume
+  }
+
+  private func isPass(_ action: KeyUpAction) -> Bool {
+    guard case .pass = action else { return false }
+    return true
+  }
+
+  private func isDrop(_ action: KeyUpAction) -> Bool {
+    guard case .drop = action else { return false }
+    return true
+  }
+
+  private func makeSurfaceView() -> GhosttySurfaceView {
+    GhosttySurfaceView(
+      id: UUID(),
+      runtime: GhosttyRuntime(),
+      workingDirectory: nil,
+      initialGeometry: .fallback,
+      context: GHOSTTY_SURFACE_CONTEXT_TAB
+    )
+  }
+
+  private func targets(
+    hovered: NSObject?,
+    holders: [NSObject],
+    isRelease: Bool,
+    keyResponder: NSObject?
+  ) -> [NSObject] {
+    GhosttySurfaceView.LocalEventMonitor.flagsChangedTargets(
+      hovered: hovered,
+      modifierHolders: holders,
+      isRelease: isRelease,
+      keyResponder: keyResponder
+    )
+  }
+
+  private func modifierAction(keyCode: CGKeyCode, flags: CGEventFlags) throws -> ghostty_input_action_e? {
+    let cgEvent = try #require(CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true))
+    cgEvent.type = .flagsChanged
+    cgEvent.flags = flags
+    return GhosttySurfaceView.modifierAction(for: try #require(NSEvent(cgEvent: cgEvent)))
+  }
+
+  private func mouseEvent(_ type: NSEvent.EventType, eventNumber: Int) throws -> NSEvent {
+    try #require(
+      NSEvent.mouseEvent(
+        with: type,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: 0,
+        windowNumber: 0,
+        context: nil,
+        eventNumber: eventNumber,
+        clickCount: 1,
+        pressure: 1
+      )
+    )
+  }
 }

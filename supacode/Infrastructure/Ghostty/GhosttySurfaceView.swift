@@ -104,11 +104,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private var focused = false
   // Held so the per-chord check doesn't build a fresh reference.
   @Shared(.settingsFile) private var settingsFile
-  // True between a left press this view forwarded to the terminal and its release. mouseUp only
-  // reports a release when it is set, so a consumed focus-transfer press (which never sets it,
-  // whether released here or dragged in from another split) can't orphan a release. Cleared at
-  // the top of localEventLeftMouseDown so an interrupted gesture can't leave it stale.
-  private var leftMousePressed = false
+  // Event number of the left press this view forwarded; only the release sharing it is sent.
+  private(set) var forwardedLeftPressNumber: Int?
   private var markedText = NSMutableAttributedString()
   private var keyboardLayoutChangeKeyUpSuppression: KeyboardLayoutChangeKeyUpSuppression?
   // Agent presence pushed from app state; gates Cmd+V image-paste routing.
@@ -118,7 +115,6 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private var lastScrollbar: ScrollbarState?
   private(set) var lastOcclusion: Bool?
   private var lastSurfaceFocus: Bool?
-  private var eventMonitor: Any?
   private var notificationObservers: [NSObjectProtocol] = []
   private var prevPressureStage: Int = 0
   private let cachedScreenContents = CachedValue<String, ContinuousClock>(
@@ -295,10 +291,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
     registerForDraggedTypes(Array(Self.dropTypes))
 
-    eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyUp, .leftMouseDown, .flagsChanged]) {
-      [weak self] event in
-      self?.localEventHandler(event)
-    }
+    LocalEventMonitor.installIfNeeded()
   }
 
   required init?(coder: NSCoder) {
@@ -307,9 +300,6 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   nonisolated deinit {
     MainActor.assumeIsolated {
-      if let eventMonitor {
-        NSEvent.removeMonitor(eventMonitor)
-      }
       clearNotificationObservers()
       SecureInput.shared.removeScoped(ObjectIdentifier(self))
       // A live surface here means a teardown path bypassed `closeSurface`; the
@@ -327,7 +317,6 @@ final class GhosttySurfaceView: NSView, Identifiable {
       if let initialInputCString {
         free(initialInputCString)
       }
-    cachedScreenContents.invalidate()
     }
   }
 
@@ -338,6 +327,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   func closeSurface() {
     clearNotificationObservers()
+    cachedScreenContents.invalidate()
+    LocalEventMonitor.surfaceClosed(self)
+    forwardedLeftPressNumber = nil
     // Break the surface<->wrapper cycle; the strong hold otherwise blocks deinit.
     defer { ownedScrollWrapper = nil }
     guard let surface else { return }
@@ -464,6 +456,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
       pendingFocusClaim?.cancel()
       pendingFocusClaim = nil
       focusDidChange(false)
+      // A detached view gets no mouseExited, and may reattach away from the pointer.
+      LocalEventMonitor.pointerExited(self)
     } else if hasBeenInWindow, shouldClaimFocus?() == true {
       // Re-attached after a split-tree rebuild dropped us. AppKit doesn't
       // auto-promote a re-attached view to firstResponder, so claim it back
@@ -753,6 +747,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
     let markedTextBefore = markedText.length > 0
     let keyboardIdBefore = markedTextBefore ? nil : keyboardLayoutId()
     lastPerformKeyEvent = nil
+    // Before the layout-switch return, so its key-up reaches keyUp(with:) and clears the suppression.
+    LocalEventMonitor.keyPressed(event.keyCode, by: self)
     interpretKeyEvents([translationEvent])
     if !markedTextBefore, keyboardIdBefore != keyboardLayoutId() {
       keyboardLayoutChangeKeyUpSuppression = KeyboardLayoutChangeKeyUpSuppression(
@@ -791,40 +787,61 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
 
   override func flagsChanged(with event: NSEvent) {
-    let mod: UInt32
-    switch event.keyCode {
-    case 0x39: mod = GHOSTTY_MODS_CAPS.rawValue
-    case 0x38, 0x3C: mod = GHOSTTY_MODS_SHIFT.rawValue
-    case 0x3B, 0x3E: mod = GHOSTTY_MODS_CTRL.rawValue
-    case 0x3A, 0x3D: mod = GHOSTTY_MODS_ALT.rawValue
-    case 0x37, 0x36: mod = GHOSTTY_MODS_SUPER.rawValue
-    default: return
-    }
-    if hasMarkedText() { return }
-    let mods = ghosttyMods(event.modifierFlags)
-    var action = GHOSTTY_ACTION_RELEASE
-    if (mods.rawValue & mod) != 0 {
-      let sidePressed: Bool
-      switch event.keyCode {
-      case 0x3C:
-        sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERSHIFTKEYMASK) != 0
-      case 0x3E:
-        sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERCTLKEYMASK) != 0
-      case 0x3D:
-        sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERALTKEYMASK) != 0
-      case 0x36:
-        sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERCMDKEYMASK) != 0
-      default:
-        sidePressed = true
-      }
-      if sidePressed {
-        action = GHOSTTY_ACTION_PRESS
-      }
+    guard surface != nil, !hasMarkedText(), let action = Self.modifierAction(for: event) else { return }
+    // Caps Lock latches rather than being held, so it never makes this surface a release holder.
+    if action == GHOSTTY_ACTION_PRESS, event.keyCode != Self.capsLockKeyCode {
+      LocalEventMonitor.modifierPressed(by: self)
     }
     sendKey(action: action, event: event)
   }
 
+  // Press or release for a modifier key event; nil for keys that are not modifiers.
+  static func modifierAction(for event: NSEvent) -> ghostty_input_action_e? {
+    guard let masks = modifierMasks(keyCode: event.keyCode) else { return nil }
+    guard (ghosttyMods(event.modifierFlags).rawValue & masks.mod) != 0 else { return GHOSTTY_ACTION_RELEASE }
+    // The shared flag stays set while the other side is held, so prefer this key's side bit.
+    let rawFlags = event.modifierFlags.rawValue
+    let sidePressed = rawFlags & UInt(masks.side) != 0
+    let hasSideBits = sidePressed || rawFlags & UInt(masks.otherSide) != 0
+    return sidePressed || !hasSideBits ? GHOSTTY_ACTION_PRESS : GHOSTTY_ACTION_RELEASE
+  }
+
+  private static let capsLockKeyCode: UInt16 = 0x39
+
+  private struct ModifierKeyMasks {
+    let mod: UInt32
+    let side: Int32
+    let otherSide: Int32
+  }
+
+  private static func modifierMasks(keyCode: UInt16) -> ModifierKeyMasks? {
+    switch keyCode {
+    case capsLockKeyCode: ModifierKeyMasks(mod: GHOSTTY_MODS_CAPS.rawValue, side: 0, otherSide: 0)
+    case 0x38:
+      ModifierKeyMasks(
+        mod: GHOSTTY_MODS_SHIFT.rawValue, side: NX_DEVICELSHIFTKEYMASK, otherSide: NX_DEVICERSHIFTKEYMASK)
+    case 0x3C:
+      ModifierKeyMasks(
+        mod: GHOSTTY_MODS_SHIFT.rawValue, side: NX_DEVICERSHIFTKEYMASK, otherSide: NX_DEVICELSHIFTKEYMASK)
+    case 0x3B:
+      ModifierKeyMasks(mod: GHOSTTY_MODS_CTRL.rawValue, side: NX_DEVICELCTLKEYMASK, otherSide: NX_DEVICERCTLKEYMASK)
+    case 0x3E:
+      ModifierKeyMasks(mod: GHOSTTY_MODS_CTRL.rawValue, side: NX_DEVICERCTLKEYMASK, otherSide: NX_DEVICELCTLKEYMASK)
+    case 0x3A:
+      ModifierKeyMasks(mod: GHOSTTY_MODS_ALT.rawValue, side: NX_DEVICELALTKEYMASK, otherSide: NX_DEVICERALTKEYMASK)
+    case 0x3D:
+      ModifierKeyMasks(mod: GHOSTTY_MODS_ALT.rawValue, side: NX_DEVICERALTKEYMASK, otherSide: NX_DEVICELALTKEYMASK)
+    case 0x37:
+      ModifierKeyMasks(mod: GHOSTTY_MODS_SUPER.rawValue, side: NX_DEVICELCMDKEYMASK, otherSide: NX_DEVICERCMDKEYMASK)
+    case 0x36:
+      ModifierKeyMasks(mod: GHOSTTY_MODS_SUPER.rawValue, side: NX_DEVICERCMDKEYMASK, otherSide: NX_DEVICELCMDKEYMASK)
+    default: nil
+    }
+  }
+
   override func mouseMoved(with event: NSEvent) {
+    // AppKit sends no mouseEntered to a view mounted under a still pointer.
+    LocalEventMonitor.pointerEntered(self)
     sendMousePosition(event)
     if let window, window.isKeyWindow, !focused, runtime.focusFollowsMouse() {
       requestFocus()
@@ -833,32 +850,35 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   override func mouseEntered(with event: NSEvent) {
     super.mouseEntered(with: event)
+    LocalEventMonitor.pointerEntered(self)
     sendMousePosition(event)
   }
 
   override func mouseExited(with event: NSEvent) {
+    LocalEventMonitor.pointerExited(self)
     if NSEvent.pressedMouseButtons != 0 {
       return
     }
     guard let surface else { return }
-    let mods = ghosttyMods(event.modifierFlags)
+    let mods = Self.ghosttyMods(event.modifierFlags)
     ghostty_surface_mouse_pos(surface, -1, -1, mods)
   }
 
   override func mouseDown(with event: NSEvent) {
     healOcclusionFromUserInput(requiresVisibleWindow: true)
-    leftMousePressed = true
+    forwardedLeftPressNumber = event.eventNumber
     sendMouseButton(event, state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT)
   }
 
   override func mouseUp(with event: NSEvent) {
-    let didSendPress = leftMousePressed
-    leftMousePressed = false
-    prevPressureStage = 0
-    // Only release for a press we actually sent (see leftMousePressed).
-    if didSendPress {
+    if forwardedLeftPressNumber == event.eventNumber {
+      forwardedLeftPressNumber = nil
       sendMouseButton(event, state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT)
+    } else if let forwardedLeftPressNumber {
+      // Keep the press pending so its real release still pairs.
+      surfaceLogger.debug("Skipped left release \(event.eventNumber) unpaired with press \(forwardedLeftPressNumber).")
     }
+    prevPressureStage = 0
     if let surface {
       ghostty_surface_mouse_pressure(surface, 0, 0)
     }
@@ -869,7 +889,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
       super.rightMouseDown(with: event)
       return
     }
-    let mods = ghosttyMods(event.modifierFlags)
+    let mods = Self.ghosttyMods(event.modifierFlags)
     if ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, mods) {
       return
     }
@@ -881,7 +901,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
       super.rightMouseUp(with: event)
       return
     }
-    let mods = ghosttyMods(event.modifierFlags)
+    let mods = Self.ghosttyMods(event.modifierFlags)
     if ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_RIGHT, mods) {
       return
     }
@@ -966,50 +986,21 @@ final class GhosttySurfaceView: NSView, Identifiable {
     showDefinition(for: str, at: point)
   }
 
-  private func localEventHandler(_ event: NSEvent) -> NSEvent? {
-    switch event.type {
-    case .keyUp:
-      localEventKeyUp(event)
-    case .leftMouseDown:
-      localEventLeftMouseDown(event)
-    case .flagsChanged:
-      localEventFlagsChanged(event)
-    default:
-      event
+  private func handleMonitoredLeftMouseDown(_ event: NSEvent) -> NSEvent? {
+    // A press whose release never arrived must not stay held in Ghostty past the next click.
+    if forwardedLeftPressNumber != nil {
+      forwardedLeftPressNumber = nil
+      sendMouseButton(event, state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT)
     }
-  }
-
-  private func localEventKeyUp(_ event: NSEvent) -> NSEvent? {
-    if !event.modifierFlags.contains(.command) { return event }
-    guard focused else { return event }
-    keyUp(with: event)
-    return nil
-  }
-
-  private func localEventLeftMouseDown(_ event: NSEvent) -> NSEvent? {
-    // Clear stale press state up front so an interrupted gesture can't orphan a later release.
-    leftMousePressed = false
-    guard let window, event.window != nil, window == event.window else { return event }
-    // Hit-test in content-view space: the surface's frame origin tracks the scroll
-    // offset, so a self-space hit test double-applies it and misfires in scrollback.
-    guard window.contentView?.hitTest(event.locationInWindow) == self else { return event }
-    guard window.firstResponder !== self else { return event }
+    guard let window, window.firstResponder !== self else { return event }
     // App and window already active: this click only transfers split focus, so consume it
-    // instead of forwarding a press the terminal would later pair with an orphaned release.
+    // rather than forward a press to the terminal.
     if NSApp.isActive, window.isKeyWindow {
       // Only consume when focus actually transfers; otherwise forward so the click isn't lost.
       guard window.makeFirstResponder(self) else { return event }
       return nil
     }
     window.makeFirstResponder(self)
-    return event
-  }
-
-  // The responder chain delivers flagsChanged only to the first responder, so forward it to
-  // every other surface; a hovered but unfocused terminal still needs to refresh its links.
-  private func localEventFlagsChanged(_ event: NSEvent) -> NSEvent? {
-    guard window != nil, window?.firstResponder !== self else { return event }
-    flagsChanged(with: event)
     return event
   }
 
@@ -1366,6 +1357,10 @@ final class GhosttySurfaceView: NSView, Identifiable {
       return false
     }
     keyDown(with: nativeEvent)
+    // The real key-up carries the layout's keyCode for V, so pair the release with it.
+    if LocalEventMonitor.takeKeyHolder(for: nativeEvent.keyCode) === self {
+      LocalEventMonitor.keyPressed(event.keyCode, by: self)
+    }
     return true
   }
 
@@ -1493,7 +1488,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
       if ghostty_surface_mouse_captured(surface) {
         return nil
       }
-      let mods = ghosttyMods(event.modifierFlags)
+      let mods = Self.ghosttyMods(event.modifierFlags)
       _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, mods)
     default:
       return nil
@@ -1762,7 +1757,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
       return (event, event.modifierFlags)
     }
     let translatedModsGhostty = ghostty_surface_key_translation_mods(
-      surface, ghosttyMods(event.modifierFlags))
+      surface, Self.ghosttyMods(event.modifierFlags))
     let translatedMods = appKitMods(translatedModsGhostty)
     var resolved = event.modifierFlags
     for flag in [NSEvent.ModifierFlags.shift, .control, .option, .command] {
@@ -1803,8 +1798,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
     keyEvent.keycode = UInt32(event.keyCode)
     keyEvent.text = nil
     keyEvent.composing = composing
-    keyEvent.mods = ghosttyMods(originalMods)
-    keyEvent.consumed_mods = ghosttyMods(translationMods.subtracting([.control, .command]))
+    keyEvent.mods = Self.ghosttyMods(originalMods)
+    keyEvent.consumed_mods = Self.ghosttyMods(translationMods.subtracting([.control, .command]))
     keyEvent.unshifted_codepoint = 0
     if event.type == .keyDown || event.type == .keyUp {
       if let chars = event.characters(byApplyingModifiers: []),
@@ -1909,7 +1904,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     guard let surface else { return }
     let point = convert(event.locationInWindow, from: nil)
     let yPosition = bounds.height - point.y
-    let mods = ghosttyMods(event.modifierFlags)
+    let mods = Self.ghosttyMods(event.modifierFlags)
     ghostty_surface_mouse_pos(surface, point.x, yPosition, mods)
   }
 
@@ -1919,11 +1914,11 @@ final class GhosttySurfaceView: NSView, Identifiable {
     button: ghostty_input_mouse_button_e
   ) {
     guard let surface else { return }
-    let mods = ghosttyMods(event.modifierFlags)
+    let mods = Self.ghosttyMods(event.modifierFlags)
     ghostty_surface_mouse_button(surface, state, button, mods)
   }
 
-  private func ghosttyMods(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
+  private static func ghosttyMods(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
     var mods: UInt32 = GHOSTTY_MODS_NONE.rawValue
     if flags.contains(.shift) { mods |= GHOSTTY_MODS_SHIFT.rawValue }
     if flags.contains(.control) { mods |= GHOSTTY_MODS_CTRL.rawValue }
@@ -1979,6 +1974,212 @@ extension GhosttySurfaceView {
       self.insertText(content, replacementRange: NSRange(location: 0, length: 0))
     }
     return true
+  }
+}
+
+extension GhosttySurfaceView {
+  // One app-level monitor so per-event cost doesn't grow with the surface count.
+  enum LocalEventMonitor {
+    // Both installed once for the app's lifetime; never removed.
+    private static var monitor: Any?
+    private static var becomeActiveObserver: NSObjectProtocol?
+    private(set) static weak var hoveredSurface: GhosttySurfaceView?
+    // Surfaces that took a modifier press since all modifiers were last up.
+    private static let modifierHolders = NSHashTable<GhosttySurfaceView>.weakObjects()
+    // Latest surface to take each key down, so its key-up never reaches a different surface.
+    private static let keyHolders = NSMapTable<NSNumber, GhosttySurfaceView>.strongToWeakObjects()
+
+    static func installIfNeeded() {
+      guard monitor == nil else { return }
+      monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyUp, .leftMouseDown, .flagsChanged]) { event in
+        route(event)
+      }
+      guard monitor != nil else {
+        surfaceLogger.error("Failed to install the surface event monitor.")
+        return
+      }
+      // Key-ups released in another app never reach the monitor, so reconcile on return.
+      becomeActiveObserver = NotificationCenter.default.addObserver(
+        forName: NSApplication.didBecomeActiveNotification,
+        object: nil,
+        queue: .main
+      ) { _ in
+        MainActor.assumeIsolated {
+          releaseKeys { !CGEventSource.keyState(.combinedSessionState, key: CGKeyCode($0)) }
+        }
+      }
+    }
+
+    static func pointerEntered(_ surface: GhosttySurfaceView) {
+      hoveredSurface = surface
+    }
+
+    static func pointerExited(_ surface: GhosttySurfaceView) {
+      // AppKit can enter the next split before exiting this one.
+      guard hoveredSurface === surface else { return }
+      hoveredSurface = nil
+    }
+
+    static func modifierPressed(by surface: GhosttySurfaceView) {
+      modifierHolders.add(surface)
+    }
+
+    static func surfaceClosed(_ surface: GhosttySurfaceView) {
+      pointerExited(surface)
+      modifierHolders.remove(surface)
+      for key in heldKeys(where: { keyHolders.object(forKey: $0) === surface }) {
+        keyHolders.removeObject(forKey: key)
+      }
+    }
+
+    static func isModifierHolder(_ surface: GhosttySurfaceView) -> Bool {
+      modifierHolders.contains(surface)
+    }
+
+    static func keyPressed(_ keyCode: UInt16, by surface: GhosttySurfaceView) {
+      keyHolders.setObject(surface, forKey: NSNumber(value: keyCode))
+    }
+
+    // Each key-down pairs with one key-up, so reading the holder also clears it.
+    static func takeKeyHolder(for keyCode: UInt16) -> GhosttySurfaceView? {
+      let key = NSNumber(value: keyCode)
+      let holder = keyHolders.object(forKey: key)
+      keyHolders.removeObject(forKey: key)
+      return holder
+    }
+
+    // Sends a key-up to the holder of every held key the predicate reports as released.
+    static func releaseKeys(where isReleased: (UInt16) -> Bool) {
+      for key in heldKeys(where: { isReleased($0.uint16Value) }) {
+        guard let holder = takeKeyHolder(for: key.uint16Value) else { continue }
+        guard let release = syntheticKeyUp(keyCode: key.uint16Value, in: holder) else {
+          surfaceLogger.error("Failed to synthesize the key-up for key code \(key.uint16Value).")
+          continue
+        }
+        holder.keyUp(with: release)
+      }
+    }
+
+    // Snapshot first: the table can't be mutated while it is enumerated.
+    private static func heldKeys(where matches: (NSNumber) -> Bool) -> [NSNumber] {
+      var keys: [NSNumber] = []
+      for case let key as NSNumber in keyHolders.keyEnumerator() where matches(key) {
+        keys.append(key)
+      }
+      return keys
+    }
+
+    private static func syntheticKeyUp(keyCode: UInt16, in surface: GhosttySurfaceView) -> NSEvent? {
+      NSEvent.keyEvent(
+        with: .keyUp,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: surface.window?.windowNumber ?? 0,
+        context: nil,
+        characters: "",
+        charactersIgnoringModifiers: "",
+        isARepeat: false,
+        keyCode: keyCode
+      )
+    }
+
+    enum KeyUpAction<Surface: AnyObject> {
+      case pass
+      // Release in the holder; `consumesEvent` keeps AppKit from also delivering it to the responder.
+      case release(holder: Surface, consumesEvent: Bool)
+      case drop
+    }
+
+    // Pairs a key-up with the surface that took its key-down.
+    static func keyUpAction<Surface: AnyObject>(
+      isCommandChord: Bool,
+      holder: Surface?,
+      responderSurface: Surface?
+    ) -> KeyUpAction<Surface> {
+      // No holder means Ghostty never took the press, so a surface responder must not get a release.
+      guard let holder else { return responderSurface == nil ? .pass : .drop }
+      // AppKit never delivers a Cmd chord's keyUp to the responder, so hand it over here.
+      if isCommandChord {
+        return .release(holder: holder, consumesEvent: true)
+      }
+      if responderSurface === holder {
+        return .pass
+      }
+      return .release(holder: holder, consumesEvent: responderSurface != nil)
+    }
+
+    private static func route(_ event: NSEvent) -> NSEvent? {
+      switch event.type {
+      case .keyUp:
+        let holder = takeKeyHolder(for: event.keyCode)
+        let action = keyUpAction(
+          isCommandChord: event.modifierFlags.contains(.command),
+          holder: holder,
+          responderSurface: NSApp.keyWindow?.firstResponder as? GhosttySurfaceView
+        )
+        switch action {
+        case .pass:
+          return event
+        case .release(let holder, let consumesEvent):
+          // Ghostty's focus loss releases only the latest key, so the holder still needs this one.
+          holder.keyUp(with: event)
+          return consumesEvent ? nil : event
+        case .drop:
+          return nil
+        }
+      case .leftMouseDown:
+        // Hit-test in window space from the frame view so titlebar controls win and scroll offsets apply once.
+        let frameView = event.window?.contentView?.superview ?? event.window?.contentView
+        guard let surface = frameView?.hitTest(event.locationInWindow) as? GhosttySurfaceView
+        else { return event }
+        return surface.handleMonitoredLeftMouseDown(event)
+      case .flagsChanged:
+        routeFlagsChanged(event)
+        return event
+      default:
+        return event
+      }
+    }
+
+    private static func routeFlagsChanged(_ event: NSEvent) {
+      let targets = flagsChangedTargets(
+        hovered: routableHoveredSurface,
+        modifierHolders: modifierHolders.allObjects,
+        isRelease: GhosttySurfaceView.modifierAction(for: event) == GHOSTTY_ACTION_RELEASE,
+        keyResponder: NSApp.keyWindow?.firstResponder
+      )
+      for surface in targets {
+        surface.flagsChanged(with: event)
+      }
+      guard event.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command]) else { return }
+      modifierHolders.removeAllObjects()
+    }
+
+    // Detached or hidden surfaces get no exit, so a tracked hover can be stale.
+    private static var routableHoveredSurface: GhosttySurfaceView? {
+      guard let hoveredSurface, hoveredSurface.window != nil, !hoveredSurface.isHiddenOrHasHiddenAncestor
+      else { return nil }
+      return hoveredSurface
+    }
+
+    // flagsChanged only reaches the key responder; also send it to the hover, and releases to every holder.
+    static func flagsChangedTargets<Surface: AnyObject>(
+      hovered: Surface?,
+      modifierHolders: [Surface],
+      isRelease: Bool,
+      keyResponder: AnyObject?
+    ) -> [Surface] {
+      var targets: [Surface] = []
+      if let hovered, hovered !== keyResponder {
+        targets.append(hovered)
+      }
+      guard isRelease else { return targets }
+      for holder in modifierHolders where holder !== keyResponder && holder !== hovered {
+        targets.append(holder)
+      }
+      return targets
+    }
   }
 }
 
