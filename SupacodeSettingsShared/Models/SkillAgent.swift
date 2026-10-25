@@ -5,6 +5,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
   case claude
   case codex
   case copilot
+  case devin
   case grok
   case hermes
   case kimi
@@ -15,14 +16,16 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
   case pi
 
   /// Path under the user's home where the agent stores its config
-  /// (e.g. `.gemini/antigravity-cli`, `.claude`, `.codex`, `.copilot`, `.grok`,
-  /// `.hermes`, `.kimi-code`, `.kiro`, `.omp/agent`, `.pi/agent`, `.config/opencode`).
+  /// (e.g. `.gemini/antigravity-cli`, `.claude`, `.codex`, `.copilot`,
+  /// `.config/devin`, `.grok`, `.hermes`, `.kimi-code`, `.kiro`, `.omp/agent`,
+  /// `.pi/agent`, `.config/opencode`).
   public var configDirectoryName: String {
     switch self {
     case .antigravity: ".gemini/antigravity-cli"
     case .claude: ".claude"
     case .codex: ".codex"
     case .copilot: ".copilot"
+    case .devin: ".config/devin"
     case .grok: ".grok"
     case .hermes: ".hermes"
     case .kimi: ".kimi-code"
@@ -40,6 +43,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .claude: "Claude Code"
     case .codex: "Codex"
     case .copilot: "Copilot CLI"
+    case .devin: "Devin CLI"
     case .grok: "Grok Code"
     case .hermes: "Hermes"
     case .kimi: "Kimi Code"
@@ -57,6 +61,7 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .claude: "claude-code-mark"
     case .codex: "codex-mark"
     case .copilot: "copilot-mark"
+    case .devin: "devin-mark"
     case .grok: "grok-mark"
     case .hermes: "hermes-mark"
     case .kimi: "kimi-mark"
@@ -90,7 +95,8 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     case .activityBadge, .idleBadge, .skills:
       true
     case .inputNeededBadge:
-      self == .claude || self == .grok || self == .copilot || self == .kimi || self == .opencode
+      self == .claude || self == .grok || self == .copilot || self == .devin || self == .kimi
+        || self == .opencode
     case .errorDetection:
       self == .claude || self == .antigravity
     case .compactionBadge:

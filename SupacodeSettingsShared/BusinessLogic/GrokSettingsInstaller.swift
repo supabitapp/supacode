@@ -22,9 +22,8 @@ nonisolated struct GrokSettingsInstaller {
   /// Install state for the unified hook map. See
   /// `ClaudeSettingsInstaller.installState()` for rationale.
   ///
-  /// After the shared command-set check, also requires every managed hook to
-  /// carry the canonical Grok env passthrough map, inspected on the same
-  /// parsed snapshot (no second disk read).
+  /// The shared installer compares full managed hook objects, so env
+  /// passthrough drift is detected together with command and ordering drift.
   func installState() throws -> ComponentInstallState {
     let groups: [String: [JSONValue]]
     do {
@@ -35,8 +34,7 @@ nonisolated struct GrokSettingsInstaller {
     }
     return try fileInstaller.installState(
       settingsURL: settingsURL,
-      hookGroupsByEvent: groups,
-      additionalOutdatedIfInstalled: GrokHookSettings.managedHooksLackEnvPassthrough(in:)
+      hookGroupsByEvent: groups
     )
   }
 

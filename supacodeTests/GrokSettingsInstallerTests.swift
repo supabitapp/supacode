@@ -86,7 +86,7 @@ struct GrokSettingsInstallerTests {
     #expect(try installer.installState() == .installed)
 
     // An older install carries the full canonical command set but no env
-    // blocks. The command set still matches, so only the env check can flag it.
+    // blocks. The managed hook objects now include env, so the diff is flagged.
     let settingsURL = GrokSettingsInstaller.settingsURL(homeDirectoryURL: homeURL)
     try rewriteManagedHookEnv(at: settingsURL) { _ in nil }
 

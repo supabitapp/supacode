@@ -25,6 +25,7 @@ nonisolated enum AgentIntegrationFactory {
       case .claude: claude(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
       case .codex: codex(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
       case .copilot: copilot(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
+      case .devin: devin(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
       case .grok: grok(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
       case .hermes: hermes(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
       case .kimi: kimi(configDirectoryURL: resolvedConfigDir, fileManager: fileManager)
@@ -91,6 +92,22 @@ nonisolated enum AgentIntegrationFactory {
         uninstall: { try installer.uninstallAllHooks() }
       ),
       skillsComponent(agent: .codex, configDirectoryURL: configDirectoryURL),
+    ]
+  }
+
+  private static func devin(configDirectoryURL: URL, fileManager: FileManager)
+    -> [AgentIntegration.Component]
+  {
+    let installer = DevinSettingsInstaller(
+      configDirectoryURL: configDirectoryURL, fileManager: fileManager)
+    return [
+      AgentIntegration.Component(
+        kind: .hooks,
+        state: { try installer.installState() },
+        install: { try installer.installAllHooks() },
+        uninstall: { try installer.uninstallAllHooks() }
+      ),
+      skillsComponent(agent: .devin, configDirectoryURL: configDirectoryURL),
     ]
   }
 

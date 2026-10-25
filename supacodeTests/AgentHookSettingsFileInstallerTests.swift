@@ -45,6 +45,47 @@ struct AgentHookSettingsFileInstallerTests {
     ]
   }
 
+  /// Canonical payload where one command string legitimately occupies two
+  /// slots — the shape Devin's `busy` hook has (UserPromptSubmit + catch-all
+  /// PreToolUse). Guards the occurrence-level compare against Set collapse.
+  private func duplicatedCommandHookGroups() -> [String: [JSONValue]] {
+    let busy = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .devin)
+    let hook: JSONValue = .object([
+      "type": "command",
+      "command": .string(busy),
+      "timeout": 2,
+    ])
+    return [
+      "UserPromptSubmit": [.object(["hooks": .array([hook])])],
+      "PreToolUse": [.object(["matcher": "", "hooks": .array([hook])])],
+    ]
+  }
+
+  /// Two managed groups in one event whose order is load-bearing — the shape
+  /// of Devin's PreToolUse, where the catch-all `busy` group must precede the
+  /// specific awaiting-input matcher so the later emit wins.
+  private func orderedMultiGroupHookGroups() -> [String: [JSONValue]] {
+    let busy = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .devin)
+    let awaiting = AgentHookSettingsCommand.compositeCommand(
+      events: [.awaitingInput], forwardStdinAsNotification: false, agent: .devin)
+    func group(_ matcher: String, _ command: String) -> JSONValue {
+      .object([
+        "matcher": .string(matcher),
+        "hooks": .array([
+          .object(["type": "command", "command": .string(command), "timeout": 2])
+        ]),
+      ])
+    }
+    return [
+      "PreToolUse": [
+        group("", busy),
+        group("ask_user_question|exit_plan_mode", awaiting),
+      ]
+    ]
+  }
+
   // MARK: - Install.
 
   @Test func installIntoEmptyFileCreatesCorrectStructure() throws {
@@ -344,6 +385,152 @@ struct AgentHookSettingsFileInstallerTests {
     let url = makeTempURL()
     let installer = makeInstaller()
     #expect(try installer.installState(settingsURL: url, hookGroupsByEvent: sampleHookGroups()) != .installed)
+  }
+
+  @Test func installStateIsOutdatedWhenOneDuplicateManagedOccurrenceIsRemoved() throws {
+    // The command Set compare collapses a duplicated managed command across
+    // slots: deleting the catch-all PreToolUse `busy` group leaves `busy`
+    // present under UserPromptSubmit, so the drift was invisible. Occurrences
+    // are counted per (event, matcher, command) slot, so this must be outdated.
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+
+    let installer = makeInstaller()
+    let groups = duplicatedCommandHookGroups()
+    try installer.install(settingsURL: url, hookGroupsByEvent: groups)
+
+    var root = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url))
+      .objectValue!
+    var hooks = root["hooks"]!.objectValue!
+    hooks["PreToolUse"] = .array(
+      hooks["PreToolUse"]!.arrayValue!
+        .filter { $0.objectValue?["matcher"] != .string("") })
+    root["hooks"] = .object(hooks)
+    try JSONEncoder().encode(.object(root)).write(to: url)
+
+    #expect(try installer.installState(settingsURL: url, hookGroupsByEvent: groups) == .outdated)
+  }
+
+  @Test func installStateIsOutdatedWhenManagedCommandIsParkedUnderWrongEvent() throws {
+    // Same command string, wrong slot: moving `busy` from UserPromptSubmit to
+    // SessionStart keeps the command set identical but shifts an occurrence,
+    // which the slot-keyed compare must surface as drift.
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+
+    let installer = makeInstaller()
+    let groups = duplicatedCommandHookGroups()
+    try installer.install(settingsURL: url, hookGroupsByEvent: groups)
+
+    var root = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url))
+      .objectValue!
+    var hooks = root["hooks"]!.objectValue!
+    hooks["SessionStart"] = hooks["UserPromptSubmit"]
+    hooks["UserPromptSubmit"] = .array([])
+    root["hooks"] = .object(hooks)
+    try JSONEncoder().encode(.object(root)).write(to: url)
+
+    #expect(try installer.installState(settingsURL: url, hookGroupsByEvent: groups) == .outdated)
+  }
+
+  @Test func installStateIsOutdatedWhenManagedGroupsAreReordered() throws {
+    // Hook groups execute in array order: reversing the catch-all busy group
+    // and the awaiting-input matcher group changes which emit wins. Every
+    // command is still present, so only an order-sensitive compare catches it.
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+
+    let installer = makeInstaller()
+    let groups = orderedMultiGroupHookGroups()
+    try installer.install(settingsURL: url, hookGroupsByEvent: groups)
+
+    var root = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url))
+      .objectValue!
+    var hooks = root["hooks"]!.objectValue!
+    hooks["PreToolUse"] = .array(hooks["PreToolUse"]!.arrayValue!.reversed())
+    root["hooks"] = .object(hooks)
+    try JSONEncoder().encode(.object(root)).write(to: url)
+
+    #expect(try installer.installState(settingsURL: url, hookGroupsByEvent: groups) == .outdated)
+  }
+
+  @Test func installStateStaysInstalledWhenUserGroupIsInsertedBetweenManagedOnes() throws {
+    // Managed-group order is what matters — a user-authored group interleaved
+    // between ours changes absolute indices but not managed execution order,
+    // so it must not be reported as drift.
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+
+    let installer = makeInstaller()
+    let groups = orderedMultiGroupHookGroups()
+    try installer.install(settingsURL: url, hookGroupsByEvent: groups)
+
+    var root = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url))
+      .objectValue!
+    var hooks = root["hooks"]!.objectValue!
+    var preToolUse = hooks["PreToolUse"]!.arrayValue!
+    preToolUse.insert(
+      .object([
+        "matcher": "Bash",
+        "hooks": .array([
+          .object(["type": "command", "command": "echo user-hook", "timeout": 5])
+        ]),
+      ]),
+      at: 1
+    )
+    hooks["PreToolUse"] = .array(preToolUse)
+    root["hooks"] = .object(hooks)
+    try JSONEncoder().encode(.object(root)).write(to: url)
+
+    #expect(try installer.installState(settingsURL: url, hookGroupsByEvent: groups) == .installed)
+  }
+
+  @Test func installStateIsOutdatedWhenManagedHookTimeoutChanges() throws {
+    // The command text is unchanged but execution-relevant metadata drifted,
+    // so the update affordance must appear.
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+
+    let installer = makeInstaller()
+    let groups = sampleHookGroups()
+    try installer.install(settingsURL: url, hookGroupsByEvent: groups)
+
+    var root = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url))
+      .objectValue!
+    var hooks = root["hooks"]!.objectValue!
+    var stopGroup = hooks["Stop"]!.arrayValue![0].objectValue!
+    var stopHooks = stopGroup["hooks"]!.arrayValue!
+    var hookObject = stopHooks[0].objectValue!
+    hookObject["timeout"] = 99
+    stopGroup["hooks"] = .array([.object(hookObject)])
+    hooks["Stop"] = .array([.object(stopGroup)])
+    root["hooks"] = .object(hooks)
+    try JSONEncoder().encode(.object(root)).write(to: url)
+
+    #expect(try installer.installState(settingsURL: url, hookGroupsByEvent: groups) == .outdated)
+  }
+
+  @Test func installStateIsOutdatedWhenManagedHookTypeChanges() throws {
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+
+    let installer = makeInstaller()
+    let groups = sampleHookGroups()
+    try installer.install(settingsURL: url, hookGroupsByEvent: groups)
+
+    var root = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url))
+      .objectValue!
+    var hooks = root["hooks"]!.objectValue!
+    var stopGroup = hooks["Stop"]!.arrayValue![0].objectValue!
+    var stopHooks = stopGroup["hooks"]!.arrayValue!
+    var hookObject = stopHooks[0].objectValue!
+    hookObject["type"] = "shell"
+    stopGroup["hooks"] = .array([.object(hookObject)])
+    hooks["Stop"] = .array([.object(stopGroup)])
+    root["hooks"] = .object(hooks)
+    try JSONEncoder().encode(.object(root)).write(to: url)
+
+    #expect(try installer.installState(settingsURL: url, hookGroupsByEvent: groups) == .outdated)
   }
 
   @Test func containsMatchingHooksLogsInvalidJSONErrors() throws {
