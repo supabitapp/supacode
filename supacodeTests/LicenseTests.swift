@@ -126,9 +126,10 @@ struct LicenseTests {
     store.exhaustivity = .off
     await store.send(
       .createRandomWorktreeSucceeded(
-        worktree, repositoryID: RepositoryID(directory.path), pendingID: pending))
-    await store.receive(\.presentAlert)
+        worktree, repositoryID: RepositoryID(directory.path), pendingID: pending, ownership: .created(at: worktree)))
+    // The permit settles first so a license-save problem can join the same alert.
     await store.receive(\.delegate)
+    await store.receive(\.presentAlert)
     await store.finish()
     #expect(completed.value == 1)
     #expect(cancelled.value == 0)

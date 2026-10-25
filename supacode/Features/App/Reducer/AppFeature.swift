@@ -1576,13 +1576,13 @@ struct AppFeature {
         return .send(.license(.deactivate))
       case .license:
         return .none
-      case .repositories(.createRandomWorktreeSucceeded(let worktree, _, let pendingID)):
+      case .repositories(.createRandomWorktreeSucceeded(let worktree, _, let pendingID, _)):
         // Bind this creation's ack (matched by its pending id) to the real
         // worktree id so its first tab resolves it.
         bindWorktreeNewAck(pendingID: pendingID, to: worktree.id, state: &state)
         return .none
 
-      case .repositories(.createRandomWorktreeFailed(_, let message, let pendingID, _, _, _, _)):
+      case .repositories(.createRandomWorktreeFailed(_, let message, let pendingID, _, _, _)):
         return resolveCommandAcks(ok: false, error: message, state: &state) { match in
           if case .worktreeNew(let ackPendingID, _) = match { return ackPendingID == pendingID }
           return false

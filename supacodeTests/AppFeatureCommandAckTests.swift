@@ -145,7 +145,9 @@ struct AppFeatureCommandAckTests {
     // a sibling creation in the same repo (different pending id) is untouched.
     await store.send(
       .repositories(
-        .createRandomWorktreeSucceeded(created, repositoryID: "/tmp/repo", pendingID: pendingID)))
+        .createRandomWorktreeSucceeded(
+          created, repositoryID: "/tmp/repo", pendingID: pendingID, ownership: .created(at: created))
+      ))
     #expect(store.state.pendingCommandAcks[id: writeFD] != nil)
 
     await store.send(.terminalEvent(.tabCreated(worktreeID: created.id)))
@@ -354,7 +356,10 @@ struct AppFeatureCommandAckTests {
 
     await store.send(.repositories(.cancelPendingWorktree(pendingID)))
     await store.send(
-      .repositories(.createRandomWorktreeSucceeded(created, repositoryID: "/tmp/repo", pendingID: pendingID)))
+      .repositories(
+        .createRandomWorktreeSucceeded(
+          created, repositoryID: "/tmp/repo", pendingID: pendingID, ownership: .created(at: created))
+      ))
     await store.finish()
 
     // The ack drained as cancelled instead of waiting on the watchdog.
@@ -382,8 +387,7 @@ struct AppFeatureCommandAckTests {
       .repositories(
         .createRandomWorktreeFailed(
           title: "Failed", message: "boom", pendingID: pendingID,
-          previousSelection: nil, repositoryID: "/tmp/repo", name: nil,
-          baseDirectory: URL(fileURLWithPath: "/tmp/repo"))))
+          previousSelection: nil, repositoryID: "/tmp/repo", cleanupTarget: nil)))
     await store.finish()
 
     #expect(store.state.pendingCommandAcks.isEmpty)

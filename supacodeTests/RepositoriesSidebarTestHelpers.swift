@@ -93,3 +93,17 @@ extension RepositoriesFeature.State {
     sidebarItems[id: id]?.pullRequest = pullRequest
   }
 }
+
+extension WorktreeCreationOwnership {
+  /// A creation that claimed exactly the folder `worktree` landed in.
+  static func created(at worktree: Worktree) -> Self {
+    .created(
+      WorktreeCreationCleanupTarget(
+        branchName: worktree.name,
+        directory: worktree.workingDirectory,
+        directoryPreexisted: false,
+        startedWorktreeAdd: true
+      )
+    )
+  }
+}

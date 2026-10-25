@@ -108,9 +108,9 @@ public nonisolated enum SupacodePaths {
     )
   }
 
-  /// Always-concrete counterpart to `resolvedWorktreeDirectory` for the dialog's
-  /// live destination preview. Falls back to the default base and branch name
-  /// when the overrides are empty.
+  /// Always-concrete counterpart to `resolvedWorktreeDirectory`: the folder `wt` will
+  /// use, shown in the dialog preview and guarded by the creation pre-flight. Falls back
+  /// to the default base and branch name when the overrides are empty.
   public static func previewWorktreeDirectory(
     defaultBaseDirectory: URL,
     repositoryRootURL: URL,

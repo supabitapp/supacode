@@ -568,6 +568,7 @@ struct WorktreeCreationPromptParentTests {
         createdWorktree,
         repositoryID: repoID,
         pendingID: pendingID,
+        ownership: .created(at: createdWorktree)
       )
     ) {
       $0.pendingWorktrees.removeAll()
