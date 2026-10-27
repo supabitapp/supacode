@@ -16,8 +16,8 @@ struct WorktreeLayoutView: View {
   let newTerminal: FocusedAction<Void>
   @State private var windowActivity = WindowActivityState.inactive
   @State private var windowActivityReader = WindowActivityReader()
-  // Reading `\.colorScheme` invalidates this body when the window appearance
-  // flips (terminal-driven Light/Dark), so the unfocused-split overlay retints.
+  // Reading `\.colorScheme` invalidates this body when the terminal-driven
+  // scheme flips Light/Dark, so the unfocused-split overlay retints.
   @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {

@@ -63,10 +63,9 @@ struct WorktreeDetailView: View {
     )
     let inspectorCapabilities = Self.inspectorCapabilities(
       repositories: repositories, selectedWorktree: selectedWorktree)
-    // Read the manager's stored color here (tracked body evaluation, not the
-    // deferred toolbar closure) so the toolbar scheme invalidates on change.
-    let toolbarScheme: ColorScheme =
-      terminalManager.focusedSurfaceBackground.isLightColor ? .light : .dark
+    // Read the terminal scheme here (tracked body evaluation, not the deferred
+    // toolbar closure) so the toolbar scheme invalidates on change.
+    let toolbarScheme = terminalManager.surfaceBackgroundColorScheme()
     // Reveal in Finder is local-only; Open can target a remote worktree when the
     // resolved editor can express the host. `resolvedSelection` (nil when it
     // can't) drives the focused-action enablement, the menu label, and the
@@ -106,10 +105,7 @@ struct WorktreeDetailView: View {
       )
     }
     .inspector(
-      isPresented: Binding(
-        get: { inspectorPresented },
-        set: { repositoriesStore.send(.setInspectorPresented($0)) }
-      )
+      isPresented: Bindable(repositoriesStore).inspectorPresented.sending(\.setInspectorPresented)
     ) {
       WorktreeStatusInspectorContainer(
         pane: inspectorPane,
@@ -127,8 +123,7 @@ struct WorktreeDetailView: View {
         onActivateFile: { store.send(.openFileFromExplorer($0)) }
       )
       .inspectorColumnWidth(min: 280, ideal: 320, max: 480)
-      // Match the inspector's accent to the terminal background; the appearance
-      // is forced inside `WorktreeStatusInspectorContainer`.
+      // Match the inspector's accent to the terminal background.
       .tint(terminalManager.chromeOverlayTint())
     }
     return applyFocusedActions(

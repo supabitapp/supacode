@@ -9,11 +9,11 @@ struct GhosttyColorSchemeSyncView<Content: View>: View {
   @Shared(.settingsFile) private var settingsFile
   let ghostty: GhosttyRuntime
   let content: Content
-  // The main window pins `window.appearance` to the terminal background, so an
+  // The main window's appearance follows the terminal background, so an
   // environment `\.colorScheme` read here would echo the terminal back into
   // `setColorScheme` (OSC 11 dark would flip a light/dark theme to its dark
   // variant). Observe the app-level appearance instead: it tracks the system
-  // when `NSApp.appearance` is nil and is untouched by the window pin.
+  // when `NSApp.appearance` is nil and no window appearance reaches it.
   @State private var systemColorScheme = Self.appColorScheme()
   @State private var appearanceObservation: NSKeyValueObservation?
 
@@ -57,8 +57,8 @@ struct GhosttyColorSchemeSyncView<Content: View>: View {
       case .dark: NSAppearance(named: .darkAqua)
       }
     // Set only the app appearance: auxiliary windows (nil appearance) inherit it,
-    // while the terminal window owns its own appearance (driven by the focused
-    // surface via WindowChromeApplier). Looping every window here would clobber
+    // while terminal windows own theirs (the main window via its preferred scheme,
+    // panes via WindowChromeApplier). Looping every window here would clobber
     // that terminal-driven value and fight it nondeterministically.
     NSApp.appearance = appearance
   }

@@ -677,7 +677,7 @@ private struct WindowedPaneRootView: View {
     // tint minus this window's surfaces, and the observer keeps the window
     // background and appearance applied through mounts and config changes.
     .background(WindowTintBackdrop(runtime: manager.ghosttyRuntime))
-    .background(WindowChromeObserver(runtime: manager.ghosttyRuntime))
+    .background(WindowChromeObserver(runtime: manager.ghosttyRuntime, managesAppearance: true))
     .environment(ghosttyShortcuts)
     .environment(commandKeyObserver)
     // Windowed panes host in their own `NSHostingView`, so republish the chrome

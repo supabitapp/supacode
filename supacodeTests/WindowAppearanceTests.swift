@@ -156,3 +156,257 @@ struct WindowTintMaskTests {
       WindowChromeApplier.maskHoleRects(holeRects: [spanning], bounds: bounds) == [bounds])
   }
 }
+
+@MainActor
+struct WindowChromeObserverAppearanceTests {
+  // Pane windows have no other appearance writer, so the managed observer must pin them.
+  @Test(arguments: [ColorScheme.light, .dark])
+  func managedObserverPinsWindowToTerminalScheme(scheme: ColorScheme) throws {
+    let runtime = GhosttyRuntime(initialColorScheme: scheme)
+    try #require(runtime.backgroundColor().isLightColor == (scheme == .light))
+    let window = Self.makeWindow()
+    defer { window.orderOut(nil) }
+    let observer = WindowChromeObserverNSView(runtime: runtime, managesAppearance: true)
+    window.contentView?.addSubview(observer)
+    #expect(window.appearance?.name == (scheme == .dark ? .darkAqua : .aqua))
+  }
+
+  // SwiftUI owns the main window's appearance; a second writer races its updates (#833).
+  @Test func unmanagedObserverNeverWritesWindowAppearance() {
+    let runtime = GhosttyRuntime(initialColorScheme: .dark)
+    let window = Self.makeWindow()
+    defer { window.orderOut(nil) }
+    let observer = WindowChromeObserverNSView(runtime: runtime, managesAppearance: false)
+    window.contentView?.addSubview(observer)
+    #expect(window.appearance == nil)
+
+    window.appearance = NSAppearance(named: .aqua)
+    observer.viewDidChangeEffectiveAppearance()
+    #expect(window.appearance?.name == .aqua)
+  }
+
+  private static func makeWindow() -> NSWindow {
+    NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
+      styleMask: .borderless,
+      backing: .buffered,
+      defer: true
+    )
+  }
+}
+
+@MainActor
+struct TerminalColorSchemeModifierTests {
+  @Test(arguments: [ColorScheme.light, .dark])
+  func windowAndChromeFollowTerminalScheme(scheme: ColorScheme) throws {
+    let manager = try Self.manager(scheme)
+    let split = HostedSplit(manager: manager)
+    defer { split.close() }
+    let expected = Self.appearanceName(for: scheme)
+    #expect(try split.resolvedChromeNames().allSatisfy { $0 == expected })
+    #expect(split.window.appearance?.name == expected)
+  }
+
+  @Test func windowAndChromeTrackLiveTerminalFlips() throws {
+    let manager = try Self.manager(.light)
+    let split = HostedSplit(manager: manager)
+    defer { split.close() }
+
+    manager.ghosttyRuntime.setColorScheme(.dark)
+    manager.refreshFocusedSurfaceBackground()
+    try #require(manager.surfaceBackgroundColorScheme() == .dark)
+    #expect(try split.resolvedChromeNames().allSatisfy { $0 == .darkAqua })
+    #expect(split.window.appearance?.name == .darkAqua)
+  }
+
+  // The #833 race: another writer clears the window appearance after mount.
+  @Test func preferredSchemeReassertsAfterForeignReset() throws {
+    let manager = try Self.manager(.dark)
+    let split = HostedSplit(manager: manager)
+    defer { split.close() }
+
+    split.window.appearance = nil
+    // The layout pass in `resolvedChromeNames()` is what re-asserts the scheme.
+    #expect(try split.resolvedChromeNames().allSatisfy { $0 == .darkAqua })
+    #expect(split.window.appearance?.name == .darkAqua)
+  }
+
+  private static func manager(_ scheme: ColorScheme) throws -> WorktreeTerminalManager {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(initialColorScheme: scheme))
+    try #require(manager.surfaceBackgroundColorScheme() == scheme)
+    return manager
+  }
+
+  private static func appearanceName(for scheme: ColorScheme) -> NSAppearance.Name {
+    scheme == .dark ? .darkAqua : .aqua
+  }
+
+  // Mirrors ContentView: split with an inspector, the scheme modifier, and an
+  // observer that leaves the window appearance to SwiftUI.
+  private struct SplitFixture: View {
+    let manager: WorktreeTerminalManager
+    @State private var isInspectorPresented = true
+
+    var body: some View {
+      NavigationSplitView {
+        List { Text("Row") }
+          .listStyle(.sidebar)
+      } detail: {
+        Text("Detail")
+          .inspector(isPresented: $isInspectorPresented) { InspectorOutline() }
+      }
+      .modifier(TerminalColorSchemeModifier(terminalManager: manager))
+      .background(WindowChromeObserver(runtime: manager.ghosttyRuntime, managesAppearance: false))
+    }
+  }
+
+  // AppKit content in the inspector, like the Files pane's outline.
+  private struct InspectorOutline: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSOutlineView { NSOutlineView() }
+    func updateNSView(_ nsView: NSOutlineView, context: Context) {}
+  }
+
+  private struct HostedSplit {
+    let window: NSWindow
+    let host: NSView
+
+    init(manager: WorktreeTerminalManager) {
+      host = NSHostingView(rootView: SplitFixture(manager: manager))
+      window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+        styleMask: [.titled, .resizable, .fullSizeContentView],
+        backing: .buffered,
+        defer: false
+      )
+      window.isReleasedWhenClosed = false
+      window.contentView = host
+    }
+
+    // Sidebar and inspector glass plus both outlines (sidebar list, inspector content).
+    func resolvedChromeNames() throws -> [NSAppearance.Name?] {
+      host.layoutSubtreeIfNeeded()
+      let chrome = Self.collectChrome(in: host)
+      try #require(chrome.count { $0 is NSGlassEffectView } >= 2)
+      try #require(chrome.count { $0 is NSOutlineView } >= 2)
+      var names: [NSAppearance.Name?] = []
+      for view in chrome {
+        names.append(view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]))
+      }
+      return names
+    }
+
+    func close() {
+      window.close()
+    }
+
+    private static func collectChrome(in view: NSView) -> [NSView] {
+      var result: [NSView] = []
+      if view is NSGlassEffectView || view is NSOutlineView {
+        result.append(view)
+      }
+      for subview in view.subviews {
+        result.append(contentsOf: collectChrome(in: subview))
+      }
+      return result
+    }
+  }
+}
+
+@MainActor
+struct FocusedSurfaceColorSchemeTests {
+  private static let dark = NSColor(srgbRed: 0.1, green: 0.1, blue: 0.1, alpha: 1)
+  private static let otherDark = NSColor(srgbRed: 0.2, green: 0.15, blue: 0.1, alpha: 1)
+  private static let light = NSColor(srgbRed: 0.95, green: 0.95, blue: 0.95, alpha: 1)
+
+  @Test(arguments: [ColorScheme.light, .dark])
+  func initSeedsSchemeFromRuntimeBackground(scheme: ColorScheme) {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(initialColorScheme: scheme))
+    #expect(manager.surfaceBackgroundColorScheme() == scheme)
+  }
+
+  @Test func sameSchemeShadeChangeLeavesSchemeReadersUntouched() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(initialColorScheme: .dark))
+    manager.updateFocusedSurfaceBackground(Self.dark)
+
+    let invalidated = Self.invalidates(manager) {
+      manager.updateFocusedSurfaceBackground(Self.otherDark)
+    }
+    #expect(!invalidated)
+    #expect(manager.focusedSurfaceBackground.matchesTint(Self.otherDark))
+    #expect(manager.surfaceBackgroundColorScheme() == .dark)
+  }
+
+  // The tint consumers still need every shade, so the post must not depend on a flip.
+  @Test func sameSchemeShadeChangeStillPostsBackgroundChange() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(initialColorScheme: .dark))
+    manager.updateFocusedSurfaceBackground(Self.dark)
+
+    #expect(Self.posts(from: manager) { manager.updateFocusedSurfaceBackground(Self.otherDark) })
+    #expect(!Self.posts(from: manager) { manager.updateFocusedSurfaceBackground(Self.otherDark) })
+  }
+
+  @Test func darkToLightFlipInvalidatesSchemeReaders() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(initialColorScheme: .dark))
+    manager.updateFocusedSurfaceBackground(Self.dark)
+
+    #expect(Self.invalidates(manager) { manager.updateFocusedSurfaceBackground(Self.light) })
+    #expect(manager.surfaceBackgroundColorScheme() == .light)
+    #expect(manager.chromeOverlayTint() == .black)
+  }
+
+  @Test func lightToDarkFlipInvalidatesSchemeReaders() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime(initialColorScheme: .light))
+    manager.updateFocusedSurfaceBackground(Self.light)
+
+    #expect(Self.invalidates(manager) { manager.updateFocusedSurfaceBackground(Self.dark) })
+    #expect(manager.surfaceBackgroundColorScheme() == .dark)
+    #expect(manager.chromeOverlayTint() == .white)
+  }
+
+  // The production funnel: a runtime scheme change resolves through the config fallback.
+  @Test func refreshFunnelFlipsSchemeOnRuntimeChange() throws {
+    let runtime = GhosttyRuntime(initialColorScheme: .dark)
+    let manager = WorktreeTerminalManager(runtime: runtime)
+    try #require(manager.surfaceBackgroundColorScheme() == .dark)
+
+    runtime.setColorScheme(.light)
+    manager.refreshFocusedSurfaceBackground()
+    #expect(manager.surfaceBackgroundColorScheme() == .light)
+  }
+
+  private static func posts(from manager: WorktreeTerminalManager, _ change: () -> Void) -> Bool {
+    let box = InvalidationBox()
+    let token = NotificationCenter.default.addObserver(
+      forName: .ghosttyFocusedSurfaceBackgroundDidChange,
+      object: manager,
+      queue: nil
+    ) { _ in
+      box.fired = true
+    }
+    defer { NotificationCenter.default.removeObserver(token) }
+    change()
+    return box.fired
+  }
+
+  // Tracks only the scheme accessors, the way the window modifier and toolbar read them.
+  private static func invalidates(
+    _ manager: WorktreeTerminalManager,
+    _ change: () -> Void
+  ) -> Bool {
+    let box = InvalidationBox()
+    withObservationTracking {
+      _ = manager.surfaceBackgroundColorScheme()
+      _ = manager.chromeOverlayTint()
+    } onChange: {
+      box.fired = true
+    }
+    change()
+    return box.fired
+  }
+
+  private nonisolated final class InvalidationBox: @unchecked Sendable {
+    var fired = false
+
+    nonisolated deinit {}
+  }
+}

@@ -65,11 +65,11 @@ struct TerminalSchemeHost<Content: View>: NSViewRepresentable {
   }
 }
 
-/// Pins the toolbar host it lands in to the terminal scheme. The main window
-/// is left alone (WindowChromeApplier owns its appearance, same value); a
-/// borderless host is the toolbar strip or item overlay, whose CONTENT VIEW
-/// takes the pin. Never the window property itself: re-pinning the private
-/// window makes AppKit rebuild its items, which re-triggers the pin in a loop.
+/// Pins the toolbar host it lands in to the terminal scheme. Titled windows are
+/// left alone (their owner already sets the same scheme); a borderless host is
+/// the toolbar strip or item overlay, whose CONTENT VIEW takes the pin. Never the
+/// window property itself: re-pinning the private window makes AppKit rebuild its
+/// items, which re-triggers the pin in a loop.
 final class SchemeHostingView<Content: View>: NSHostingView<Content> {
   var schemeName: NSAppearance.Name = .aqua {
     didSet {

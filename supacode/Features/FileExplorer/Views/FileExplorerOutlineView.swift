@@ -65,7 +65,7 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     outlineView.coordinator = context.coordinator
     outlineView.headerView = nil
     // Inset style: rounded selection and side margins, matching the sidebar's
-    // modern look without source-list vibrancy fighting the forced appearance.
+    // modern look without source-list vibrancy over the terminal-tinted chrome.
     outlineView.style = .inset
     outlineView.rowSizeStyle = Self.rowSizeStyle(for: chromeTextSize)
     outlineView.usesAutomaticRowHeights = true
