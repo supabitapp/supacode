@@ -337,6 +337,57 @@ struct AppShortcutsTests {
     #expect(AppShortcuts.defaultEnabledOverride(for: .openRepository) == nil)
   }
 
+  // MARK: - Customize Appearance.
+
+  @Test func customizeAppearanceKeyRoundTrips() {
+    let decoded = AppShortcutID(codingKey: PlainCodingKey("customizeAppearance"))
+    #expect(decoded == .customizeAppearance)
+    #expect(decoded?.codingKey.stringValue == "customizeAppearance")
+    #expect(AppShortcuts.customizeAppearance.displayName == "Customize Appearance")
+  }
+
+  @Test func customizeAppearanceIsListedUnderWorktrees() {
+    let worktrees = AppShortcuts.groups.first { $0.category == .worktrees }
+    #expect(worktrees?.shortcuts.contains { $0.id == .customizeAppearance } == true)
+    #expect(AppShortcuts.customizeAppearance.isCustomizable)
+  }
+
+  @Test func customizeAppearanceShipsDisabledWithAnEnableableDefaultChord() throws {
+    // The issue asks for the option to bind a chord, not a shipped one: off
+    // until the settings toggle enables it, which binds the default ⌘⌃R.
+    #expect(AppShortcuts.customizeAppearance.isEnabledByDefault == false)
+    #expect(AppShortcuts.customizeAppearance.effective(from: [:]) == nil)
+    let override = try #require(AppShortcuts.defaultEnabledOverride(for: .customizeAppearance))
+    let enabled = AppShortcuts.customizeAppearance.effective(from: [.customizeAppearance: override])
+    #expect(enabled?.display == "⌘⌃R")
+    #expect(enabled?.display == AppShortcuts.customizeAppearance.display)
+  }
+
+  @Test func customizeAppearanceDefaultChordHasNoConflictOnceEnabled() throws {
+    let override = try #require(AppShortcuts.defaultEnabledOverride(for: .customizeAppearance))
+    let warnings = AppShortcuts.conflictWarnings(from: [.customizeAppearance: override])
+    #expect(warnings[.customizeAppearance]?.contains("Conflicts with") != true)
+  }
+
+  @Test func customizeAppearanceUnbindsInGhosttyOnlyWhenEnabled() throws {
+    // Off by default, the chord stays with the terminal; enabling it claims ⌘⌃R.
+    #expect(AppShortcuts.customizeAppearance.ghosttyUnbindConfigLine == "keybind = ctrl+super+r=unbind")
+    #expect(AppShortcuts.ghosttyKeybindConfigLines(from: [:]).contains("keybind = ctrl+super+r=unbind") == false)
+    let override = try #require(AppShortcuts.defaultEnabledOverride(for: .customizeAppearance))
+    let lines = AppShortcuts.ghosttyKeybindConfigLines(from: [.customizeAppearance: override])
+    #expect(lines.contains("keybind = ctrl+super+r=unbind"))
+  }
+
+  @Test func customizeAppearanceFollowsUserRebind() {
+    let overrides: [AppShortcutID: AppShortcutOverride] = [
+      .customizeAppearance: AppShortcutOverride(keyCode: UInt16(kVK_ANSI_E), modifiers: [.command, .option])
+    ]
+    let rebound = AppShortcuts.customizeAppearance.effective(from: overrides)
+    #expect(rebound?.display == "⌘⌥E")
+    #expect(rebound?.matches(Self.keyEvent(keyCode: kVK_ANSI_E, modifiers: [.command, .option])) == true)
+    #expect(rebound?.matches(Self.keyEvent(keyCode: kVK_ANSI_R, modifiers: [.command, .control])) == false)
+  }
+
   // MARK: - Active worktree selection slots.
 
   @Test func activeSlotsIncludeAllWhenNoOverrideAndRowsMatch() {
