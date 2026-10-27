@@ -203,7 +203,7 @@ struct SidebarHoistSummary: Equatable, Sendable {
 /// `RepositoriesFeature.State.sidebarStructure`; the view walks `sections`
 /// and does no layout calculation itself.
 struct SidebarStructure: Equatable, Sendable {
-  enum HighlightKind: String, Equatable, Sendable {
+  nonisolated enum HighlightKind: String, Codable, Equatable, Sendable {
     case pinned
     case active
 
@@ -223,8 +223,27 @@ struct SidebarStructure: Equatable, Sendable {
     }
   }
 
+  /// One render row in a Pinned or Active section.
+  enum HighlightRow: Equatable, Sendable, Identifiable {
+    /// A repository's group header in the default by-repository layout.
+    case repository(Repository.ID, name: String, isCollapsed: Bool, leafDescendantIDs: [SidebarItemID])
+    /// A branch-nesting row inside `repositoryID`'s group, or, when `repositoryID` is
+    /// nil, a top-level row: a custom folder row or a folder repository's own row.
+    case nested(SidebarBranchNesting.Row, repositoryID: Repository.ID?)
+
+    /// Namespaced by repository: two groups can both hold a `feature` header.
+    var id: String {
+      switch self {
+      case .repository(let repositoryID, _, _, _): "repository:\(repositoryID.rawValue)"
+      case .nested(let row, let repositoryID): "\(repositoryID?.rawValue ?? ""):\(row.id)"
+      }
+    }
+  }
+
   enum Section: Equatable, Sendable, Identifiable {
-    case highlight(kind: HighlightKind, rowIDs: [Worktree.ID])
+    /// `rowIDs` is the hoisted priority order; `rows` is the render plan, which
+    /// groups rows by repository and branch, or by custom folder.
+    case highlight(kind: HighlightKind, rowIDs: [Worktree.ID], rows: [HighlightRow])
     case repository(repositoryID: Repository.ID, groups: [SidebarItemGroup])
     case folder(repositoryID: Repository.ID, rowID: Worktree.ID)
     case failedRepository(
@@ -247,7 +266,7 @@ struct SidebarStructure: Equatable, Sendable {
 
     var id: SectionID {
       switch self {
-      case .highlight(let kind, _): .highlight(kind)
+      case .highlight(let kind, _, _): .highlight(kind)
       case .repository(let repositoryID, _): .repository(repositoryID)
       case .folder(let repositoryID, _): .folder(repositoryID)
       case .failedRepository(let repositoryID, _, _, _, _): .failedRepository(repositoryID)
@@ -287,6 +306,12 @@ struct SidebarStructure: Equatable, Sendable {
   /// this to translate `.onMove` flat offsets into the index space the
   /// `.repositoriesMoved` reducer action expects.
   var reorderableRepositoryIDs: [Repository.ID]
+  /// Every group folder path in use, ancestors included, sorted for the row
+  /// context menu's Group submenu.
+  var groupPaths: [String] = []
+  /// Group path of every live, unarchived grouped row, so the Group submenu can
+  /// mark the current folder without reading the roster from a view body.
+  var groupPathByID: [Worktree.ID: String] = [:]
 
   static let empty = SidebarStructure(
     sections: [],
@@ -453,8 +478,11 @@ extension RepositoriesFeature.Action {
     case .sidebarGroupingTogglesChanged, .sidebarNestByBranchChanged,
       .sidebarSectionSortChanged,
       .repositoryExpansionChanged, .branchNestExpansionChanged,
+      .sidebarGroupExpansionChanged, .highlightGroupExpansionChanged,
       .setAllSidebarGroupsExpanded,
-      .setMoveNotifiedWorktreeToTop,
+      // Reveal opens collapsed Pinned / Active groups, which live in the cached structure.
+      .revealSelectedWorktreeInSidebar, .revealHoistedWorktreeInSidebar,
+      .setMoveNotifiedWorktreeToTop, .setSidebarFoldersEnabled,
       .worktreeLineChangesLoaded,
       .consumeTerminalFocus:
       return .sidebarStructure
@@ -566,7 +594,10 @@ extension RepositoriesFeature.Action {
     // Deeplink / CLI appearance update mutates the same fields as the sheet save.
     case .setWorktreeAppearance:
       return .allSidebar
-    case .worktreeCustomization:
+    // Context-menu group move rewrites the bucketed Item's group path.
+    case .setWorktreeGroup, .newGroupPromptSubmitted:
+      return .allSidebar
+    case .worktreeCustomization, .requestNewGroup, .setNewGroupPromptPresented:
       return []
 
     // Branch rename updates the worktree.name shown in the sidebar row and notification group.
@@ -603,7 +634,6 @@ extension RepositoriesFeature.Action {
       // always follows `.gitEnvironmentChanged`, so this needs no invalidation.
       .gitEnvironmentChanged,
       .openRepositories,
-      .revealSelectedWorktreeInSidebar, .revealHoistedWorktreeInSidebar,
       .consumePendingSidebarReveal,
       .createRandomWorktree,
       .promptedWorktreeCreationDataLoaded, .promptedWorktreeBranchesLoaded,
@@ -739,18 +769,29 @@ extension RepositoriesFeature.State {
     let hoists = computeHighlightHoists(groupPinned: groupPinned, groupActive: groupActive)
     let repoSections = buildRepositorySections(hoisted: hoists.hoistedSet, sectionSort: sectionSort)
 
+    // Hoisted rows are never archived, so the roster-wide map covers both sections.
+    // With folders off the map is empty, which also empties the Group submenu.
+    let groupByID = sidebarFoldersEnabled ? sidebarGroupByID() : [:]
+    let pinnedRows = highlightRows(
+      kind: .pinned, orderedIDs: hoists.pinned, repositoryOrder: repoSections.displayRepositoryIDs,
+      groupByID: groupByID)
+    let activeRows = highlightRows(
+      kind: .active, orderedIDs: hoists.active, repositoryOrder: repoSections.displayRepositoryIDs,
+      groupByID: groupByID)
     var sections: [SidebarStructure.Section] = []
     if !hoists.pinned.isEmpty {
-      sections.append(.highlight(kind: .pinned, rowIDs: hoists.pinned))
+      sections.append(.highlight(kind: .pinned, rowIDs: hoists.pinned, rows: pinnedRows))
     }
     if !hoists.active.isEmpty {
-      sections.append(.highlight(kind: .active, rowIDs: hoists.active))
+      sections.append(.highlight(kind: .active, rowIDs: hoists.active, rows: activeRows))
     }
     sections.append(contentsOf: repoSections.sections)
 
+    // Hotkeys follow the rendered order, so rows inside a collapsed group folder
+    // get no slot, matching rows inside a collapsed repository.
     let hotkey = computeHotkeyOrdering(
-      pinnedHoisted: hoists.pinned,
-      activeHoisted: hoists.active,
+      pinnedHoisted: Self.leafIDs(in: pinnedRows),
+      activeHoisted: Self.leafIDs(in: activeRows),
       hoisted: hoists.hoistedSet,
       sections: sections
     )
@@ -767,8 +808,93 @@ extension RepositoriesFeature.State {
       slotByID: hotkey.slotByID,
       repositoryHighlightByID: highlightProjections.tags,
       hoistSummaryByRepositoryID: highlightProjections.summaries,
-      reorderableRepositoryIDs: repoSections.reorderableRepositoryIDs
+      reorderableRepositoryIDs: repoSections.reorderableRepositoryIDs,
+      groupPaths: Set(groupByID.values.flatMap(SidebarGroupNesting.paths(including:)))
+        .sorted { $0.localizedStandardCompare($1) == .orderedAscending },
+      groupPathByID: groupByID
     )
+  }
+
+  private static func leafIDs(in rows: [SidebarStructure.HighlightRow]) -> [Worktree.ID] {
+    rows.compactMap { row in
+      if case .nested(.leaf(let id, _, _), _) = row { return id }
+      return nil
+    }
+  }
+
+  /// Render plan for one Pinned / Active section. With custom folders on, rows nest
+  /// under their group paths across repositories. Otherwise they group by repository,
+  /// in sidebar order, and nest by branch inside each group like the repository
+  /// sections do. Rows keep their hoist order within a group, so unread rows still float.
+  private func highlightRows(
+    kind: SidebarStructure.HighlightKind,
+    orderedIDs: [Worktree.ID],
+    repositoryOrder: [Repository.ID],
+    groupByID: [Worktree.ID: String]
+  ) -> [SidebarStructure.HighlightRow] {
+    if sidebarFoldersEnabled {
+      return SidebarGroupNesting.buildRows(
+        orderedIDs: orderedIDs, groupByID: groupByID, collapsedPaths: sidebar.collapsedGroups
+      )
+      .map { .nested($0, repositoryID: nil) }
+    }
+    // `repositoryOrder` lists every loaded repository (see `orderedRepositoryIDs()`).
+    let idsByRepository = Dictionary(grouping: orderedIDs) { sidebarItems[id: $0]?.repositoryID }
+    var rows: [SidebarStructure.HighlightRow] = []
+    for repositoryID in repositoryOrder {
+      guard let ids = idsByRepository[repositoryID], let repository = repositories[id: repositoryID] else {
+        continue
+      }
+      // A folder repository's row is the repository, so it stays headerless like its section.
+      guard repository.isGitRepository else {
+        rows += ids.map { .nested(.leaf(id: $0, depth: 0, displayName: nil), repositoryID: nil) }
+        continue
+      }
+      let collapsed = (sidebar.sections[repositoryID]?.collapsedHighlightGroups ?? []).filter { $0.kind == kind }
+      let isCollapsed = collapsed.contains(.init(kind: kind, branchPrefix: nil))
+      rows.append(
+        .repository(
+          repositoryID,
+          name: Repository.sidebarDisplayName(custom: sidebar.customTitle(for: repository), fallback: repository.name),
+          isCollapsed: isCollapsed,
+          leafDescendantIDs: ids
+        )
+      )
+      guard !isCollapsed else { continue }
+      let nested: [SidebarBranchNesting.Row] =
+        sidebarNestWorktreesByBranch
+        ? SidebarBranchNesting.buildRows(
+          itemIDs: ids,
+          branchNames: ids.reduce(into: [:]) { $0[$1] = sidebarItems[id: $1]?.branchName },
+          collapsedPrefixes: Set(collapsed.compactMap(\.branchPrefix)),
+          keepsOrder: true,
+          depth: 1
+        )
+        : ids.map { .leaf(id: $0, depth: 1, displayName: nil) }
+      rows += nested.map { .nested($0, repositoryID: repositoryID) }
+    }
+    return rows
+  }
+
+  /// User-assigned group path for a row, read from its bucketed sidebar item.
+  func sidebarGroupPath(for id: Worktree.ID) -> String? {
+    guard let repositoryID = sidebarItems[id: id]?.repositoryID,
+      let bucket = sidebar.currentBucket(of: id, in: repositoryID)
+    else { return nil }
+    return sidebar.sections[repositoryID]?.buckets[bucket]?.items[id]?.group
+  }
+
+  /// Group path of every live, unarchived grouped row. Walks the roster rather than
+  /// `sidebar.sections`, so leftovers from removed repositories don't appear.
+  private func sidebarGroupByID() -> [Worktree.ID: String] {
+    let archived = archivedWorktreeIDSet
+    var groupByID: [Worktree.ID: String] = [:]
+    for id in sidebarItems.ids where !archived.contains(id) {
+      if let group = sidebarGroupPath(for: id) {
+        groupByID[id] = group
+      }
+    }
+    return groupByID
   }
 
   /// Pinned and Active hoists computed as if both sidebar grouping toggles were
@@ -823,6 +949,8 @@ extension RepositoriesFeature.State {
   private struct RepositorySectionsBuild {
     var sections: [SidebarStructure.Section]
     var reorderableRepositoryIDs: [Repository.ID]
+    /// Repository order as drawn, which the Pinned / Active groups follow.
+    var displayRepositoryIDs: [Repository.ID]
   }
 
   private func buildRepositorySections(
@@ -919,7 +1047,8 @@ extension RepositoriesFeature.State {
 
     return RepositorySectionsBuild(
       sections: sections,
-      reorderableRepositoryIDs: reorderableRepositoryIDs
+      reorderableRepositoryIDs: reorderableRepositoryIDs,
+      displayRepositoryIDs: displayRepositoryIDs
     )
   }
 

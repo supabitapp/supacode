@@ -313,7 +313,8 @@ struct AppFeatureSettingsSelectionTests {
                 worktreeID: WorktreeID(repository.id.rawValue),
                 repositoryID: repository.id,
                 title: "Files",
-                color: nil
+                color: nil,
+                group: nil
               )
             )
           )

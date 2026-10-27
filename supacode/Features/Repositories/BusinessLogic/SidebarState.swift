@@ -25,6 +25,9 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
   var schemaVersion: Int
   var sections: OrderedDictionary<Repository.ID, Section>
   var focusedWorktreeID: Worktree.ID?
+  /// Group folder paths (see `Item.group`) currently collapsed in the Pinned
+  /// and Active sections. One set for both, so a folder collapses everywhere.
+  var collapsedGroups: Set<String>
 
   /// Memberwise initializer. `schemaVersion` defaults to `0`, meaning
   /// "not migrated yet, or migrator failed". The boot-time migrator
@@ -34,17 +37,20 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
   init(
     schemaVersion: Int = 0,
     sections: OrderedDictionary<Repository.ID, Section> = [:],
-    focusedWorktreeID: Worktree.ID? = nil
+    focusedWorktreeID: Worktree.ID? = nil,
+    collapsedGroups: Set<String> = []
   ) {
     self.schemaVersion = schemaVersion
     self.sections = sections
     self.focusedWorktreeID = focusedWorktreeID
+    self.collapsedGroups = collapsedGroups
   }
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion
     case sections
     case focusedWorktreeID
+    case collapsedGroups
   }
 
   init(from decoder: any Decoder) throws {
@@ -59,6 +65,8 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
         forKey: .sections
       ) ?? [:]
     self.focusedWorktreeID = try container.decodeIfPresent(Worktree.ID.self, forKey: .focusedWorktreeID)
+    // `try?` so a malformed value drops just this field, like `collapsedBranchPrefixes`.
+    self.collapsedGroups = (try? container.decodeIfPresent(Set<String>.self, forKey: .collapsedGroups)) ?? []
   }
 
   func encode(to encoder: any Encoder) throws {
@@ -69,6 +77,9 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
     try container.encode(schemaVersion, forKey: .schemaVersion)
     try container.encode(sections, forKey: .sections)
     try container.encodeIfPresent(focusedWorktreeID, forKey: .focusedWorktreeID)
+    if !collapsedGroups.isEmpty {
+      try container.encode(collapsedGroups, forKey: .collapsedGroups)
+    }
   }
 
   nonisolated enum BucketID: String, Codable, Hashable, Sendable {
@@ -98,17 +109,21 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
     /// Optional user-supplied tint applied to the sidebar header.
     /// `nil` means "default / no tint".
     var color: RepositoryColor?
+    /// Headers of this repository's group collapsed in the Pinned and Active sections.
+    var collapsedHighlightGroups: Set<HighlightGroup>
 
     init(
       collapsed: Bool = false,
       buckets: OrderedDictionary<BucketID, Bucket> = [:],
       title: String? = nil,
-      color: RepositoryColor? = nil
+      color: RepositoryColor? = nil,
+      collapsedHighlightGroups: Set<HighlightGroup> = []
     ) {
       self.collapsed = collapsed
       self.buckets = buckets
       self.title = title
       self.color = color
+      self.collapsedHighlightGroups = collapsedHighlightGroups
     }
 
     private enum SectionCodingKeys: String, CodingKey {
@@ -116,6 +131,7 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
       case buckets
       case title
       case color
+      case collapsedHighlightGroups
     }
 
     init(from decoder: any Decoder) throws {
@@ -131,6 +147,9 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
         ) ?? [:]
       self.title = try container.decodeIfPresent(String.self, forKey: .title)
       self.color = try container.decodeIfPresent(RepositoryColor.self, forKey: .color)
+      // `try?` so a malformed value drops just this field, like `collapsedBranchPrefixes`.
+      self.collapsedHighlightGroups =
+        (try? container.decodeIfPresent(Set<HighlightGroup>.self, forKey: .collapsedHighlightGroups)) ?? []
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -143,7 +162,17 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
       // stays clean for repos the user never touched.
       try container.encodeIfPresent(title, forKey: .title)
       try container.encodeIfPresent(color, forKey: .color)
+      if !collapsedHighlightGroups.isEmpty {
+        try container.encode(collapsedHighlightGroups, forKey: .collapsedHighlightGroups)
+      }
     }
+  }
+
+  /// A header inside one repository's group in the Pinned or Active section.
+  nonisolated struct HighlightGroup: Hashable, Sendable, Codable {
+    var kind: SidebarStructure.HighlightKind
+    /// Branch-prefix header inside the group; `nil` is the repository header itself.
+    var branchPrefix: String?
   }
 
   nonisolated struct Bucket: Equatable, Sendable, Codable {
@@ -203,17 +232,23 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
     /// Optional user-supplied tint applied to the sidebar row title.
     /// `nil` means "default styling".
     var color: RepositoryColor?
+    /// Optional user-assigned group path (`Project 1/Backend`) that nests the
+    /// row under folders in the Pinned and Active sections. Stored normalized
+    /// (see `SidebarGroupNesting.normalized`); `nil` means "no group".
+    var group: String?
 
     private enum CodingKeys: String, CodingKey {
       case archivedAt
       case title
       case color
+      case group
     }
 
-    init(archivedAt: Date? = nil, title: String? = nil, color: RepositoryColor? = nil) {
+    init(archivedAt: Date? = nil, title: String? = nil, color: RepositoryColor? = nil, group: String? = nil) {
       self.archivedAt = archivedAt
       self.title = title
       self.color = color
+      self.group = group
     }
 
     init(from decoder: any Decoder) throws {
@@ -224,6 +259,7 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
       // that doesn't understand `.custom`, hand-edit, etc.) drops just
       // this field rather than killing the row's entire entry.
       self.color = (try? container.decodeIfPresent(RepositoryColor.self, forKey: .color)) ?? nil
+      self.group = try container.decodeIfPresent(String.self, forKey: .group)
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -233,6 +269,7 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
       // stays clean for worktrees the user never touched.
       try container.encodeIfPresent(title, forKey: .title)
       try container.encodeIfPresent(color, forKey: .color)
+      try container.encodeIfPresent(group, forKey: .group)
     }
   }
 
@@ -430,6 +467,23 @@ nonisolated extension SidebarState {
     var item = bucket.items[worktreeID] ?? .init()
     item.title = title
     item.color = color
+    bucket.items[worktreeID] = item
+    section.buckets[destinationBucket] = bucket
+    sections[repositoryID] = section
+  }
+
+  /// Overwrite a row's group path, falling back to `.unpinned` when the row hasn't been seeded
+  /// yet, like `setCustomization`. The Item travels with the row through pin / archive moves.
+  mutating func setGroup(
+    _ group: String?,
+    worktree worktreeID: Worktree.ID,
+    in repositoryID: Repository.ID
+  ) {
+    let destinationBucket = currentBucket(of: worktreeID, in: repositoryID) ?? .unpinned
+    var section = sections[repositoryID] ?? .init()
+    var bucket = section.buckets[destinationBucket] ?? .init()
+    var item = bucket.items[worktreeID] ?? .init()
+    item.group = group
     bucket.items[worktreeID] = item
     section.buckets[destinationBucket] = bucket
     sections[repositoryID] = section

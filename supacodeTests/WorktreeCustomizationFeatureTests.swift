@@ -28,7 +28,7 @@ struct WorktreeCustomizationFeatureTests {
     await store.send(.saveButtonTapped)
     await store.receive(
       .delegate(
-        .save(worktreeID: "wt-1", repositoryID: "/tmp/repo", title: "Spicy", color: .blue),
+        .save(worktreeID: "wt-1", repositoryID: "/tmp/repo", title: "Spicy", color: .blue, group: nil),
       ))
   }
 
@@ -39,7 +39,7 @@ struct WorktreeCustomizationFeatureTests {
 
     await store.send(.saveButtonTapped)
     await store.receive(
-      .delegate(.save(worktreeID: "wt-1", repositoryID: "/tmp/repo", title: nil, color: nil)),
+      .delegate(.save(worktreeID: "wt-1", repositoryID: "/tmp/repo", title: nil, color: nil, group: nil)),
     )
   }
 
@@ -51,7 +51,34 @@ struct WorktreeCustomizationFeatureTests {
 
     await store.send(.saveButtonTapped)
     await store.receive(
-      .delegate(.save(worktreeID: "wt-1", repositoryID: "/tmp/repo", title: "feature/x", color: nil)),
+      .delegate(.save(worktreeID: "wt-1", repositoryID: "/tmp/repo", title: "feature/x", color: nil, group: nil)),
+    )
+  }
+
+  @Test func saveNormalizesGroupPath() async {
+    var state = makeState()
+    state.group = " Project 1 // Backend / "
+    let store = TestStore(initialState: state) {
+      WorktreeCustomizationFeature()
+    }
+
+    await store.send(.saveButtonTapped)
+    await store.receive(
+      .delegate(
+        .save(worktreeID: "wt-1", repositoryID: "/tmp/repo", title: nil, color: nil, group: "Project 1/Backend"),
+      ))
+  }
+
+  @Test func saveDropsBlankGroup() async {
+    var state = makeState()
+    state.group = " / "
+    let store = TestStore(initialState: state) {
+      WorktreeCustomizationFeature()
+    }
+
+    await store.send(.saveButtonTapped)
+    await store.receive(
+      .delegate(.save(worktreeID: "wt-1", repositoryID: "/tmp/repo", title: nil, color: nil, group: nil)),
     )
   }
 

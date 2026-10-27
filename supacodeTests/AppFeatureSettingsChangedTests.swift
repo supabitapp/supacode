@@ -17,6 +17,7 @@ struct AppFeatureSettingsChangedTests {
     settings.setForgeIntegrationEnabled(false, forID: "gitlab")
     settings.mergedWorktreeAction = .archive
     settings.moveNotifiedWorktreeToTop = true
+    settings.sidebarFoldersEnabled = true
     let store = TestStore(initialState: AppFeature.State()) {
       AppFeature()
     }
@@ -32,6 +33,9 @@ struct AppFeatureSettingsChangedTests {
     }
     await store.receive(\.repositories.setMoveNotifiedWorktreeToTop) {
       $0.repositories.moveNotifiedWorktreeToTop = true
+    }
+    await store.receive(\.repositories.setSidebarFoldersEnabled) {
+      $0.repositories.sidebarFoldersEnabled = true
     }
     await store.receive(\.repositories.openActionSettingsChanged)
     await store.receive(\.repositories.setAutoDeleteArchivedWorktreesAfterDays)

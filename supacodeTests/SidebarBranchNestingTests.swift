@@ -39,6 +39,28 @@ struct SidebarBranchNestingTests {
     )
   }
 
+  @Test func keepsOrderPlacesEachGroupWhereItsFirstRowIsAndShiftsDepth() {
+    // Incoming priority order: `zed` first, then a `feature/*` pair split by `alpha`.
+    let rows = SidebarBranchNesting.buildRows(
+      itemIDs: ["/wt/zed", "/wt/b", "/wt/alpha", "/wt/a"],
+      branchNames: ["/wt/zed": "zed", "/wt/b": "feature/b", "/wt/alpha": "alpha", "/wt/a": "feature/a"],
+      collapsedPrefixes: [],
+      keepsOrder: true,
+      depth: 1
+    )
+    #expect(
+      rows == [
+        .leaf(id: "/wt/zed", depth: 1, displayName: nil),
+        .groupHeader(
+          prefix: "feature", components: ["feature"], depth: 1, isCollapsed: false,
+          leafDescendantIDs: ["/wt/b", "/wt/a"]),
+        .leaf(id: "/wt/b", depth: 2, displayName: "b"),
+        .leaf(id: "/wt/a", depth: 2, displayName: "a"),
+        .leaf(id: "/wt/alpha", depth: 1, displayName: nil),
+      ]
+    )
+  }
+
   @Test func twoLeavesSharedPrefix() {
     let rows = SidebarBranchNesting.buildRows(
       itemIDs: ["/wt/a", "/wt/b"],
