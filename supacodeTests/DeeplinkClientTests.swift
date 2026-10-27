@@ -510,6 +510,25 @@ struct DeeplinkClientTests {
     )
   }
 
+  @Test func repoWorktreeNewWithReuseExistingBranch() {
+    let repoEncoded = "%2Ftmp%2Frepo"
+    let url = URL(
+      string: "supacode://repo/\(repoEncoded)/worktree/new?branch=feature-x&reuse-existing-branch=true"
+    )!
+    #expect(
+      parse(url)
+        == .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: "feature-x",
+          baseRef: nil,
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil,
+          reuseExistingBranch: true
+        )
+    )
+  }
+
   @Test func repoWorktreeNewWithUpstream() {
     let repoEncoded = "%2Ftmp%2Frepo"
     let url = URL(

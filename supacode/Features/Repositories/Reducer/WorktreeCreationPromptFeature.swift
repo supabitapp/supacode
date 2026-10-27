@@ -37,6 +37,10 @@ struct WorktreeCreationPromptFeature {
     var showAppearanceOptions: Bool = false
     var validationMessage: String?
     var isValidating = false
+    /// Validation found the submitted branch exists and no worktree has it checked out.
+    var canReuseExistingBranch = false
+    /// The user opted to check out that branch instead of creating one.
+    var reuseExistingBranch = false
     /// Optional sidebar customization captured by the new Title / Color
     /// section; transferred to `PendingWorktree.customization` on submit.
     var title: String = ""
@@ -108,6 +112,11 @@ struct WorktreeCreationPromptFeature {
       guard !ref.isEmpty else { return true }
       return GitReferenceQueries.localBranchName(fromRemoteRef: ref, remoteNames: remoteNames) == nil
     }
+
+    /// A reused branch has nothing to fetch, just like a local base ref.
+    var isFetchOriginDisabled: Bool {
+      isSelectedBaseRefLocal || reuseExistingBranch
+    }
   }
 
   enum Action: BindableAction, Equatable {
@@ -132,7 +141,8 @@ struct WorktreeCreationPromptFeature {
       fetchOrigin: Bool,
       placement: WorktreePlacementOverride,
       title: String?,
-      color: RepositoryColor?
+      color: RepositoryColor?,
+      reuseExistingBranch: Bool = false
     )
   }
 
@@ -140,6 +150,13 @@ struct WorktreeCreationPromptFeature {
     BindingReducer()
     Reduce { state, action in
       switch action {
+      case .binding(\.branchName):
+        // The reuse offer was for the submitted name, not whatever the field holds now.
+        state.validationMessage = nil
+        state.canReuseExistingBranch = false
+        state.reuseExistingBranch = false
+        return .none
+
       case .binding:
         state.validationMessage = nil
         return .none
@@ -188,13 +205,14 @@ struct WorktreeCreationPromptFeature {
               baseRef: state.selectedBaseRef,
               upstream: state.selectedUpstream,
               // Match the disabled toggle: a local base ref has nothing to fetch.
-              fetchOrigin: state.isSelectedBaseRefLocal ? false : state.fetchOrigin,
+              fetchOrigin: state.isFetchOriginDisabled ? false : state.fetchOrigin,
               placement: WorktreePlacementOverride(
                 name: nameOverride.isEmpty ? nil : nameOverride,
                 path: pathOverride.isEmpty ? nil : pathOverride
               ),
               title: resolvedTitle,
-              color: state.color
+              color: state.color,
+              reuseExistingBranch: state.reuseExistingBranch
             )
           )
         )

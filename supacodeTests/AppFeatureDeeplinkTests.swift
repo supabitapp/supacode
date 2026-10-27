@@ -2792,6 +2792,48 @@ struct AppFeatureDeeplinkTests {
     #expect(observedSetUpstream.value?.root == URL(fileURLWithPath: "/tmp/repo"))
   }
 
+  @Test(.dependencies) func repoWorktreeNewThreadsReuseExistingBranch() async {
+    let worktree = makeWorktree()
+    let classifiedBranch = LockIsolated<String?>(nil)
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in ["feature-x"] }
+      $0.gitClient.isValidBranchName = { _, _ in true }
+      // Only an opted-in creation classifies the branch; refusing it ends the creation early.
+      $0.gitClient.branchAvailability = { branch, _ in
+        classifiedBranch.setValue(branch)
+        return .checkedOut("/tmp/elsewhere/feature-x")
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(
+        .repoWorktreeNew(
+          repositoryID: "/tmp/repo",
+          branch: "feature-x",
+          baseRef: nil,
+          fetchOrigin: false,
+          worktreeName: nil,
+          worktreePath: nil,
+          reuseExistingBranch: true
+        )
+      )
+    )
+    await store.receive(\.repositories.createRandomWorktreeFailed)
+    await store.finish()
+
+    #expect(classifiedBranch.value == "feature-x")
+    #expect(store.state.repositories.alert?.title == TextState("Branch already checked out"))
+  }
+
   @Test(.dependencies) func repoWorktreeNewWithDeadUpstreamFailsBeforeCreation() async {
     let worktree = makeWorktree()
     let streamStarted = LockIsolated(false)

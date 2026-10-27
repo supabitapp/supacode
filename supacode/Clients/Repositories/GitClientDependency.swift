@@ -24,6 +24,7 @@ nonisolated struct GitClientDependency: Sendable {
   var registeredWorktrees: @Sendable (URL) async throws -> [Worktree]
   var reconcileSupacodeLocks: @Sendable (URL) async -> Void
   var localBranchNames: @Sendable (URL) async throws -> Set<String>
+  var branchAvailability: @Sendable (_ branch: String, _ repoRoot: URL) async throws -> GitBranchAvailability
   var renameBranch: @Sendable (_ oldName: String, _ newName: String, _ repoRoot: URL) async throws -> Void
   var isValidBranchName: @Sendable (String, URL) async -> Bool
   var branchInventory: @Sendable (URL, [String]) async throws -> GitBranchInventory
@@ -221,6 +222,7 @@ nonisolated extension GitClientDependency: DependencyKey {
       registeredWorktrees: { try await GitClient(shell: shell).gitWorktrees(for: $0) },
       reconcileSupacodeLocks: { await GitClient(shell: shell).reconcileSupacodeLocks(for: $0) },
       localBranchNames: { try await GitClient(shell: shell).localBranchNames(for: $0) },
+      branchAvailability: { try await GitClient(shell: shell).branchAvailability($0, for: $1) },
       renameBranch: { oldName, newName, repoRoot in
         try await GitClient(shell: shell).renameBranch(from: oldName, to: newName, for: repoRoot)
       },
@@ -322,6 +324,8 @@ nonisolated extension GitClientDependency: DependencyKey {
     value.rootDirectoryExists = { _ in true }
     value.worktreeTargetState = { _ in .absent }
     value.registeredWorktrees = { _ in [] }
+    // Fixtures with fake `/tmp/...` roots must not shell out; reuse tests override this.
+    value.branchAvailability = { _, _ in .absent }
     value.deleteBranch = { _, _, _ in }
     value.resolveCommit = { _, _ in nil }
     // Default to a healthy git environment so tests don't shell out to real

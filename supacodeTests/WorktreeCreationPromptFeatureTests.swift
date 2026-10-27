@@ -391,4 +391,56 @@ struct WorktreeCreationPromptFeatureTests {
       $0.validationMessage = "Branch name required."
     }
   }
+
+  @Test func reuseToggleTurnsFetchOffAndSubmitsReuse() async {
+    var state = makeState(selectedBaseRef: "origin/dev")
+    state.branchName = "feature/existing"
+    state.selectedUpstream = .branch("origin/feature")
+    state.validationMessage = "Branch already exists. Turn on Reuse existing branch to check it out."
+    state.canReuseExistingBranch = true
+    let store = TestStore(initialState: state) {
+      WorktreeCreationPromptFeature()
+    }
+
+    // Toggling reuse keeps the offer and disables fetch along with the base and upstream pickers.
+    await store.send(.set(\.reuseExistingBranch, true)) {
+      $0.reuseExistingBranch = true
+      $0.validationMessage = nil
+    }
+    #expect(store.state.isFetchOriginDisabled)
+    await store.send(.createButtonTapped)
+    await store.receive(
+      .delegate(
+        .submit(
+          repositoryID: "/tmp/repo/",
+          branchName: "feature/existing",
+          // The creation ignores both for a reused branch.
+          baseRef: "origin/dev",
+          upstream: .branch("origin/feature"),
+          fetchOrigin: false,
+          placement: WorktreePlacementOverride(name: nil, path: nil),
+          title: nil,
+          color: nil,
+          reuseExistingBranch: true
+        )
+      )
+    )
+  }
+
+  @Test func editingTheBranchNameWithdrawsTheReuseOffer() async {
+    var state = makeState()
+    state.branchName = "feature/existing"
+    state.canReuseExistingBranch = true
+    state.reuseExistingBranch = true
+    let store = TestStore(initialState: state) {
+      WorktreeCreationPromptFeature()
+    }
+
+    await store.send(.set(\.branchName, "feature/other")) {
+      $0.branchName = "feature/other"
+      $0.canReuseExistingBranch = false
+      $0.reuseExistingBranch = false
+    }
+    #expect(!store.state.isFetchOriginDisabled)
+  }
 }

@@ -18,7 +18,9 @@ enum Deeplink: Equatable, Sendable {
     worktreeName: String?,
     worktreePath: String?,
     background: Bool = false,
-    pin: Bool = false
+    pin: Bool = false,
+    /// Check out `branch` if it exists unused, instead of refusing the name.
+    reuseExistingBranch: Bool = false
   )
   case settings(section: DeeplinkSettingsSection?)
   case settingsRepo(repositoryID: Repository.ID)

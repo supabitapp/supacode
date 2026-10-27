@@ -8,6 +8,16 @@ nonisolated enum WorktreeTargetState: Equatable, Sendable {
   case occupied
 }
 
+/// How a requested branch name stands against the repository's local branches.
+nonisolated enum GitBranchAvailability: Equatable, Sendable {
+  case absent
+  /// The branch exists and no worktree has it checked out.
+  case reusable
+  /// Checked out in the worktree at this path. Git allows one checkout per branch, and `wt sw`
+  /// would hand that worktree back instead of failing.
+  case checkedOut(String)
+}
+
 /// The branch and directory a failed creation may reap, and only if git registered them as a pair.
 nonisolated struct WorktreeCreationCleanupTarget: Equatable, Sendable {
   let branchName: String
@@ -16,12 +26,15 @@ nonisolated struct WorktreeCreationCleanupTarget: Equatable, Sendable {
   let directoryPreexisted: Bool
   /// The commit `wt` branches from; a leftover branch must still point there to be deleted.
   var baseCommit: String?
-  /// Git started `worktree add -b` for this branch; nothing is reaped without it.
+  /// Git started `worktree add` for this branch; nothing is reaped without it.
   var startedWorktreeAdd = false
+  /// The branch predates this creation, so a reap removes only the worktree, never the branch.
+  var reusesBranch = false
 
-  /// Whether `line` is git's `worktree add -b` announcement for this branch (stderr, `LC_ALL=C`).
+  /// Whether `line` is git's `worktree add` announcement for this branch (stderr, `LC_ALL=C`).
   func isWorktreeAddAnnouncement(_ line: String) -> Bool {
-    line.trimmingCharacters(in: .whitespacesAndNewlines) == "Preparing worktree (new branch '\(branchName)')"
+    let announcement = reusesBranch ? "checking out '\(branchName)'" : "new branch '\(branchName)'"
+    return line.trimmingCharacters(in: .whitespacesAndNewlines) == "Preparing worktree (\(announcement))"
   }
 }
 
@@ -36,14 +49,19 @@ nonisolated enum WorktreeCreationOwnership: Equatable, Sendable {
 nonisolated enum WorktreeCreationPreflight {
   /// Names a new branch can't take, in any case.
   struct TakenNames: Equatable, Sendable {
-    /// Branches and in-flight creations, which also reserve their ref namespace.
+    /// Existing branches, which also reserve their ref namespace.
     var branches: Set<String>
     /// Worktree display names (a detached worktree's folder leaf), matched exactly.
     var worktrees: Set<String> = []
+    /// In-flight creations, which reserve their name and namespace even for a reuse.
+    var inFlight: Set<String> = []
   }
 
   enum Rejection: Error, Equatable, Sendable {
     case nameTaken
+    case branchCheckedOut(worktreePath: String)
+    /// A reuse found the branch created or deleted between its two checks.
+    case branchChanged
     case namespaceConflict(branch: String)
     case folderOccupied(URL)
     case insideWorktree(URL, worktreeName: String)
@@ -51,6 +69,8 @@ nonisolated enum WorktreeCreationPreflight {
     var title: String {
       switch self {
       case .nameTaken: "Branch name already exists"
+      case .branchCheckedOut: "Branch already checked out"
+      case .branchChanged: "Branch changed during creation"
       case .namespaceConflict: "Branch name conflicts with an existing branch"
       case .folderOccupied: "Worktree folder already exists"
       case .insideWorktree: "Worktree folder is inside another worktree"
@@ -61,6 +81,11 @@ nonisolated enum WorktreeCreationPreflight {
       switch self {
       case .nameTaken:
         "Choose a different branch name and try again."
+      case .branchCheckedOut(let worktreePath):
+        "It's checked out at '\(worktreePath)', and git allows one checkout per branch. "
+          + "Open that worktree, or choose a different branch name."
+      case .branchChanged:
+        "The branch was created or deleted while the worktree was being prepared. Try again."
       case .namespaceConflict(let branch):
         "Git can't create this branch while '\(branch)' exists, since one would have to be "
           + "a folder of the other. Choose a different branch name."
@@ -74,18 +99,27 @@ nonisolated enum WorktreeCreationPreflight {
   }
 
   /// Clears `branchName` for `wt` at `targetDirectory`, yielding the only target a failure may reap.
+  /// `existingBranch` is classified only when the caller opted to reuse an existing branch: a
+  /// `.reusable` one may keep its name, a `.checkedOut` one is refused, and `.absent` creates it.
   static func claim(
     branchName: String,
     targetDirectory: URL,
     targetState: WorktreeTargetState,
     takenNames: TakenNames,
-    worktrees: [Worktree]
+    worktrees: [Worktree],
+    existingBranch: GitBranchAvailability = .absent
   ) -> Result<WorktreeCreationCleanupTarget, Rejection> {
+    if case .checkedOut(let worktreePath) = existingBranch {
+      return .failure(.branchCheckedOut(worktreePath: worktreePath))
+    }
+    let reusesBranch = existingBranch == .reusable
     let lowercasedName = branchName.lowercased()
-    for taken in takenNames.branches.union(takenNames.worktrees) where taken.lowercased() == lowercasedName {
+    let blockingNames = takenNames.worktrees.union(takenNames.inFlight)
+      .union(reusesBranch ? [] : takenNames.branches)
+    for taken in blockingNames where taken.lowercased() == lowercasedName {
       return .failure(.nameTaken)
     }
-    if let conflict = conflictingBranch(for: branchName, among: takenNames.branches) {
+    if let conflict = conflictingBranch(for: branchName, among: takenNames.branches.union(takenNames.inFlight)) {
       return .failure(.namespaceConflict(branch: conflict))
     }
     if targetState == .occupied {
@@ -98,7 +132,8 @@ nonisolated enum WorktreeCreationPreflight {
       WorktreeCreationCleanupTarget(
         branchName: branchName,
         directory: targetDirectory,
-        directoryPreexisted: targetState == .emptyDirectory
+        directoryPreexisted: targetState == .emptyDirectory,
+        reusesBranch: reusesBranch
       )
     )
   }
