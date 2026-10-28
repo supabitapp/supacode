@@ -74,6 +74,29 @@ socket connections fail every command with "Operation not permitted"; that is
 the sandbox, not Supacode. Re-run the command with escalated permissions
 (approve the elevation prompt) or from an unsandboxed shell.
 
+## Gotchas
+
+- **A new worktree's first tab runs the setup script.** `repo worktree-new`
+  runs the repository's setup script there, so if it starts an agent, one is
+  already running. Open your own tab with `tab new` instead of reusing it.
+- **Text sent to a running agent is not submitted.** No pane or tab command
+  types into an existing tab, and the deprecated `surface focus -i` leaves the
+  text in the agent's input box. Pass the prompt as an argument to a new tab:
+  `TAB_ID=$(supacode tab new -w "$WT" -i 'claude "<prompt>"')`.
+- **`worktree delete` deletes the local branch too** while Settings → Worktrees
+  → "Delete local branch with worktree" is on (the default). Push the branch
+  first if you need it; remote branches are not touched.
+- **`No worktree matching the deeplink could be found. It may have been removed.`**
+  means Supacode no longer lists that worktree, often because its directory is
+  gone. Nothing is left to delete: confirm with `supacode worktree list`
+  instead of retrying.
+- **The CLI cannot remove a repository.** `repo` only has `list`, `open`, and
+  `worktree-new`. Ask the user to remove a stale repository in the app.
+- **Terminals outlive the app.** Sessions run inside `zmx` and survive Quit
+  unless Settings → Terminal → "Terminate sessions on quit" is on (off by
+  default); a reboot ends them. Close a tab you no longer need with
+  `supacode tab close -t "$TAB_ID"` rather than relying on Quit.
+
 ## Environment
 
 Inside Supacode terminals, these environment variables are set automatically:
@@ -170,7 +193,7 @@ supacode repo worktree-new [-r <id>] [--branch <name>] [--base <ref>] [--upstrea
 ### Settings
 
 ```
-supacode settings [<section>]        # Open settings (general|notifications|worktrees|developer|shortcuts|scripts|updates|github).
+supacode settings [<section>]        # Open settings (general|notifications|worktrees|developer|shortcuts|scripts|updates|forges).
 supacode settings repo [-r <id>]     # Open repository settings.
 supacode settings repo scripts [-r <id>]  # Open repository Scripts settings.
 ```
