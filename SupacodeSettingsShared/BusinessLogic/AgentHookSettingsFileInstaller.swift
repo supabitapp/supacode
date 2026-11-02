@@ -23,34 +23,39 @@ nonisolated struct AgentHookSettingsFileInstaller {
     JSONHookSettingsFile(fileManager: fileManager, errors: errors)
   }
 
-  /// Compare the set of Supacode-managed commands present in the settings
-  /// file against the expected (canonical) set:
-  /// - `.installed`     — actual Supacode commands == expected, no extras
-  /// - `.notInstalled`  — no Supacode-managed commands at all
-  /// - `.outdated`      — some present, but the set differs (extras, missing,
-  ///                      or stale variants from older Supacode versions)
+  /// Compare the Supacode-managed hook objects present in the settings file
+  /// against the expected (canonical) managed hook objects:
+  /// - `.installed`     — actual managed hooks == expected, including
+  ///                      execution-relevant fields (`type`, `timeout`, `env`,
+  ///                      etc.), no managed extras
+  /// - `.notInstalled`  — no Supacode-managed hooks at all
+  /// - `.outdated`      — some present, but they differ (extras, missing,
+  ///                      stale variants, duplicates, reordered groups, a managed
+  ///                      hook parked under the wrong event/matcher, or metadata
+  ///                      drift such as a changed `timeout` or `env`)
   ///
-  /// `additionalOutdatedIfInstalled` runs only when the command set already
-  /// matches, against the **same** parsed snapshot (no second disk read). Use
-  /// it for non-command payload checks such as Grok's env passthrough map.
+  /// The comparison is the ordered sequence of managed groups per event
+  /// (matcher + full managed hook objects, in array order) rather than a
+  /// command `Set`. Canonical payloads legitimately reuse one command string in
+  /// several slots (e.g. `busy` under both `UserPromptSubmit` and the
+  /// catch-all `PreToolUse` group), and hook groups execute in array order —
+  /// a reordered or partially deleted slot must read as drift. User-authored
+  /// groups and user-authored hooks interleaved with managed ones are skipped,
+  /// so inserting a custom group between ours does not read as drift.
   ///
   /// Throws when the file can't be read or parsed: an unreadable file is not
   /// an uninstalled one, and only the caller can decide what to do about it.
   func installState(
     settingsURL: URL,
-    hookGroupsByEvent: [String: [JSONValue]],
-    additionalOutdatedIfInstalled: (([String: JSONValue]) -> Bool)? = nil
+    hookGroupsByEvent: [String: [JSONValue]]
   ) throws -> ComponentInstallState {
     do {
       let settingsObject = try loadSettingsObject(at: settingsURL)
-      let expected = Self.commands(from: hookGroupsByEvent)
+      let expected = Self.expectedCommandOccurrences(from: hookGroupsByEvent)
       guard !expected.isEmpty else { return .notInstalled }
       let actual = Self.installedSupacodeCommands(in: settingsObject)
       if actual.isEmpty { return .notInstalled }
       guard actual == expected else { return .outdated }
-      if let additionalOutdatedIfInstalled, additionalOutdatedIfInstalled(settingsObject) {
-        return .outdated
-      }
       return .installed
     } catch {
       logWarning("Failed to inspect hook settings at \(settingsURL.path): \(error)")
@@ -58,50 +63,66 @@ nonisolated struct AgentHookSettingsFileInstaller {
     }
   }
 
-  /// All Supacode-marked `command` strings under the `hooks` map. Filters
-  /// via `AgentHookCommandOwnership` so user-authored hooks are never
-  /// treated as "ours."
+  /// The managed content of one hook group, in execution order: the group's
+  /// `matcher` (nil when the key is absent) plus its Supacode-managed hook
+  /// objects in array order. `installState` compares the ordered sequence of
+  /// these per event, so reordered groups and metadata drift (`timeout`,
+  /// `type`, `env`, …) read as drift even when the command text is unchanged.
+  private struct ManagedGroupOccurrence: Hashable {
+    let matcher: JSONValue?
+    let hooks: [JSONValue]
+  }
+
+  /// Supacode-managed groups under the `hooks` map, kept in array order per
+  /// event. A group contributes only its Supacode-managed hook objects —
+  /// user-authored hooks and fully user-authored groups are skipped, so
+  /// inserting a custom group between managed ones is not drift.
   private static func installedSupacodeCommands(
     in settingsObject: [String: JSONValue]
-  ) -> Set<String> {
+  ) -> [String: [ManagedGroupOccurrence]] {
     guard let hooksValue = settingsObject["hooks"],
       let hooksObject = hooksValue.objectValue
-    else { return [] }
-    var commands = Set<String>()
-    for (_, value) in hooksObject {
+    else { return [:] }
+    var occurrences: [String: [ManagedGroupOccurrence]] = [:]
+    for (event, value) in hooksObject {
       guard let groups = value.arrayValue else { continue }
-      for group in groups {
+      let managed = groups.compactMap { group -> ManagedGroupOccurrence? in
         guard let groupObject = group.objectValue,
           let hooks = groupObject["hooks"]?.arrayValue
-        else { continue }
-        for hook in hooks {
+        else { return nil }
+        let managedHooks = hooks.compactMap { hook -> JSONValue? in
           guard let hookObject = hook.objectValue,
             let command = hookObject["command"]?.stringValue,
             AgentHookCommandOwnership.isSupacodeManagedCommand(command)
-          else { continue }
-          commands.insert(command)
+          else { return nil }
+          return hook
         }
+        guard !managedHooks.isEmpty else { return nil }
+        return ManagedGroupOccurrence(matcher: groupObject["matcher"], hooks: managedHooks)
+      }
+      if !managed.isEmpty {
+        occurrences[event] = managed
       }
     }
-    return commands
+    return occurrences
   }
 
-  private static func commands(from hookGroupsByEvent: [String: [JSONValue]]) -> Set<String> {
-    var commands = Set<String>()
-    for (_, groups) in hookGroupsByEvent {
-      for group in groups {
+  private static func expectedCommandOccurrences(
+    from hookGroupsByEvent: [String: [JSONValue]]
+  ) -> [String: [ManagedGroupOccurrence]] {
+    var occurrences: [String: [ManagedGroupOccurrence]] = [:]
+    for (event, groups) in hookGroupsByEvent {
+      let managed = groups.compactMap { group -> ManagedGroupOccurrence? in
         guard let groupObject = group.objectValue,
           let hooks = groupObject["hooks"]?.arrayValue
-        else { continue }
-        for hook in hooks {
-          guard let hookObject = hook.objectValue,
-            let command = hookObject["command"]?.stringValue
-          else { continue }
-          commands.insert(command)
-        }
+        else { return nil }
+        return ManagedGroupOccurrence(matcher: groupObject["matcher"], hooks: hooks)
+      }
+      if !managed.isEmpty {
+        occurrences[event] = managed
       }
     }
-    return commands
+    return occurrences
   }
 
   /// Removes every Supacode-managed command (current and legacy) from the
