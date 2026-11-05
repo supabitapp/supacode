@@ -117,6 +117,37 @@ nonisolated enum AgentSignal {
     return .success(ResolvedNotification(title: title, body: body, wireBodyByteCount: notify.wireBodyByteCount))
   }
 
+  /// A notification for an OSC 7501 root record that just changed into a state
+  /// the user should look at: `done`, `blocked`, or `error`. Repeating the same
+  /// state never notifies again, which is the rate limit the specification asks
+  /// for. Child records never notify; the root summarizes the program.
+  static func programStatusNotification(
+    previous: ProgramStatusReport.State?,
+    report: ProgramStatusReport
+  ) -> (title: String, body: String)? {
+    guard report.isRoot, report.state != previous else { return nil }
+    let fallbackBody: String
+    switch report.state {
+    case .done:
+      fallbackBody = "Finished"
+    case .error:
+      fallbackBody = "Stopped with an error"
+    case .blocked:
+      switch report.kind {
+      case .permission: fallbackBody = "Needs your permission"
+      case .question: fallbackBody = "Has a question"
+      case .auth: fallbackBody = "Needs you to sign in"
+      case nil: fallbackBody = "Waiting for you"
+      }
+    case .idle, .working, .clear:
+      return nil
+    }
+    let title = sanitizeNotificationText(
+      report.title ?? report.agent?.displayName ?? report.app ?? "", max: 200)
+    let message = sanitizeNotificationText(report.message ?? "", max: 1000)
+    return (title, message.isEmpty ? fallbackBody : message)
+  }
+
   /// Bound length and neutralize control characters in attacker-influenceable
   /// notification text. Newline / tab / carriage return collapse to a space;
   /// other C0 controls and DEL are dropped (defends against escape-sequence

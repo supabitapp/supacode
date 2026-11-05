@@ -67,6 +67,25 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     }
   }
 
+  /// The `app` value the agent sends in its OSC 7501 (Program Status Protocol)
+  /// reports, or nil when it reports through Supacode's hooks instead.
+  public var programStatusApp: String? {
+    switch self {
+    case .claude: "claude-code"
+    case .codex: "codex"
+    case .omp: "omp"
+    case .opencode: "opencode"
+    case .pi: "pi"
+    case .antigravity, .copilot, .grok, .hermes, .kimi, .kiro: nil
+    }
+  }
+
+  /// The agent behind an OSC 7501 `app` value, or nil for one Supacode doesn't know.
+  public init?(programStatusApp app: String) {
+    guard let agent = Self.allCases.first(where: { $0.programStatusApp == app }) else { return nil }
+    self = agent
+  }
+
   /// All agents ordered by their user-facing `displayName`, for settings lists.
   /// Computed once: the inputs are static, so re-sorting per access is waste.
   public static let allCasesByDisplayName: [SkillAgent] =

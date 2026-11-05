@@ -67,6 +67,7 @@ struct LayoutSurfaceConduit {
     }
     view.bridge.onCommandFinished = { [weak view] exitCode in
       guard let view, isLive(view), let tabID = host.tabID(containing: surfaceID) else { return }
+      host.handleProgramStatusPromptReturned(surfaceID: surfaceID)
       host.handleBlockingScriptCommandFinished(tabID: tabID, exitCode: exitCode)
     }
     view.bridge.onChildExited = { [weak view] exitCode in
@@ -80,6 +81,10 @@ struct LayoutSurfaceConduit {
     view.bridge.onContextSignal = { [weak view] _, id, metadata in
       guard let view, isLive(view) else { return }
       host.handleContextSignal(surfaceID: surfaceID, id: id, metadata: metadata)
+    }
+    view.bridge.onProgramStatus = { [weak view] report in
+      guard let view, isLive(view) else { return }
+      host.handleProgramStatus(surfaceID: surfaceID, report: report)
     }
     view.bridge.onColorChanged = { [weak view] in
       guard let view, isLive(view) else { return }

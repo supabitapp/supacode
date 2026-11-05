@@ -757,6 +757,12 @@ final class WorktreeTerminalManager {
     host.onAgentHookEvent = { [weak self] event in
       self?.dispatchHookEvent(event)
     }
+    host.onProgramStatus = { [weak self] surfaceID, report in
+      self?.emit(.programStatusReceived(surfaceID: surfaceID, report: report))
+    }
+    host.onProgramStatusPromptReturned = { [weak self] surfaceID in
+      self?.emit(.programStatusPromptReturned(surfaceID: surfaceID))
+    }
     host.onNotificationReceived = { [weak self] surfaceID, title, body, isViewed in
       self?.emit(
         .notificationReceived(

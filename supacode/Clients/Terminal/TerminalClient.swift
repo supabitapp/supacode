@@ -151,6 +151,12 @@ nonisolated struct TerminalClient: Sendable {
     /// Forwarded from the terminal manager for hook events received over the socket.
     /// `AppFeature` translates this into `agentPresence(.hookEventReceived)`.
     case agentHookEventReceived(AgentHookEvent)
+    /// An OSC 7501 report from a surface, live or dormant.
+    /// `AppFeature` translates this into `agentPresence(.programStatusReceived)`.
+    case programStatusReceived(surfaceID: UUID, report: ProgramStatusReport)
+    /// A shell prompt came back on a surface (OSC 133 command end).
+    /// `AppFeature` translates this into `agentPresence(.programStatusPromptReturned)`.
+    case programStatusPromptReturned(surfaceID: UUID)
     /// Flips when the "any live surface anywhere" aggregate changes. Lets
     /// menu / focused-action gates read one Bool instead of iterating
     /// `sidebarItems` from a view body.

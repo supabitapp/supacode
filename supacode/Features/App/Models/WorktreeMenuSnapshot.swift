@@ -111,7 +111,8 @@ extension AppFeature.Action {
         .taskStatusChanged, .blockingScriptCompleted, .commandPaletteToggleRequested,
         .setupScriptConsumed, .worktreeProjectionChanged, .surfaceCreated,
         .tabRemoved, .tabRenamed, .worktreeStateTornDown,
-        .surfacesClosed, .agentHookEventReceived, .terminalHasAnySurfaceChanged,
+        .surfacesClosed, .agentHookEventReceived, .programStatusReceived, .programStatusPromptReturned,
+        .terminalHasAnySurfaceChanged,
         .surfaceCreationFailed, .initialTabCreationFailed:
         return false
       }

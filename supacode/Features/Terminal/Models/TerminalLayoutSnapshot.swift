@@ -95,6 +95,9 @@ nonisolated struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
     let agent: String
     let pids: [Int32]
     let activity: String
+    /// `program_status` for an OSC 7501 record; absent for a hook record, and
+    /// in files written before OSC 7501.
+    var source: String?
   }
 
 }

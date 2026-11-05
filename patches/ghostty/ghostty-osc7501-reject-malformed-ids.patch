@@ -1,0 +1,72 @@
+Backport of ghostty-org/ghostty dcaf6984e (#14793, fixes #14790): an OSC 7501
+id with a disallowed byte discarded the pair instead of the report, so the
+report fell back to the root record. Drop this patch once the submodule
+includes that commit.
+
+diff --git a/src/terminal/osc/parsers/program_status.zig b/src/terminal/osc/parsers/program_status.zig
+index c9e5926da..94c75a9d3 100644
+--- a/src/terminal/osc/parsers/program_status.zig
++++ b/src/terminal/osc/parsers/program_status.zig
+@@ -356,14 +356,17 @@ fn validate(data: []const u8) error{
+ 
+     // Every value is checked against its limit, even one a later pair
+     // replaces, because any limit violation discards the whole report.
+-    var ids: kitty_metadata.ValueIterator("id", value_bytes) = .init(data);
++    // These iterate the raw values without filtering by the value
++    // alphabet. Filtering would skip an id with a disallowed byte, so the
++    // report would look like it had no id and fall back to the root record.
++    var ids: kitty_metadata.ValueIterator("id", null) = .init(data);
+     while (ids.next()) |v| try validateId(v);
+     inline for (.{
+         .{ "app", max_app_bytes },
+         .{ "title", max_title_encoded_bytes },
+         .{ "msg", max_msg_encoded_bytes },
+     }) |limit| {
+-        var it: kitty_metadata.ValueIterator(limit[0], value_bytes) = .init(data);
++        var it: kitty_metadata.ValueIterator(limit[0], null) = .init(data);
+         while (it.next()) |v| if (v.len > limit[1]) return error.TooLong;
+     }
+ 
+@@ -665,18 +668,42 @@ test "OSC 7501: ids" {
+         "a//b",
+         "a,b",
+         "a=b",
++        "a@b",
++        "a b",
++        "a%20b",
+         max_segment ++ "a",
+         "a/b/c/d/e/f/g/h/i",
+         ("a" ** 31 ++ "/") ** 4 ++ "a",
+     };
+     for (invalid) |id| {
++        for ([_]u8{ '\x1b', 0x07 }) |terminator| {
++            p.reset();
++            p.nextSlice("7501;state=clear:id=");
++            p.nextSlice(id);
++            try testing.expect(p.end(terminator) == null);
++        }
++
++        // An invalid id is never replaced by a later valid one.
+         p.reset();
+         p.nextSlice("7501;state=clear:id=");
+         p.nextSlice(id);
++        p.nextSlice(":id=a");
+         try testing.expect(p.end('\x1b') == null);
+     }
+ }
+ 
++test "OSC 7501: limits apply to values with disallowed bytes" {
++    const testing = std.testing;
++
++    var p: Parser = .init(testing.allocator);
++    defer p.deinit();
++
++    const long_app: [max_app_bytes]u8 = @splat('a');
++    p.nextSlice("7501;state=idle:app=@");
++    p.nextSlice(&long_app);
++    try testing.expect(p.end('\x1b') == null);
++}
++
+ test "OSC 7501: text must decode to safe UTF-8" {
+     const testing = std.testing;
+ 

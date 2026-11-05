@@ -62,6 +62,18 @@ nonisolated struct CodexSettingsInstaller {
     }
   }
 
+  /// State of Supacode's hook entries alone. Ignores the shared
+  /// `[features].hooks` flag, which hooks the user wrote may rely on.
+  func hookEntriesState() throws -> ComponentInstallState {
+    try fileInstaller.installState(settingsURL: settingsURL, hookGroupsByEvent: try CodexHookSettings.hooksByEvent())
+  }
+
+  /// Removes Supacode's hook entries and leaves the `[features].hooks` flag on,
+  /// so retiring our hooks never switches off the user's own.
+  func removeHookEntries() throws {
+    try fileInstaller.uninstall(settingsURL: settingsURL, hookGroupsByEvent: try CodexHookSettings.hooksByEvent())
+  }
+
   func installAllHooks() async throws {
     try await enableHooksFeature()
     try fileInstaller.install(
