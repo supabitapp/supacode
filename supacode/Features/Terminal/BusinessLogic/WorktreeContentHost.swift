@@ -62,6 +62,7 @@ final class WorktreeContentHost {
   /// Last OSC 7501 root state per content, so a notification fires on a change
   /// into `done` / `blocked` / `error`, never on a repeat.
   @ObservationIgnored private var programStatusRootStates: [UUID: ProgramStatusReport.State] = [:]
+  @ObservationIgnored private var lastProgramStatusNotificationAt: [UUID: any InstantProtocol<Duration>] = [:]
   @ObservationIgnored private var lastEmittedFocusSurfaceId: UUID?
   /// A focus request that arrived before its surface was live (launch restore of
   /// a hibernated tab). Resolved by `applySurfaceActivity` once the focused
@@ -506,13 +507,24 @@ final class WorktreeContentHost {
       let previous = programStatusRootStates[surfaceID]
       programStatusRootStates[surfaceID] = report.state == .clear ? nil : report.state
       if let notification = AgentSignal.programStatusNotification(previous: previous, report: report) {
-        @Shared(.settingsFile) var settingsFile: SettingsFile
-        if settingsFile.global.richAgentNotificationsEnabled {
-          appendHookNotification(title: notification.title, body: notification.body, surfaceID: surfaceID)
-        }
+        notifyProgramStatus(notification, surfaceID: surfaceID)
       }
     }
     onProgramStatus?(surfaceID, report)
+  }
+
+  private func notifyProgramStatus(_ notification: (title: String, body: String), surfaceID: UUID) {
+    @Shared(.settingsFile) var settingsFile: SettingsFile
+    guard settingsFile.global.richAgentNotificationsEnabled else { return }
+    let now = clock.now
+    if let last = lastProgramStatusNotificationAt[surfaceID],
+      AgentSignal.elapsed(from: last, to: now) < AgentSignal.programStatusNotificationInterval
+    {
+      Self.logger.debug("Rate-limited an OSC 7501 notification for surface \(surfaceID)")
+      return
+    }
+    lastProgramStatusNotificationAt[surfaceID] = now
+    appendHookNotification(title: notification.title, body: notification.body, surfaceID: surfaceID)
   }
 
   /// A shell prompt came back (OSC 133 command end), so per the specification
@@ -1175,6 +1187,7 @@ final class WorktreeContentHost {
     pendingAgentOSCNotifications.removeValue(forKey: surfaceID)?.cancel()
     lastCustomNotificationAt.removeValue(forKey: surfaceID)
     programStatusRootStates.removeValue(forKey: surfaceID)
+    lastProgramStatusNotificationAt.removeValue(forKey: surfaceID)
     pendingExplicitSurfaceCloseIDs.remove(surfaceID)
     bypassCloseConfirmationSurfaceIDs.remove(surfaceID)
   }

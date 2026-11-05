@@ -12,6 +12,9 @@ nonisolated enum AgentSignal {
   /// How long the agent's own OSC 9 is held before firing, waiting for a custom
   /// notification to supersede it. Covers the socket-vs-inline-stream arrival skew.
   static let oscHoldWindow: TimeInterval = 0.5
+  /// Minimum gap between two OSC 7501 notifications from one surface, the rate
+  /// limit the specification asks for. Badge updates are never limited.
+  static let programStatusNotificationInterval: Duration = .seconds(3)
 
   /// Monotonic gap between two instants from the same clock. Opens the existentials
   /// so the suppression window can compare instants of the type-erased clock.

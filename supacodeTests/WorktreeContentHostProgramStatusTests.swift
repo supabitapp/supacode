@@ -1,3 +1,4 @@
+import Clocks
 import Dependencies
 import DependenciesTestSupport
 import Foundation
@@ -12,7 +13,7 @@ import Testing
 struct WorktreeContentHostProgramStatusTests {
   private let surfaceID = UUID()
 
-  private func makeHost() -> WorktreeContentHost {
+  private func makeHost(clock: any Clock<Duration> = ContinuousClock()) -> WorktreeContentHost {
     let paneID = PaneID()
     let tabID = TabID(rawValue: surfaceID)
     let layout = PaneLayout(
@@ -44,7 +45,7 @@ struct WorktreeContentHostProgramStatusTests {
         repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
       ),
       runtime: ContentRuntime(),
-      clock: ContinuousClock(),
+      clock: clock,
       runSetupScript: false
     )
     host.layout = { layout }
@@ -176,31 +177,56 @@ struct WorktreeContentHostProgramStatusTests {
     #expect(host.notifications.first?.body == "Run rm?")
   }
 
-  @Test(.dependencies) func eachNewAttentionStateNotifies() {
-    let host = makeHost()
+  @Test(.dependencies) func eachNewAttentionStateNotifies() async {
+    let clock = TestClock()
+    let host = makeHost(clock: clock)
 
     for state in [ProgramStatusReport.State.blocked, .working, .blocked, .error, .done] {
       send(ProgramStatusReport(state: state, app: "pi"), to: host)
+      await clock.advance(by: AgentSignal.programStatusNotificationInterval)
     }
 
     #expect(host.notifications.count == 4)
   }
 
-  @Test(.dependencies) func clearResetsSoTheNextDoneNotifiesAgain() {
-    let host = makeHost()
+  @Test(.dependencies) func notificationsFromOneSurfaceAreRateLimited() async {
+    // A program flapping between working and blocked must not flood the log.
+    let clock = TestClock()
+    let host = makeHost(clock: clock)
+    var forwarded = 0
+    host.onProgramStatus = { _, _ in forwarded += 1 }
+
+    for state in [ProgramStatusReport.State.blocked, .working, .blocked, .working, .done] {
+      send(ProgramStatusReport(state: state, app: "codex"), to: host)
+      await clock.advance(by: .milliseconds(500))
+    }
+    #expect(host.notifications.count == 1)
+    #expect(forwarded == 5)
+
+    await clock.advance(by: AgentSignal.programStatusNotificationInterval)
+    send(ProgramStatusReport(state: .blocked, app: "codex"), to: host)
+    #expect(host.notifications.count == 2)
+  }
+
+  @Test(.dependencies) func clearResetsSoTheNextDoneNotifiesAgain() async {
+    let clock = TestClock()
+    let host = makeHost(clock: clock)
 
     send(ProgramStatusReport(state: .done, app: "opencode"), to: host)
     send(ProgramStatusReport(state: .clear), to: host)
+    await clock.advance(by: AgentSignal.programStatusNotificationInterval)
     send(ProgramStatusReport(state: .done, app: "opencode"), to: host)
 
     #expect(host.notifications.count == 2)
   }
 
-  @Test(.dependencies) func returningPromptResetsATransientState() {
-    let host = makeHost()
+  @Test(.dependencies) func returningPromptResetsATransientState() async {
+    let clock = TestClock()
+    let host = makeHost(clock: clock)
 
     send(ProgramStatusReport(state: .blocked, app: "omp"), to: host)
     host.handleProgramStatusPromptReturned(surfaceID: surfaceID)
+    await clock.advance(by: AgentSignal.programStatusNotificationInterval)
     send(ProgramStatusReport(state: .blocked, app: "omp"), to: host)
 
     #expect(host.notifications.count == 2)
