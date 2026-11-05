@@ -5,7 +5,7 @@ nonisolated private let scannerLogger = SupaLogger("ZmxOSCScanner")
 
 /// A complete OSC sequence lifted off a dormant session's broadcast stream.
 /// `code` is the identifier the sink consumes (9 notification, 3008 agent
-/// events, 7501 program status, 0/2 title; other codes drop). `payload` is the bytes after the `;`.
+/// events, 7501 program status, 133 command end, 0/2 title; other codes drop). `payload` is the bytes after the `;`.
 nonisolated struct ZmxOSCSequence: Equatable, Sendable {
   let code: Int
   let payload: [UInt8]

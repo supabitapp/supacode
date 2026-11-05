@@ -218,11 +218,6 @@ nonisolated extension AgentIntegration {
         throw AgentIntegrationError.notInstalled(agent)
       }
     }
-    // Retired artifacts go first: a failure leaves the integration `.outdated`
-    // with nothing new written, so the next attempt starts from the same state.
-    for retired in retiredComponents {
-      try retired.uninstall()
-    }
     var rollback: [Component] = []
     do {
       for component in components {
@@ -241,6 +236,11 @@ nonisolated extension AgentIntegration {
         }
       }
       throw error
+    }
+    // Retired artifacts go last: they are the evidence that this agent was set
+    // up, so a failure here leaves the integration `.outdated` and retried.
+    for retired in retiredComponents {
+      try retired.uninstall()
     }
   }
 

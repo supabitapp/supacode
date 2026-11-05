@@ -68,7 +68,7 @@ struct AgentIntegrationRetirementTests {
 
   // MARK: - Install and uninstall.
 
-  @Test func installRemovesRetiredComponentsBeforeInstalling() async throws {
+  @Test func installRemovesRetiredComponentsAfterInstalling() async throws {
     let log = Log()
     let integration = AgentIntegration(
       agent: .claude,
@@ -78,10 +78,30 @@ struct AgentIntegrationRetirementTests {
 
     try await integration.install()
 
-    #expect(log.entries == ["uninstall old-hooks", "install skills"])
+    #expect(log.entries == ["install skills", "uninstall old-hooks"])
   }
 
-  @Test func failedRetirementInstallsNothing() async {
+  @Test func failedInstallKeepsTheRetiredComponentsSoTheUpgradeRetries() async throws {
+    // The leftover is what reads `.outdated`; removing it before a failed install
+    // would turn a retryable upgrade into a silent `.notInstalled`.
+    let log = Log()
+    let integration = AgentIntegration(
+      agent: .claude,
+      components: [
+        AgentIntegration.Component(kind: .skills, state: { .notInstalled }, install: { throw Boom() }, uninstall: {})
+      ],
+      retiredComponents: [
+        AgentIntegration.Component(
+          kind: .hooks, state: { .installed }, install: {}, uninstall: { log.append("uninstall old-hooks") })
+      ]
+    )
+
+    await #expect(throws: Boom.self) { try await integration.install() }
+    #expect(log.entries.isEmpty)
+    #expect(try integration.state() == .outdated)
+  }
+
+  @Test func failedRetirementLeavesTheIntegrationOutdated() async throws {
     let log = Log()
     let integration = AgentIntegration(
       agent: .claude,
@@ -92,7 +112,8 @@ struct AgentIntegrationRetirementTests {
     )
 
     await #expect(throws: Boom.self) { try await integration.install() }
-    #expect(log.entries.isEmpty)
+    #expect(log.entries == ["install skills"])
+    #expect(try integration.state() == .outdated)
   }
 
   @Test func uninstallAlsoRemovesRetiredComponents() throws {

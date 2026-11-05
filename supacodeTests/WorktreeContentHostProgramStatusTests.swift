@@ -128,6 +128,19 @@ struct WorktreeContentHostProgramStatusTests {
     #expect(forwarded == 0)
   }
 
+  @Test(.dependencies) func dormantCommandEndIsAReturningPrompt() {
+    let host = makeHost()
+    var prompts: [UUID] = []
+    host.onProgramStatusPromptReturned = { prompts.append($0) }
+
+    for payload in ["D;0", "D", "A", "B", "C"] {
+      host.handleDormantOSCSequence(
+        surfaceID: surfaceID, sequence: ZmxOSCSequence(code: 133, payload: Array(payload.utf8)))
+    }
+
+    #expect(prompts == [surfaceID, surfaceID])
+  }
+
   @Test(.dependencies) func dormantSequenceThatIsNotUTF8IsDropped() {
     let host = makeHost()
     var forwarded = 0

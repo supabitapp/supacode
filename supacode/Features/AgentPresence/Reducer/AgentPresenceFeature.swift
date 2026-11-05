@@ -69,9 +69,19 @@ struct AgentPresenceFeature {
   /// Where a record's state comes from. A hook record follows the hook event
   /// lifecycle; a program status record follows OSC 7501, where each report
   /// replaces the record whole and `clear` or a returning prompt ends it.
-  nonisolated enum Source: String, Equatable, Sendable {
+  nonisolated enum Source: Equatable, Sendable {
     case hook
-    case programStatus = "program_status"
+    /// The last reported state. Focusing the surface acknowledges a `blocked`
+    /// record by idling its activity, but the program is still blocked until it
+    /// reports otherwise, so the lifecycle reads this instead.
+    case programStatus(ProgramStatusReport.State)
+
+    /// The persisted `SurfaceAgentRecord.source` of a program status record.
+    static let programStatusRawValue = "program_status"
+
+    var isProgramStatus: Bool {
+      if case .programStatus = self { true } else { false }
+    }
   }
 
   nonisolated struct PresenceRecord: Equatable, Sendable {
@@ -203,7 +213,7 @@ struct AgentPresenceFeature {
         guard !staged.isEmpty else { return .none }
         return .run { send in
           let liveSessions: Set<String>
-          if staged.values.contains(where: { $0.source == .programStatus }) {
+          if staged.values.contains(where: { $0.source.isProgramStatus }) {
             liveSessions = Set(await zmxClient.listSessionsWithClients()?.map(\.name) ?? [])
           } else {
             liveSessions = []
@@ -268,30 +278,33 @@ struct AgentPresenceFeature {
     }
   }
 
-  /// Applies one OSC 7501 report. The root record names the agent through `app`
-  /// and becomes its badge; a root `clear` removes every program status record
-  /// on the surface, as a `clear` without an id removes every record. Child
-  /// records carry no badge of their own.
+  /// Applies one OSC 7501 report. A terminal has one root record, so a root
+  /// report replaces whichever program held it: its `app` names the badge, and a
+  /// root `clear` or an unknown app leaves no badge. Child records carry no badge
+  /// of their own.
   private static func apply(
     programStatus report: ProgramStatusReport, surfaceID: UUID, into state: inout State
   ) -> Set<UUID> {
     guard report.isRoot else { return [] }
-    guard report.state != .clear else {
-      let keys = state.records.filter { $0.key.surfaceID == surfaceID && $0.value.source == .programStatus }.keys
-      guard !keys.isEmpty else { return [] }
-      for key in keys { state.records.removeValue(forKey: key) }
-      rebuildPresence(forSurface: surfaceID, in: &state)
-      return [surfaceID]
+    let agent = report.state == .clear ? nil : report.agent
+    let replaced = state.records.filter { entry in
+      entry.key.surfaceID == surfaceID && entry.key.agent != agent && entry.value.source.isProgramStatus
+    }.keys
+    for key in replaced { state.records.removeValue(forKey: key) }
+    var changed = !replaced.isEmpty
+    if let agent, let activity = Activity(programStatus: report.state) {
+      let key = PresenceKey(agent: agent, surfaceID: surfaceID)
+      let existing = state.records[key]
+      var record = existing ?? PresenceRecord(pids: [])
+      record.activity = activity
+      record.source = .programStatus(report.state)
+      if record != existing {
+        state.records[key] = record
+        changed = true
+      }
     }
-    guard let agent = report.agent, let activity = Activity(programStatus: report.state) else { return [] }
-    let key = PresenceKey(agent: agent, surfaceID: surfaceID)
-    let existing = state.records[key]
-    var record = existing ?? PresenceRecord(pids: [])
-    record.activity = activity
-    record.source = .programStatus
-    guard record != existing else { return [] }
-    state.records[key] = record
-    if existing == nil { rebuildPresence(forSurface: surfaceID, in: &state) }
+    guard changed else { return [] }
+    rebuildPresence(forSurface: surfaceID, in: &state)
     return [surfaceID]
   }
 
@@ -300,8 +313,10 @@ struct AgentPresenceFeature {
   /// carries a hook pid stays for the liveness sweep and only drops to idle.
   private static func endTransientProgramStatus(onSurface surfaceID: UUID, into state: inout State) -> Set<UUID> {
     let transient = state.records.filter { entry in
-      entry.key.surfaceID == surfaceID && entry.value.source == .programStatus
-        && (entry.value.activity == .busy || entry.value.activity == .awaitingInput)
+      guard entry.key.surfaceID == surfaceID, case .programStatus(let reported) = entry.value.source else {
+        return false
+      }
+      return reported == .working || reported == .blocked
     }
     guard !transient.isEmpty else { return [] }
     for (key, record) in transient {
@@ -309,6 +324,7 @@ struct AgentPresenceFeature {
         state.records.removeValue(forKey: key)
       } else {
         state.records[key]?.activity = .idle
+        state.records[key]?.source = .programStatus(.idle)
       }
     }
     rebuildPresence(forSurface: surfaceID, in: &state)
@@ -469,9 +485,13 @@ struct AgentPresenceFeature {
           // silent until its next change: keep the record. `working` and
           // `blocked` may have ended while the app was closed, so they come back
           // as idle; `error` survives a prompt per the specification.
-          if record.source == Source.programStatus.rawValue {
-            let restored = Activity(rawValue: record.activity) == .error ? Activity.error : .idle
-            staged[key] = StagedRestore(pids: pids, activity: restored, source: .programStatus)
+          if record.source == Source.programStatusRawValue {
+            let isError = Activity(rawValue: record.activity) == .error
+            staged[key] = StagedRestore(
+              pids: pids,
+              activity: isError ? .error : .idle,
+              source: .programStatus(isError ? .error : .idle)
+            )
             continue
           }
           // Pid-less hook OSC records aren't restore-durable: they persist with no
@@ -495,9 +515,9 @@ struct AgentPresenceFeature {
   ) -> [PresenceKey: RestoredRecord] {
     var checked: [PresenceKey: RestoredRecord] = [:]
     for (key, stage) in staged {
-      if stage.source == .programStatus {
+      if stage.source.isProgramStatus {
         guard liveSessions.contains(ZmxSessionID.make(surfaceID: key.surfaceID)) else { continue }
-        checked[key] = RestoredRecord(alivePids: [], activity: stage.activity, source: .programStatus)
+        checked[key] = RestoredRecord(alivePids: [], activity: stage.activity, source: stage.source)
         continue
       }
       let alive = stage.pids.filter { isAlive($0) }
@@ -559,7 +579,7 @@ extension AgentPresenceFeature.State {
         agent: key.agent.rawValue,
         pids: record.pids.sorted(),
         activity: record.activity.rawValue,
-        source: record.source == .programStatus ? record.source.rawValue : nil
+        source: record.source.isProgramStatus ? AgentPresenceFeature.Source.programStatusRawValue : nil
       )
       result[key.surfaceID, default: []].append(entry)
     }

@@ -1247,6 +1247,10 @@ final class WorktreeContentHost {
         return
       }
       handleProgramStatus(surfaceID: surfaceID, report: report)
+    case 133:
+      // Command end, the same signal a live surface reports as command finished.
+      guard sequence.payload.first == UInt8(ascii: "D") else { return }
+      handleProgramStatusPromptReturned(surfaceID: surfaceID)
     case 0, 2:
       guard let payload = sequence.payloadString else { return }
       updateDormantTabTitle(surfaceID: surfaceID, title: payload)

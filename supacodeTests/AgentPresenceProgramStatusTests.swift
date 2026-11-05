@@ -35,7 +35,7 @@ struct AgentPresenceProgramStatusTests {
     let record = harness.state.records[key(.claude, surfaceID)]
     #expect(record?.activity == .busy)
     #expect(record?.pids.isEmpty == true)
-    #expect(record?.source == .programStatus)
+    #expect(record?.source == .programStatus(.working))
     #expect(harness.state.hasActivity(in: [surfaceID]))
   }
 
@@ -140,16 +140,40 @@ struct AgentPresenceProgramStatusTests {
     #expect(harness.state.records[key(.claude, surfaceID)]?.activity == .idle)
   }
 
-  @Test func twoAgentsOnOneSurfaceKeepSeparateBadges() {
+  @Test func aRootReportFromAnotherAppReplacesTheBadge() {
+    // A terminal has one root record, so whichever program reports last owns it.
     var harness = Harness()
     let surfaceID = UUID()
+    harness.send(.programStatusReceived(surfaceID: surfaceID, report: report(.idle)))
 
-    harness.send(.programStatusReceived(surfaceID: surfaceID, report: report(.working)))
     harness.send(.programStatusReceived(surfaceID: surfaceID, report: report(.blocked, app: "codex")))
 
-    #expect(harness.state.bySurface[surfaceID] == [.claude, .codex])
-    #expect(harness.state.records[key(.claude, surfaceID)]?.activity == .busy)
+    #expect(harness.state.bySurface[surfaceID] == [.codex])
+    #expect(harness.state.records[key(.claude, surfaceID)] == nil)
     #expect(harness.state.records[key(.codex, surfaceID)]?.activity == .awaitingInput)
+  }
+
+  @Test(arguments: [nil, "cargo"])
+  func aRootReportFromAnUnknownProgramRemovesTheBadge(_ app: String?) {
+    var harness = Harness()
+    let surfaceID = UUID()
+    harness.send(.programStatusReceived(surfaceID: surfaceID, report: report(.working)))
+
+    harness.send(.programStatusReceived(surfaceID: surfaceID, report: report(.working, app: app)))
+
+    #expect(harness.state.records.isEmpty)
+    #expect(harness.state.bySurface[surfaceID] == nil)
+  }
+
+  @Test func replacingTheRootKeepsHookRecordsOfOtherAgents() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    harness.send(.hookEventReceived(makeEvent(.sessionStart, agent: .copilot, surfaceID: surfaceID, pid: getpid())))
+    harness.send(.programStatusReceived(surfaceID: surfaceID, report: report(.idle)))
+
+    harness.send(.programStatusReceived(surfaceID: surfaceID, report: report(.idle, app: "pi")))
+
+    #expect(harness.state.bySurface[surfaceID] == [.copilot, .pi])
   }
 
   @Test func reportKeepsTheHookPidsOfAnExistingRecord() {
@@ -163,7 +187,7 @@ struct AgentPresenceProgramStatusTests {
 
     let record = harness.state.records[key(.claude, surfaceID)]
     #expect(record?.pids == [pid])
-    #expect(record?.source == .programStatus)
+    #expect(record?.source == .programStatus(.working))
     #expect(record?.activity == .busy)
   }
 
@@ -291,6 +315,18 @@ struct AgentPresenceProgramStatusTests {
     #expect(harness.state.records[key(.claude, surfaceID)]?.activity == .idle)
   }
 
+  @Test func aBlockedRecordAcknowledgedByFocusStillEndsWhenThePromptReturns() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    harness.send(.programStatusReceived(surfaceID: surfaceID, report: report(.blocked)))
+    harness.send(.clearAttention(surfaces: [surfaceID]))
+    #expect(harness.state.records[key(.claude, surfaceID)]?.source == .programStatus(.blocked))
+
+    harness.send(.programStatusPromptReturned(surfaceID: surfaceID))
+
+    #expect(harness.state.records.isEmpty)
+  }
+
   @Test func closingTheSurfaceDropsTheRecord() {
     var harness = Harness()
     let surfaceID = UUID()
@@ -320,7 +356,7 @@ struct AgentPresenceProgramStatusTests {
     let store = TestStore(initialState: Feature.State()) { Feature() }
 
     await store.send(.programStatusReceived(surfaceID: surfaceID, report: report(.working))) {
-      $0.records[claude] = Feature.PresenceRecord(activity: .busy, pids: [], source: .programStatus)
+      $0.records[claude] = Feature.PresenceRecord(activity: .busy, pids: [], source: .programStatus(.working))
       $0.bySurface[surfaceID] = [.claude]
     }
     await store.receive(\.delegate, .surfacesChanged([surfaceID]))
@@ -333,6 +369,7 @@ struct AgentPresenceProgramStatusTests {
 
     await store.send(.programStatusReceived(surfaceID: surfaceID, report: report(.blocked))) {
       $0.records[claude]?.activity = .awaitingInput
+      $0.records[claude]?.source = .programStatus(.blocked)
     }
     await store.receive(\.delegate, .surfacesChanged([surfaceID]))
 
@@ -394,7 +431,7 @@ struct AgentPresenceProgramStatusTests {
     #expect(staged[key(.claude, busy)]?.activity == .idle)
     #expect(staged[key(.codex, blocked)]?.activity == .idle)
     #expect(staged[key(.pi, errored)]?.activity == .error)
-    #expect(staged.values.allSatisfy { $0.source == .programStatus })
+    #expect(staged.values.allSatisfy { $0.source.isProgramStatus })
   }
 
   @Test func stagedRestoreStillDropsPidlessHookRecords() {
@@ -408,14 +445,14 @@ struct AgentPresenceProgramStatusTests {
     let alive = UUID()
     let gone = UUID()
     let staged: [Feature.PresenceKey: Feature.StagedRestore] = [
-      key(.claude, alive): .init(pids: [], activity: .idle, source: .programStatus),
-      key(.claude, gone): .init(pids: [], activity: .idle, source: .programStatus),
+      key(.claude, alive): .init(pids: [], activity: .idle, source: .programStatus(.idle)),
+      key(.claude, gone): .init(pids: [], activity: .idle, source: .programStatus(.idle)),
     ]
 
     let checked = Feature.checkRestore(staged: staged, liveSessions: [ZmxSessionID.make(surfaceID: alive)])
 
     #expect(Set(checked.keys) == [key(.claude, alive)])
-    #expect(checked[key(.claude, alive)]?.source == .programStatus)
+    #expect(checked[key(.claude, alive)]?.source == .programStatus(.idle))
     #expect(checked[key(.claude, alive)]?.alivePids.isEmpty == true)
   }
 
@@ -435,8 +472,8 @@ struct AgentPresenceProgramStatusTests {
     let alive = UUID()
     let gone = UUID()
     let staged: [Feature.PresenceKey: Feature.StagedRestore] = [
-      key(.claude, alive): .init(pids: [], activity: .idle, source: .programStatus),
-      key(.codex, gone): .init(pids: [], activity: .error, source: .programStatus),
+      key(.claude, alive): .init(pids: [], activity: .idle, source: .programStatus(.idle)),
+      key(.codex, gone): .init(pids: [], activity: .error, source: .programStatus(.error)),
     ]
     let store = TestStore(initialState: Feature.State()) {
       Feature()
@@ -452,13 +489,13 @@ struct AgentPresenceProgramStatusTests {
     await store.receive(\.delegate, .surfacesChanged([alive]))
 
     #expect(store.state.bySurface == [alive: [.claude]])
-    #expect(store.state.records[key(.claude, alive)]?.source == .programStatus)
+    #expect(store.state.records[key(.claude, alive)]?.source == .programStatus(.idle))
   }
 
   @Test func restoreDropsProgramStatusWhenZmxCannotSay() async {
     let surfaceID = UUID()
     let staged: [Feature.PresenceKey: Feature.StagedRestore] = [
-      key(.claude, surfaceID): .init(pids: [], activity: .idle, source: .programStatus)
+      key(.claude, surfaceID): .init(pids: [], activity: .idle, source: .programStatus(.idle))
     ]
     let store = TestStore(initialState: Feature.State()) {
       Feature()
@@ -479,7 +516,7 @@ struct AgentPresenceProgramStatusTests {
 
     harness.send(
       .restoreFromSnapshotChecked(records: [
-        key(.claude, surfaceID): .init(alivePids: [], activity: .idle, source: .programStatus)
+        key(.claude, surfaceID): .init(alivePids: [], activity: .idle, source: .programStatus(.idle))
       ]))
 
     #expect(harness.state.records[key(.claude, surfaceID)]?.activity == .busy)
