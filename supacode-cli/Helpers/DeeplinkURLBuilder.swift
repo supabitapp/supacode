@@ -159,6 +159,7 @@ nonisolated enum DeeplinkURLBuilder {
     var name: String?
     var location: String?
     var pin = false
+    var reuseExistingBranch = false
   }
 
   static func repoWorktreeNew(repoID: String, options: WorktreeNewOptions) -> String {
@@ -171,6 +172,7 @@ nonisolated enum DeeplinkURLBuilder {
     if let name = options.name { params.append("name=\(percentEncodeQueryValue(name))") }
     if let location = options.location { params.append("location=\(percentEncodeQueryValue(location))") }
     if options.pin { params.append("pin=true") }
+    if options.reuseExistingBranch { params.append("reuse-existing-branch=true") }
     if !params.isEmpty { url += "?\(params.joined(separator: "&"))" }
     return url
   }

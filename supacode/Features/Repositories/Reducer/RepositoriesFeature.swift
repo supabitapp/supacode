@@ -450,6 +450,8 @@ struct RepositoriesFeature {
       upstream: WorktreeUpstreamPreference = .automatic,
       fetchOrigin: Bool,
       placement: WorktreePlacementOverride? = nil,
+      /// Opt-in to checking out an existing, unused branch instead of refusing its name.
+      reuseExistingBranch: Bool = false,
       pendingID: Worktree.ID? = nil,
       background: Bool = false,
       pin: Bool = false,
@@ -474,7 +476,8 @@ struct RepositoriesFeature {
       baseRef: String?,
       upstream: WorktreeUpstreamPreference = .automatic,
       fetchOrigin: Bool,
-      placement: WorktreePlacementOverride
+      placement: WorktreePlacementOverride,
+      reuseExistingBranch: Bool = false
     )
     case promptedWorktreeCreationChecked(
       repositoryID: Repository.ID,
@@ -483,7 +486,10 @@ struct RepositoriesFeature {
       upstream: WorktreeUpstreamPreference = .automatic,
       fetchOrigin: Bool,
       placement: WorktreePlacementOverride,
-      duplicateMessage: String?
+      reuseExistingBranch: Bool = false,
+      duplicateMessage: String?,
+      /// The duplicate is a local branch no worktree has checked out, so the prompt offers reuse.
+      canReuseBranch: Bool = false
     )
     case pendingWorktreeProgressUpdated(id: Worktree.ID, progress: WorktreeCreationProgress)
     case createRandomWorktreeSucceeded(
@@ -1921,6 +1927,7 @@ struct RepositoriesFeature {
         let upstream,
         let fetchOrigin,
         let placement,
+        let reuseExistingBranch,
         let providedPendingID,
         let background,
         let pin,
@@ -1942,6 +1949,7 @@ struct RepositoriesFeature {
                 .createWorktreeInRepository(
                   repositoryID: repositoryID, nameSource: nameSource, baseRefSource: baseRefSource,
                   upstream: upstream, fetchOrigin: fetchOrigin, placement: placement,
+                  reuseExistingBranch: reuseExistingBranch,
                   pendingID: providedPendingID, background: background, pin: pin,
                   licensePermit: permit
                 ))
@@ -2000,8 +2008,8 @@ struct RepositoriesFeature {
         }
         // Remote repos create worktrees over ssh via `git worktree add`, then
         // reload to re-list. This bypasses the local pending/stream flow below
-        // (so `pin` has no pending row to ride on and is ignored), but honors
-        // the same name + base-ref choices from the prompt.
+        // (so `pin` has no pending row to ride on and is ignored, and so is
+        // `reuseExistingBranch`), but honors the same name + base-ref choices.
         if repository.host != nil {
           // Remote creations have no pending row to carry a customization, so
           // drain the parked entry instead of leaking it.
@@ -2097,8 +2105,8 @@ struct RepositoriesFeature {
             )
             let branchNames = try await gitClient.localBranchNames(repository.rootURL)
             let takenNames = WorktreeCreationPreflight.TakenNames(
-              branches: branchNames.union(inFlightNames), worktrees: worktreeNames)
-            let excludedRandomNames = takenNames.branches.union(takenNames.worktrees)
+              branches: branchNames, worktrees: worktreeNames, inFlight: inFlightNames)
+            let excludedRandomNames = takenNames.branches.union(takenNames.worktrees).union(takenNames.inFlight)
               .union(WorktreeCreationPreflight.namespaces(of: branchNames))
             var name: String
             switch nameSource {
@@ -2201,7 +2209,8 @@ struct RepositoriesFeature {
             func claimTarget(
               for branch: String,
               takenNames: WorktreeCreationPreflight.TakenNames,
-              worktrees: [Worktree]
+              worktrees: [Worktree],
+              existingBranch: GitBranchAvailability = .absent
             ) async -> Result<WorktreeCreationCleanupTarget, WorktreeCreationPreflight.Rejection> {
               let directory = targetDirectory(for: branch)
               return WorktreeCreationPreflight.claim(
@@ -2209,8 +2218,13 @@ struct RepositoriesFeature {
                 targetDirectory: directory,
                 targetState: await worktreeTargetState(directory),
                 takenNames: takenNames,
-                worktrees: worktrees
+                worktrees: worktrees,
+                existingBranch: existingBranch
               )
+            }
+            func classifyBranch(named branch: String) async throws -> GitBranchAvailability {
+              guard reuseExistingBranch else { return .absent }
+              return try await gitClient.branchAvailability(branch, repository.rootURL)
             }
             func failPreflight(_ rejection: WorktreeCreationPreflight.Rejection) async {
               await send(
@@ -2224,7 +2238,9 @@ struct RepositoriesFeature {
                 )
               )
             }
-            var claim = await claimTarget(for: name, takenNames: takenNames, worktrees: knownWorktrees)
+            let existingBranch = try await classifyBranch(named: name)
+            var claim = await claimTarget(
+              for: name, takenNames: takenNames, worktrees: knownWorktrees, existingBranch: existingBranch)
             // A random name that lands on a leftover folder just picks another one.
             let leafFollowsBranch = (placement?.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             if case .random = nameSource, leafFollowsBranch {
@@ -2243,13 +2259,20 @@ struct RepositoriesFeature {
               await failPreflight(rejection)
               return
             }
-            let worktreeDirectoryURL = SupacodePaths.resolvedWorktreeDirectory(
-              defaultBaseDirectory: worktreeBaseDirectory,
-              repositoryRootURL: repository.rootURL,
-              nameOverride: placement?.name,
-              pathOverride: placement?.path,
-              branchName: name
-            )
+            // A reused branch keeps its own tip and tracking, so base ref, fetch and upstream don't apply.
+            let reusesBranch = existingBranch == .reusable
+            let upstream: WorktreeUpstreamPreference = reusesBranch ? .automatic : upstream
+            // `wt sw` checks out a branch that has no worktree only when given an explicit `--path`.
+            let worktreeDirectoryURL =
+              reusesBranch
+              ? targetDirectory(for: name)
+              : SupacodePaths.resolvedWorktreeDirectory(
+                defaultBaseDirectory: worktreeBaseDirectory,
+                repositoryRootURL: repository.rootURL,
+                nameOverride: placement?.name,
+                pathOverride: placement?.path,
+                branchName: name
+              )
             if let permit {
               try await licenseClient.claimCreationResource(
                 permit, "\(repository.id.rawValue):\(name.lowercased())", targetDirectory(for: name))
@@ -2274,6 +2297,8 @@ struct RepositoriesFeature {
             )
             let resolvedBaseRef: String
             switch baseRefSource {
+            case _ where reusesBranch:
+              resolvedBaseRef = ""
             case .repositorySetting:
               if (selectedBaseRef ?? "").isEmpty {
                 resolvedBaseRef = await gitClient.automaticWorktreeBaseRef(repository.rootURL) ?? ""
@@ -2287,8 +2312,8 @@ struct RepositoriesFeature {
                 resolvedBaseRef = await gitClient.automaticWorktreeBaseRef(repository.rootURL) ?? ""
               }
             }
-            progress.baseRef = resolvedBaseRef
-            if fetchOrigin {
+            progress.baseRef = reusesBranch ? name : resolvedBaseRef
+            if fetchOrigin, !reusesBranch {
               let remotes: [String]
               do {
                 remotes = try await gitClient.remoteNames(repository.rootURL)
@@ -2365,7 +2390,8 @@ struct RepositoriesFeature {
               (copyIgnored || copyUntracked)
               ? await gitClient.resolveSupaignore(
                 repository.rootURL,
-                resolvedBaseRef,
+                // A reused branch's committed supaignore, not the base ref's.
+                reusesBranch ? name : resolvedBaseRef,
                 SupacodePaths.configBaseDirectory
                   .appending(path: SupaignoreMerge.fileName, directoryHint: .notDirectory),
                 worktreeBaseDirectory
@@ -2442,14 +2468,21 @@ struct RepositoriesFeature {
                 "Re-check nesting uses a stale worktree list for \(repository.name): \(error.localizedDescription)")
               currentWorktrees = knownWorktrees
             }
+            let currentExistingBranch = try await classifyBranch(named: name)
             let recheck = await claimTarget(
               for: name,
               takenNames: WorktreeCreationPreflight.TakenNames(
-                branches: currentBranchNames.union(inFlightNames), worktrees: worktreeNames),
-              worktrees: currentWorktrees)
+                branches: currentBranchNames, worktrees: worktreeNames, inFlight: inFlightNames),
+              worktrees: currentWorktrees,
+              existingBranch: currentExistingBranch)
             switch recheck {
             case .failure(let rejection):
               await failPreflight(rejection)
+              return
+            // The branch was created or deleted since the first check, so the base ref, fetch and
+            // folder chosen above no longer fit it.
+            case .success(let target) where target.reusesBranch != reusesBranch:
+              await failPreflight(.branchChanged)
               return
             case .success(var target):
               let baseRevision = resolvedBaseRef.isEmpty ? "HEAD" : resolvedBaseRef
@@ -4445,7 +4478,8 @@ struct RepositoriesFeature {
               let fetchOrigin,
               let placement,
               let title,
-              let color
+              let color,
+              let reuseExistingBranch
             )
           )
         )
@@ -4466,7 +4500,8 @@ struct RepositoriesFeature {
             baseRef: baseRef,
             upstream: upstream,
             fetchOrigin: fetchOrigin,
-            placement: placement
+            placement: placement,
+            reuseExistingBranch: reuseExistingBranch
           )
         )
 
@@ -4476,7 +4511,8 @@ struct RepositoriesFeature {
         let baseRef,
         let upstream,
         let fetchOrigin,
-        let placement
+        let placement,
+        let reuseExistingBranch
       ):
         guard let repository = state.repositories[id: repositoryID] else {
           state.worktreeCreationPrompt = nil
@@ -4492,9 +4528,14 @@ struct RepositoriesFeature {
         state.worktreeCreationPrompt?.validationMessage = nil
         state.worktreeCreationPrompt?.isValidating = true
         let normalizedBranchName = branchName.lowercased()
-        if repository.worktrees.contains(where: { $0.name.lowercased() == normalizedBranchName }) {
+        if let existing = repository.worktrees.first(where: { $0.name.lowercased() == normalizedBranchName }) {
           state.worktreeCreationPrompt?.isValidating = false
-          state.worktreeCreationPrompt?.validationMessage = "Branch name already exists."
+          // An attached worktree is named after its branch, so say where it's checked out, which is
+          // why no reuse is offered. A detached one is named after its folder.
+          state.worktreeCreationPrompt?.validationMessage =
+            existing.isAttached
+            ? "Branch is already checked out at '\(existing.workingDirectory.path(percentEncoded: false))'."
+            : "Branch name already exists."
           // Synchronous duplicate rejection. Drop the stashed customization so it can't be
           // re-applied if the user retries with a different branch name.
           state.dropPendingCustomization(repositoryID: repositoryID, branchName: branchName)
@@ -4502,12 +4543,27 @@ struct RepositoriesFeature {
         }
         let gitClient = gitClient(for: repository)
         let rootURL = repository.rootURL
+        // Remote creations run `git worktree add -b` over ssh, so reuse is local-only.
+        let isLocal = repository.host == nil
         return .run { send in
           let localBranchNames = (try? await gitClient.localBranchNames(rootURL)) ?? []
-          let duplicateMessage =
-            localBranchNames.contains(normalizedBranchName)
-            ? "Branch name already exists."
-            : nil
+          var duplicateMessage: String?
+          var canReuseBranch = false
+          if localBranchNames.contains(normalizedBranchName) {
+            // A failed probe, a case-only match, or a remote repo stays a plain duplicate.
+            let availability: GitBranchAvailability =
+              isLocal ? (try? await gitClient.branchAvailability(branchName, rootURL)) ?? .absent : .absent
+            switch availability {
+            case .reusable:
+              canReuseBranch = true
+              duplicateMessage =
+                reuseExistingBranch ? nil : "Branch already exists. Turn on Reuse existing branch to check it out."
+            case .checkedOut(let worktreePath):
+              duplicateMessage = "Branch is already checked out at '\(worktreePath)'."
+            case .absent:
+              duplicateMessage = "Branch name already exists."
+            }
+          }
           await send(
             .promptedWorktreeCreationChecked(
               repositoryID: repositoryID,
@@ -4516,7 +4572,9 @@ struct RepositoriesFeature {
               upstream: upstream,
               fetchOrigin: fetchOrigin,
               placement: placement,
-              duplicateMessage: duplicateMessage
+              reuseExistingBranch: reuseExistingBranch,
+              duplicateMessage: duplicateMessage,
+              canReuseBranch: canReuseBranch
             )
           )
         }
@@ -4531,7 +4589,9 @@ struct RepositoriesFeature {
         let upstream,
         let fetchOrigin,
         let placement,
-        let duplicateMessage
+        let reuseExistingBranch,
+        let duplicateMessage,
+        let canReuseBranch
       ):
         guard let prompt = state.worktreeCreationPrompt, prompt.repositoryID == repositoryID else {
           return .none
@@ -4539,7 +4599,11 @@ struct RepositoriesFeature {
         state.worktreeCreationPrompt?.isValidating = false
         if let duplicateMessage {
           state.worktreeCreationPrompt?.validationMessage = duplicateMessage
-          // Async-validation duplicate rejection. Same drop reasoning as the sync path.
+          state.worktreeCreationPrompt?.canReuseExistingBranch = canReuseBranch
+          // A reuse that can go ahead sets no message, so the toggle restarts off with the offer.
+          state.worktreeCreationPrompt?.reuseExistingBranch = false
+          // Async-validation duplicate rejection. Same drop reasoning as the sync path; a reuse
+          // resubmit goes through `submit`, which parks the prompt's title and color again.
           state.dropPendingCustomization(repositoryID: repositoryID, branchName: branchName)
           return .none
         }
@@ -4555,6 +4619,7 @@ struct RepositoriesFeature {
             upstream: upstream,
             fetchOrigin: fetchOrigin,
             placement: placement,
+            reuseExistingBranch: reuseExistingBranch,
             pendingID: parked?.pendingID,
             background: parked?.background ?? false,
             pin: parked?.pin ?? false
@@ -5416,14 +5481,15 @@ struct RepositoriesFeature {
   }
 
   /// Cancelled mid-flight but the add ran to completion: delete the
-  /// materialized worktree (branch included) instead of adopting it.
+  /// materialized worktree (and the branch, unless it was reused) instead of adopting it.
   private func deleteCancelledCreation(
     _ worktree: Worktree,
     target: WorktreeCreationCleanupTarget,
     permit: LicenseCreationPermit?
   ) -> Effect<Action> {
     .run { send in
-      let problems = await removeCreatedWorktree(worktree, permit: permit, send: send)
+      let problems = await removeCreatedWorktree(
+        worktree, deleteBranch: !target.reusesBranch, permit: permit, send: send)
       await Self.finishCreationCleanup(of: target, problems: problems, failureMessage: nil, send: send)
     }
   }
@@ -5496,7 +5562,7 @@ struct RepositoriesFeature {
       if let permit { await licenseClient.cancelCreation(permit) }
       return problems
     }
-    return await removeCreatedWorktree(worktree, permit: permit, send: send)
+    return await removeCreatedWorktree(worktree, deleteBranch: !target.reusesBranch, permit: permit, send: send)
   }
 
   /// `git worktree add -b` keeps the new branch when checkout fails. Delete it only while it still
@@ -5507,7 +5573,7 @@ struct RepositoriesFeature {
     client: GitClientDependency,
     root: URL
   ) async -> [String] {
-    guard let baseCommit = target.baseCommit else { return [] }
+    guard !target.reusesBranch, let baseCommit = target.baseCommit else { return [] }
     let branchName = target.branchName
     if let checkout = registered.first(where: { $0.name.lowercased() == branchName.lowercased() }) {
       let checkoutPath = checkout.workingDirectory.path(percentEncoded: false)
@@ -5572,12 +5638,13 @@ struct RepositoriesFeature {
   /// Removes a worktree this creation made and settles its permit, returning any problems.
   private func removeCreatedWorktree(
     _ worktree: Worktree,
+    deleteBranch: Bool,
     permit: LicenseCreationPermit?,
     send: Send<Action>
   ) async -> [String] {
     var problems: [String] = []
     do {
-      _ = try await gitClient(for: worktree).removeWorktree(worktree, true)
+      _ = try await gitClient(for: worktree).removeWorktree(worktree, deleteBranch)
     } catch {
       problems.append(error.localizedDescription)
     }
