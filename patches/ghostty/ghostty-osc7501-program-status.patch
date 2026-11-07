@@ -1,0 +1,506 @@
+diff --git a/include/ghostty.h b/include/ghostty.h
+index 275e688c2..9c685ddd5 100644
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -720,6 +720,38 @@ typedef struct {
+   const char* metadata;
+ } ghostty_action_context_signal_s;
+ 
++// apprt.action.ProgramStatus.State
++typedef enum {
++  GHOSTTY_ACTION_PROGRAM_STATUS_STATE_IDLE,
++  GHOSTTY_ACTION_PROGRAM_STATUS_STATE_WORKING,
++  GHOSTTY_ACTION_PROGRAM_STATUS_STATE_DONE,
++  GHOSTTY_ACTION_PROGRAM_STATUS_STATE_BLOCKED,
++  GHOSTTY_ACTION_PROGRAM_STATUS_STATE_ERROR,
++  GHOSTTY_ACTION_PROGRAM_STATUS_STATE_CLEAR,
++} ghostty_action_program_status_state_e;
++
++// apprt.action.ProgramStatus.Kind
++typedef enum {
++  GHOSTTY_ACTION_PROGRAM_STATUS_KIND_NONE,
++  GHOSTTY_ACTION_PROGRAM_STATUS_KIND_PERMISSION,
++  GHOSTTY_ACTION_PROGRAM_STATUS_KIND_QUESTION,
++  GHOSTTY_ACTION_PROGRAM_STATUS_KIND_AUTH,
++} ghostty_action_program_status_kind_e;
++
++// apprt.action.ProgramStatus.C
++typedef struct {
++  ghostty_action_program_status_state_e state;
++  ghostty_action_program_status_kind_e kind;
++  // -1 if no progress was reported, otherwise 0-100.
++  int8_t progress;
++  // Empty strings mean the report didn't carry the key. An empty id
++  // addresses the root record. Title and msg are decoded UTF-8.
++  const char* id;
++  const char* app;
++  const char* title;
++  const char* msg;
++} ghostty_action_program_status_s;
++
+ // apprt.action.SetTitle.C
+ typedef struct {
+   const char* title;
+@@ -1027,6 +1059,7 @@ typedef enum {
+   GHOSTTY_ACTION_MOVE_TAB_TO_NEW_WINDOW,
+   GHOSTTY_ACTION_RESIZE_WINDOW,
+   GHOSTTY_ACTION_CONTEXT_SIGNAL,
++  GHOSTTY_ACTION_PROGRAM_STATUS,
+ } ghostty_action_tag_e;
+ 
+ typedef union {
+@@ -1046,6 +1079,7 @@ typedef union {
+   ghostty_action_export_terminal_io_s export_terminal_io;
+   ghostty_action_desktop_notification_s desktop_notification;
+   ghostty_action_context_signal_s context_signal;
++  ghostty_action_program_status_s program_status;
+   ghostty_action_set_title_s set_title;
+   ghostty_action_set_title_s set_tab_title;
+   ghostty_action_prompt_title_e prompt_title;
+diff --git a/src/Surface.zig b/src/Surface.zig
+index 75d4c7b0f..61c5f1159 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -1153,6 +1153,16 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
+             };
+         },
+ 
++        .program_status => |*v| {
++            _ = self.rt_app.performAction(
++                .{ .surface = self },
++                .program_status,
++                v.action(),
++            ) catch |err| {
++                log.warn("apprt failed to report program status err={}", .{err});
++            };
++        },
++
+         .progress_report => |v| {
+             _ = self.rt_app.performAction(
+                 .{ .surface = self },
+diff --git a/src/apprt/action.zig b/src/apprt/action.zig
+index 0b2db578e..076ee4575 100644
+--- a/src/apprt/action.zig
++++ b/src/apprt/action.zig
+@@ -368,6 +368,10 @@ pub const Action = union(Key) {
+     /// terminal signalled a context change.
+     context_signal: ContextSignal,
+ 
++    /// OSC 7501 program status report. A program inside the terminal
++    /// reported what it is doing, such as working or waiting on the user.
++    program_status: ProgramStatus,
++
+     /// Sync with: ghostty_action_tag_e
+     pub const Key = enum(c_int) {
+         quit,
+@@ -441,6 +445,7 @@ pub const Action = union(Key) {
+         move_tab_to_new_window,
+         resize_window,
+         context_signal,
++        program_status,
+ 
+         test "ghostty.h Action.Key" {
+             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
+@@ -482,8 +487,8 @@ pub const Action = union(Key) {
+         // At the time of writing, we don't promise ABI compatibility
+         // so we can change this but I want to be aware of it.
+         assert(@sizeOf(CValue) == switch (@sizeOf(usize)) {
+-            4 => 24,
+-            8 => 24,
++            4 => 28,
++            8 => 48,
+             else => unreachable,
+         });
+     }
+@@ -857,6 +862,131 @@ pub const ContextSignal = struct {
+     }
+ };
+ 
++pub const ProgramStatus = struct {
++    state: State,
++    kind: Kind = .none,
++
++    /// -1 if no progress was reported, otherwise 0-100.
++    progress: i8 = -1,
++
++    /// Empty when the report didn't carry the key. An empty id
++    /// addresses the root record.
++    id: [:0]const u8 = "",
++    app: [:0]const u8 = "",
++    title: [:0]const u8 = "",
++    msg: [:0]const u8 = "",
++
++    /// Sync with: ghostty_action_program_status_state_e
++    pub const State = enum(c_int) {
++        idle,
++        working,
++        done,
++        blocked,
++        @"error",
++        clear,
++
++        pub fn init(state: terminal.osc.Command.ProgramStatus.State) State {
++            return switch (state) {
++                inline else => |tag| @field(State, @tagName(tag)),
++            };
++        }
++
++        test "ghostty.h ProgramStatus.State" {
++            try lib.checkGhosttyHEnum(State, "GHOSTTY_ACTION_PROGRAM_STATUS_STATE_");
++        }
++    };
++
++    /// Sync with: ghostty_action_program_status_kind_e
++    pub const Kind = enum(c_int) {
++        none,
++        permission,
++        question,
++        auth,
++
++        pub fn init(kind: ?terminal.osc.Command.ProgramStatus.Kind) Kind {
++            return if (kind) |k| switch (k) {
++                inline else => |tag| @field(Kind, @tagName(tag)),
++            } else .none;
++        }
++
++        test "ghostty.h ProgramStatus.Kind" {
++            try lib.checkGhosttyHEnum(Kind, "GHOSTTY_ACTION_PROGRAM_STATUS_KIND_");
++        }
++    };
++
++    // Sync with: ghostty_action_program_status_s
++    pub const C = extern struct {
++        state: State,
++        kind: Kind,
++        progress: i8,
++        id: [*:0]const u8,
++        app: [*:0]const u8,
++        title: [*:0]const u8,
++        msg: [*:0]const u8,
++    };
++
++    pub fn cval(self: ProgramStatus) C {
++        return .{
++            .state = self.state,
++            .kind = self.kind,
++            .progress = self.progress,
++            .id = self.id.ptr,
++            .app = self.app.ptr,
++            .title = self.title.ptr,
++            .msg = self.msg.ptr,
++        };
++    }
++
++    test "cval keeps every field" {
++        const testing = std.testing;
++        const value: ProgramStatus = .{
++            .state = .blocked,
++            .kind = .permission,
++            .progress = 40,
++            .id = "deploy/us-east",
++            .app = "claude-code",
++            .title = "Deploy",
++            .msg = "Approve the write?",
++        };
++        const c = value.cval();
++        try testing.expectEqual(State.blocked, c.state);
++        try testing.expectEqual(Kind.permission, c.kind);
++        try testing.expectEqual(@as(i8, 40), c.progress);
++        try testing.expectEqualStrings("deploy/us-east", std.mem.span(c.id));
++        try testing.expectEqualStrings("claude-code", std.mem.span(c.app));
++        try testing.expectEqualStrings("Deploy", std.mem.span(c.title));
++        try testing.expectEqualStrings("Approve the write?", std.mem.span(c.msg));
++    }
++
++    test "cval of a bare report" {
++        const testing = std.testing;
++        const c = (ProgramStatus{ .state = .idle }).cval();
++        try testing.expectEqual(Kind.none, c.kind);
++        try testing.expectEqual(@as(i8, -1), c.progress);
++        try testing.expectEqualStrings("", std.mem.span(c.id));
++        try testing.expectEqualStrings("", std.mem.span(c.app));
++    }
++
++    test "State.init maps every parser state" {
++        const testing = std.testing;
++        const Parsed = terminal.osc.Command.ProgramStatus.State;
++        inline for (@typeInfo(Parsed).@"enum".fields) |field| {
++            const mapped = State.init(@field(Parsed, field.name));
++            try testing.expectEqualStrings(field.name, @tagName(mapped));
++        }
++    }
++
++    test "Kind.init maps every parser kind and null" {
++        const testing = std.testing;
++        const Parsed = terminal.osc.Command.ProgramStatus.Kind;
++        inline for (@typeInfo(Parsed).@"enum".fields) |field| {
++            const mapped = Kind.init(@field(Parsed, field.name));
++            try testing.expectEqualStrings(field.name, @tagName(mapped));
++        }
++        try testing.expectEqual(Kind.none, Kind.init(null));
++    }
++};
++
+ pub const KeySequence = union(enum) {
+     trigger: input.Trigger,
+     end,
+diff --git a/src/apprt/surface.zig b/src/apprt/surface.zig
+index 5b5b0d4a7..f58cfe6f5 100644
+--- a/src/apprt/surface.zig
++++ b/src/apprt/surface.zig
+@@ -57,6 +57,63 @@ pub const Message = union(enum) {
+         }
+     };
+ 
++    pub const ProgramStatus = struct {
++        const limits = terminal.osc.program_status;
++        const Action = apprt.action.ProgramStatus;
++
++        state: Action.State,
++        kind: Action.Kind,
++        progress: i8,
++
++        // Each buffer holds the longest value the parser accepts, so
++        // nothing is ever truncated.
++        id: [limits.max_id_bytes:0]u8,
++        app: [limits.max_app_bytes:0]u8,
++        title: [limits.max_title_bytes:0]u8,
++        msg: [limits.max_msg_bytes:0]u8,
++
++        pub fn init(report: terminal.osc.Command.ProgramStatus.Report) ProgramStatus {
++            var result: ProgramStatus = undefined;
++            result.state = .init(report.state);
++            result.kind = .init(report.readOption(.kind));
++            result.progress = if (report.readOption(.progress)) |v| @intCast(v) else -1;
++            copyZ(result.id.len, &result.id, report.readOption(.id) orelse "");
++            copyZ(result.app.len, &result.app, report.readOption(.app) orelse "");
++            writeTextZ(.title, result.title.len, &result.title, report);
++            writeTextZ(.msg, result.msg.len, &result.msg, report);
++            return result;
++        }
++
++        pub fn action(self: *const ProgramStatus) Action {
++            return .{
++                .state = self.state,
++                .kind = self.kind,
++                .progress = self.progress,
++                .id = std.mem.sliceTo(&self.id, 0),
++                .app = std.mem.sliceTo(&self.app, 0),
++                .title = std.mem.sliceTo(&self.title, 0),
++                .msg = std.mem.sliceTo(&self.msg, 0),
++            };
++        }
++
++        fn copyZ(comptime capacity: usize, dst: *[capacity:0]u8, src: []const u8) void {
++            const len = @min(src.len, capacity);
++            @memcpy(dst[0..len], src[0..len]);
++            dst[len] = 0;
++        }
++
++        fn writeTextZ(
++            comptime option: terminal.osc.Command.ProgramStatus.Option,
++            comptime capacity: usize,
++            dst: *[capacity:0]u8,
++            report: terminal.osc.Command.ProgramStatus.Report,
++        ) void {
++            var writer: std.Io.Writer = .fixed(dst[0..capacity]);
++            report.writeText(option, &writer) catch unreachable;
++            dst[writer.buffered().len] = 0;
++        }
++    };
++
+     /// Set the title of the surface.
+     /// TODO: we should change this to a "WriteReq" style structure in
+     /// the termio message so that we can more efficiently send strings
+@@ -109,6 +166,10 @@ pub const Message = union(enum) {
+     /// Show a desktop notification.
+     desktop_notification: DesktopNotification,
+ 
++    /// OSC 7501 program status report, copied out of the parser's
++    /// buffer so it can cross to the app thread.
++    program_status: ProgramStatus,
++
+     /// OSC 3008 hierarchical context signal (UAPI spec).
+     context_signal: struct {
+         /// The signalled action: 0 = start, 1 = end.
+@@ -336,3 +397,90 @@ test "copyUtf8Z preserves UTF-8 that fits" {
+ 
+     try std.testing.expectEqualStrings("abcЯ", std.mem.sliceTo(&dst, 0));
+ }
++
++fn testProgramStatus(body: []const u8) !Message.ProgramStatus {
++    var parser: terminal.osc.Parser = .init(std.testing.allocator);
++    defer parser.deinit();
++    parser.nextSlice("7501;");
++    parser.nextSlice(body);
++    const cmd = parser.end(0x07) orelse return error.TestUnexpectedResult;
++    return .init(cmd.program_status.report);
++}
++
++test "ProgramStatus init copies a full report" {
++    const testing = std.testing;
++    // title=Deploy msg=Approve the write?
++    const status = try testProgramStatus(
++        "state=blocked:id=deploy/us-east:kind=permission:progress=40:app=claude-code:title=RGVwbG95:msg=QXBwcm92ZSB0aGUgd3JpdGU/",
++    );
++    const action = status.action();
++    try testing.expectEqual(apprt.action.ProgramStatus.State.blocked, action.state);
++    try testing.expectEqual(apprt.action.ProgramStatus.Kind.permission, action.kind);
++    try testing.expectEqual(@as(i8, 40), action.progress);
++    try testing.expectEqualStrings("deploy/us-east", action.id);
++    try testing.expectEqualStrings("claude-code", action.app);
++    try testing.expectEqualStrings("Deploy", action.title);
++    try testing.expectEqualStrings("Approve the write?", action.msg);
++}
++
++test "ProgramStatus init leaves absent keys empty" {
++    const testing = std.testing;
++    const action = (try testProgramStatus("state=idle")).action();
++    try testing.expectEqual(apprt.action.ProgramStatus.State.idle, action.state);
++    try testing.expectEqual(apprt.action.ProgramStatus.Kind.none, action.kind);
++    try testing.expectEqual(@as(i8, -1), action.progress);
++    try testing.expectEqualStrings("", action.id);
++    try testing.expectEqualStrings("", action.app);
++    try testing.expectEqualStrings("", action.title);
++    try testing.expectEqualStrings("", action.msg);
++}
++
++test "ProgramStatus init drops kind and progress the state does not allow" {
++    const testing = std.testing;
++    const action = (try testProgramStatus("state=done:kind=auth:progress=10")).action();
++    try testing.expectEqual(apprt.action.ProgramStatus.State.done, action.state);
++    try testing.expectEqual(apprt.action.ProgramStatus.Kind.none, action.kind);
++    try testing.expectEqual(@as(i8, -1), action.progress);
++}
++
++test "ProgramStatus init keeps working progress and clear ids" {
++    const testing = std.testing;
++    const working = (try testProgramStatus("state=working:progress=100:app=codex")).action();
++    try testing.expectEqual(apprt.action.ProgramStatus.State.working, working.state);
++    try testing.expectEqual(@as(i8, 100), working.progress);
++    try testing.expectEqualStrings("codex", working.app);
++
++    const clear = (try testProgramStatus("state=clear:id=agent/sub")).action();
++    try testing.expectEqual(apprt.action.ProgramStatus.State.clear, clear.state);
++    try testing.expectEqualStrings("agent/sub", clear.id);
++}
++
++test "ProgramStatus init fits the longest values the parser accepts" {
++    const testing = std.testing;
++    const limits = terminal.osc.program_status;
++    const alloc = testing.allocator;
++
++    const msg_text = "m" ** limits.max_msg_bytes;
++    const title_text = "t" ** limits.max_title_bytes;
++    const encoder = std.base64.standard.Encoder;
++    var msg_b64: [encoder.calcSize(msg_text.len)]u8 = undefined;
++    var title_b64: [encoder.calcSize(title_text.len)]u8 = undefined;
++    const app = "a" ** limits.max_app_bytes;
++    const segment = "s" ** limits.max_id_segment_bytes;
++    const id = segment ++ "/" ++ segment ++ "/" ++ segment ++ "/" ++ "s" ** 29;
++    comptime std.debug.assert(id.len == limits.max_id_bytes);
++
++    const body = try std.fmt.allocPrint(alloc, "state=working:id={s}:app={s}:title={s}:msg={s}", .{
++        id,
++        app,
++        encoder.encode(&title_b64, title_text),
++        encoder.encode(&msg_b64, msg_text),
++    });
++    defer alloc.free(body);
++
++    const action = (try testProgramStatus(body)).action();
++    try testing.expectEqualStrings(id, action.id);
++    try testing.expectEqualStrings(app, action.app);
++    try testing.expectEqualStrings(title_text, action.title);
++    try testing.expectEqualStrings(msg_text, action.msg);
++}
+diff --git a/src/termio/stream_handler.zig b/src/termio/stream_handler.zig
+index ca9fd5431..360864f40 100644
+--- a/src/termio/stream_handler.zig
++++ b/src/termio/stream_handler.zig
+@@ -350,6 +350,7 @@ pub const StreamHandler = struct {
+             .show_desktop_notification => try self.showDesktopNotification(value.title, value.body),
+             .context_signal => try self.handleContextSignal(value.action, value.id, value.metadata),
+             .progress_report => self.progressReport(value),
++            .program_status => self.programStatus(value),
+             .start_hyperlink => try self.startHyperlink(value.uri, value.id),
+             .clipboard_contents => try self.clipboardContents(value.kind, value.data),
+             .semantic_prompt => try self.semanticPrompt(value),
+@@ -390,7 +391,6 @@ pub const StreamHandler = struct {
+             .title_pop,
+             .kitty_dnd,
+             .osc_unknown,
+-            .program_status,
+             => {},
+         }
+     }
+@@ -1964,6 +1964,28 @@ pub const StreamHandler = struct {
+     fn progressReport(self: *StreamHandler, report: terminal.osc.Command.ProgressReport) void {
+         self.surfaceMessageWriter(.{ .progress_report = report });
+     }
++
++    /// Forward an OSC 7501 report to the surface, or answer the support
++    /// query. The reply is fixed bytes, and the specification never lets
++    /// a terminal echo report contents back to the program.
++    fn programStatus(self: *StreamHandler, cmd: terminal.osc.Command.ProgramStatus) void {
++        switch (cmd) {
++            .report => |report| self.surfaceMessageWriter(.{ .program_status = .init(report) }),
++            .query => |terminator| self.programStatusQuery(terminator),
++        }
++    }
++
++    fn programStatusQuery(self: *StreamHandler, terminator: terminal.osc.Terminator) void {
++        switch (terminator) {
++            inline else => |t| self.messageWriter(.{
++                .write_stable = programStatusQueryReply(t),
++            }),
++        }
++    }
++
++    fn programStatusQueryReply(comptime terminator: terminal.osc.Terminator) []const u8 {
++        return "\x1b]7501;" ++ terminal.osc.program_status.query_reply ++ comptime terminator.string();
++    }
+ };
+ 
+ test "kitty clipboard read: targets-only never consumes a one-time grant" {
+@@ -2040,3 +2062,40 @@ test "kitty clipboard write: oversized text replies EFBIG" {
+     // forwarded to the macOS clipboard path.
+     try testing.expect(mailbox.spsc.queue.pop(global.io()) == null);
+ }
++
++test "program status query replies with the supported states and kinds" {
++    const testing = std.testing;
++
++    inline for (.{
++        .{ terminal.osc.Terminator.st, "\x1b\\" },
++        .{ terminal.osc.Terminator.bel, "\x07" },
++    }) |case| {
++        var mailbox = try termio.Mailbox.initSPSC(testing.allocator);
++        defer mailbox.deinit(testing.allocator);
++
++        var mutex: std.Io.Mutex = .init;
++        mutex.lockUncancelable(global.io());
++        defer mutex.unlock(global.io());
++
++        var renderer_state: renderer.State = .{
++            .mutex = &mutex,
++            .terminal = undefined,
++        };
++        var handler: StreamHandler = undefined;
++        handler.termio_mailbox = &mailbox;
++        handler.renderer_state = &renderer_state;
++
++        handler.programStatusQuery(case[0]);
++
++        const msg = mailbox.spsc.queue.pop(global.io()) orelse return error.TestUnexpectedResult;
++        defer msg.deinit();
++        switch (msg) {
++            .write_stable => |v| try testing.expectEqualStrings(
++                "\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth" ++ case[1],
++                v,
++            ),
++            else => return error.TestUnexpectedResult,
++        }
++        try testing.expect(mailbox.spsc.queue.pop(global.io()) == null);
++    }
++}

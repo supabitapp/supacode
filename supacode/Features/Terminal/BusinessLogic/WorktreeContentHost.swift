@@ -43,6 +43,8 @@ final class WorktreeContentHost {
   @ObservationIgnored var onSurfacesHibernated: ((Set<UUID>) -> Void)?
   @ObservationIgnored var onDormancyChanged: (() -> Void)?
   @ObservationIgnored var onAgentHookEvent: ((AgentHookEvent) -> Void)?
+  @ObservationIgnored var onProgramStatus: ((UUID, ProgramStatusReport) -> Void)?
+  @ObservationIgnored var onProgramStatusPromptReturned: ((UUID) -> Void)?
 
   var socketPath: String?
   var notificationsEnabled = true
@@ -57,6 +59,10 @@ final class WorktreeContentHost {
   @ObservationIgnored private(set) var surfaceStates: [UUID: WorktreeSurfaceState] = [:]
   @ObservationIgnored private var lastCustomNotificationAt: [UUID: any InstantProtocol<Duration>] = [:]
   @ObservationIgnored private var pendingAgentOSCNotifications: [UUID: Task<Void, Never>] = [:]
+  /// Last OSC 7501 root state per content, so a notification fires on a change
+  /// into `done` / `blocked` / `error`, never on a repeat.
+  @ObservationIgnored private var programStatusRootStates: [UUID: ProgramStatusReport.State] = [:]
+  @ObservationIgnored private var lastProgramStatusNotificationAt: [UUID: any InstantProtocol<Duration>] = [:]
   @ObservationIgnored private var lastEmittedFocusSurfaceId: UUID?
   /// A focus request that arrived before its surface was live (launch restore of
   /// a hibernated tab). Resolved by `applySurfaceActivity` once the focused
@@ -488,6 +494,46 @@ final class WorktreeContentHost {
     case .failure(.unknownSurface), .failure(.empty):
       Self.logger.debug("Dropped notify signal for surface \(surfaceID)")
     }
+  }
+
+  // MARK: - Program status (OSC 7501).
+
+  func handleProgramStatus(surfaceID: UUID, report: ProgramStatusReport) {
+    guard isKnownSurface(surfaceID) else {
+      Self.logger.debug("Dropped OSC 7501 report for unknown surface \(surfaceID)")
+      return
+    }
+    if report.isRoot {
+      let previous = programStatusRootStates[surfaceID]
+      programStatusRootStates[surfaceID] = report.state == .clear ? nil : report.state
+      if let notification = AgentSignal.programStatusNotification(previous: previous, report: report) {
+        notifyProgramStatus(notification, surfaceID: surfaceID)
+      }
+    }
+    onProgramStatus?(surfaceID, report)
+  }
+
+  private func notifyProgramStatus(_ notification: (title: String, body: String), surfaceID: UUID) {
+    @Shared(.settingsFile) var settingsFile: SettingsFile
+    guard settingsFile.global.richAgentNotificationsEnabled else { return }
+    let now = clock.now
+    if let last = lastProgramStatusNotificationAt[surfaceID],
+      AgentSignal.elapsed(from: last, to: now) < AgentSignal.programStatusNotificationInterval
+    {
+      Self.logger.debug("Rate-limited an OSC 7501 notification for surface \(surfaceID)")
+      return
+    }
+    lastProgramStatusNotificationAt[surfaceID] = now
+    appendHookNotification(title: notification.title, body: notification.body, surfaceID: surfaceID)
+  }
+
+  /// A shell prompt came back (OSC 133 command end), so per the specification
+  /// the surface's `working` and `blocked` records are gone.
+  func handleProgramStatusPromptReturned(surfaceID: UUID) {
+    if let state = programStatusRootStates[surfaceID], state == .working || state == .blocked {
+      programStatusRootStates.removeValue(forKey: surfaceID)
+    }
+    onProgramStatusPromptReturned?(surfaceID)
   }
 
   // MARK: - Task status + progress.
@@ -1140,6 +1186,8 @@ final class WorktreeContentHost {
   private func discardSurfaceBookkeeping(for surfaceID: UUID) {
     pendingAgentOSCNotifications.removeValue(forKey: surfaceID)?.cancel()
     lastCustomNotificationAt.removeValue(forKey: surfaceID)
+    programStatusRootStates.removeValue(forKey: surfaceID)
+    lastProgramStatusNotificationAt.removeValue(forKey: surfaceID)
     pendingExplicitSurfaceCloseIDs.remove(surfaceID)
     bypassCloseConfirmationSurfaceIDs.remove(surfaceID)
   }
@@ -1189,7 +1237,7 @@ final class WorktreeContentHost {
     return state.launch?.bypassZmx != true
   }
 
-  private func handleDormantOSCSequence(surfaceID: UUID, sequence: ZmxOSCSequence) {
+  func handleDormantOSCSequence(surfaceID: UUID, sequence: ZmxOSCSequence) {
     guard isKnownSurface(surfaceID) else { return }
     switch sequence.code {
     case 9:
@@ -1207,6 +1255,15 @@ final class WorktreeContentHost {
         let fields = AgentSignal.contextSignalFields(payload: payload)
       else { return }
       handleContextSignal(surfaceID: surfaceID, id: fields.id, metadata: fields.metadata)
+    case 7501:
+      guard let payload = sequence.payloadString, let report = ProgramStatusReport.parse(body: payload) else {
+        return
+      }
+      handleProgramStatus(surfaceID: surfaceID, report: report)
+    case 133:
+      // Command end, the same signal a live surface reports as command finished.
+      guard sequence.payload.first == UInt8(ascii: "D") else { return }
+      handleProgramStatusPromptReturned(surfaceID: surfaceID)
     case 0, 2:
       guard let payload = sequence.payloadString else { return }
       updateDormantTabTitle(surfaceID: surfaceID, title: payload)

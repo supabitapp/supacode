@@ -74,6 +74,8 @@ final class GhosttySurfaceBridge {
   // metadata). Forwarded raw; the per-surface capability token carried in the
   // metadata is verified one layer up where the surface's nonce lives.
   var onContextSignal: ((UInt8, String, String) -> Void)?
+  // OSC 7501 program status report, already validated by libghostty.
+  var onProgramStatus: ((ProgramStatusReport) -> Void)?
 
   // Coalesce OSC-9 progress: a flush task applies the latest value at the
   // throttle cadence while it moves, and a slow stale-watch clears a bar whose
@@ -118,6 +120,7 @@ final class GhosttySurfaceBridge {
     if let handled = handleSplitAction(action) { return handled }
     if handleTitleAndPath(action) { return false }
     if handleContextSignal(action) { return false }
+    if handleProgramStatus(action) { return false }
     if handleCommandStatus(action) { return false }
     if handleMouseAndLink(action) {
       return action.tag == GHOSTTY_ACTION_OPEN_URL
@@ -312,6 +315,16 @@ final class GhosttySurfaceBridge {
       return true
     }
     onContextSignal?(signal.action, id, metadata)
+    return true
+  }
+
+  private func handleProgramStatus(_ action: ghostty_action_s) -> Bool {
+    guard action.tag == GHOSTTY_ACTION_PROGRAM_STATUS else { return false }
+    guard let report = ProgramStatusReport(action.action.program_status) else {
+      terminalStateLogger.warning("OSC 7501 report arrived with an unknown state")
+      return true
+    }
+    onProgramStatus?(report)
     return true
   }
 

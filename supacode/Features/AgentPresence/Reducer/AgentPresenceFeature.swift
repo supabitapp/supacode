@@ -28,6 +28,18 @@ struct AgentPresenceFeature {
 
     /// Parked on the user, so focusing the surface answers it.
     var isAttention: Bool { self == .error || self == .awaitingInput }
+
+    /// The badge state for an OSC 7501 report. `done` is idle with an unread
+    /// result, which the notification carries. Nil for `clear`, which is not a state.
+    init?(programStatus state: ProgramStatusReport.State) {
+      switch state {
+      case .idle, .done: self = .idle
+      case .working: self = .busy
+      case .blocked: self = .awaitingInput
+      case .error: self = .error
+      case .clear: return nil
+      }
+    }
   }
 
   /// One badge worth of state. Surface ID is redundant; callers scope by surface set.
@@ -54,6 +66,24 @@ struct AgentPresenceFeature {
     let surfaceID: UUID
   }
 
+  /// Where a record's state comes from. A hook record follows the hook event
+  /// lifecycle; a program status record follows OSC 7501, where each report
+  /// replaces the record whole and `clear` or a returning prompt ends it.
+  nonisolated enum Source: Equatable, Sendable {
+    case hook
+    /// The last reported state. Focusing the surface acknowledges a `blocked`
+    /// record by idling its activity, but the program is still blocked until it
+    /// reports otherwise, so the lifecycle reads this instead.
+    case programStatus(ProgramStatusReport.State)
+
+    /// The persisted `SurfaceAgentRecord.source` of a program status record.
+    static let programStatusRawValue = "program_status"
+
+    var isProgramStatus: Bool {
+      if case .programStatus = self { true } else { false }
+    }
+  }
+
   nonisolated struct PresenceRecord: Equatable, Sendable {
     var activity: Activity = .idle
     /// Local pids attributed to this record. Empty means the OSC presence was
@@ -62,11 +92,13 @@ struct AgentPresenceFeature {
     /// arrives over OSC now, so there is no "socket-owned" record to defend
     /// against.
     var pids: Set<pid_t>
+    var source: Source = .hook
   }
 
   nonisolated struct RestoredRecord: Sendable {
     let alivePids: Set<pid_t>
     let activity: Activity
+    var source: Source = .hook
   }
 
   // `nonisolated` is load-bearing here. Without it the @Reducer macro
@@ -77,6 +109,11 @@ struct AgentPresenceFeature {
   enum Action {
     case delegate(Delegate)
     case hookEventReceived(AgentHookEvent)
+    /// An OSC 7501 report. Only the root record drives a badge.
+    case programStatusReceived(surfaceID: UUID, report: ProgramStatusReport)
+    /// A shell prompt came back on the surface, which ends its `working` and
+    /// `blocked` program status records.
+    case programStatusPromptReturned(surfaceID: UUID)
     case livenessSweepTick
     case livenessSweepResult(snapshot: [PresenceKey: Set<pid_t>], alive: [PresenceKey: Set<pid_t>])
     case start
@@ -117,12 +154,21 @@ struct AgentPresenceFeature {
   var body: some Reducer<State, Action> {
     Reduce { state, action in
       @Dependency(\.continuousClock) var clock
+      @Dependency(\.zmxClient) var zmxClient
       switch action {
       case .delegate:
         return .none
 
       case .hookEventReceived(let event):
         let changed = Self.apply(event: event, into: &state)
+        return Self.surfacesChangedEffect(changed)
+
+      case .programStatusReceived(let surfaceID, let report):
+        let changed = Self.apply(programStatus: report, surfaceID: surfaceID, into: &state)
+        return Self.surfacesChangedEffect(changed)
+
+      case .programStatusPromptReturned(let surfaceID):
+        let changed = Self.endTransientProgramStatus(onSurface: surfaceID, into: &state)
         return Self.surfacesChangedEffect(changed)
 
       case .livenessSweepTick:
@@ -166,11 +212,13 @@ struct AgentPresenceFeature {
       case .restoreFromSnapshot(let staged):
         guard !staged.isEmpty else { return .none }
         return .run { send in
-          let checked = staged.compactMapValues { stage -> RestoredRecord? in
-            let alive = stage.pids.filter { Self.isAlive($0) }
-            guard !alive.isEmpty else { return nil }
-            return RestoredRecord(alivePids: alive, activity: stage.activity)
+          let liveSessions: Set<String>
+          if staged.values.contains(where: { $0.source.isProgramStatus }) {
+            liveSessions = Set(await zmxClient.listSessionsWithClients()?.map(\.name) ?? [])
+          } else {
+            liveSessions = []
           }
+          let checked = Self.checkRestore(staged: staged, liveSessions: liveSessions)
           guard !checked.isEmpty else { return }
           await send(.restoreFromSnapshotChecked(records: checked))
         }
@@ -228,6 +276,59 @@ struct AgentPresenceFeature {
     case .notification, .none:
       return []
     }
+  }
+
+  /// Applies one OSC 7501 report. A terminal has one root record, so a root
+  /// report replaces whichever program held it: its `app` names the badge, and a
+  /// root `clear` or an unknown app leaves no badge. Child records carry no badge
+  /// of their own.
+  private static func apply(
+    programStatus report: ProgramStatusReport, surfaceID: UUID, into state: inout State
+  ) -> Set<UUID> {
+    guard report.isRoot else { return [] }
+    let agent = report.state == .clear ? nil : report.agent
+    let replaced = state.records.filter { entry in
+      entry.key.surfaceID == surfaceID && entry.key.agent != agent && entry.value.source.isProgramStatus
+    }.keys
+    for key in replaced { state.records.removeValue(forKey: key) }
+    var changed = !replaced.isEmpty
+    if let agent, let activity = Activity(programStatus: report.state) {
+      let key = PresenceKey(agent: agent, surfaceID: surfaceID)
+      let existing = state.records[key]
+      var record = existing ?? PresenceRecord(pids: [])
+      record.activity = activity
+      record.source = .programStatus(report.state)
+      if record != existing {
+        state.records[key] = record
+        changed = true
+      }
+    }
+    guard changed else { return [] }
+    rebuildPresence(forSurface: surfaceID, in: &state)
+    return [surfaceID]
+  }
+
+  /// The specification ends `working` and `blocked` records when a new shell
+  /// prompt begins; `idle`, `done`, and `error` survive. A record that also
+  /// carries a hook pid stays for the liveness sweep and only drops to idle.
+  private static func endTransientProgramStatus(onSurface surfaceID: UUID, into state: inout State) -> Set<UUID> {
+    let transient = state.records.filter { entry in
+      guard entry.key.surfaceID == surfaceID, case .programStatus(let reported) = entry.value.source else {
+        return false
+      }
+      return reported == .working || reported == .blocked
+    }
+    guard !transient.isEmpty else { return [] }
+    for (key, record) in transient {
+      if record.pids.isEmpty {
+        state.records.removeValue(forKey: key)
+      } else {
+        state.records[key]?.activity = .idle
+        state.records[key]?.source = .programStatus(.idle)
+      }
+    }
+    rebuildPresence(forSurface: surfaceID, in: &state)
+    return [surfaceID]
   }
 
   /// A pid is the local-hook source (OSC presence carries `pid=$__ppid` only on the
@@ -353,6 +454,7 @@ struct AgentPresenceFeature {
   struct StagedRestore: Sendable {
     let pids: Set<pid_t>
     let activity: Activity
+    var source: Source = .hook
   }
 
   /// Build the staged-restore dict from the persisted v2 layouts file. No
@@ -377,17 +479,52 @@ struct AgentPresenceFeature {
       for (surfaceID, records) in layout {
         for record in records {
           guard let agent = SkillAgent(rawValue: record.agent) else { continue }
-          // Pid-less OSC records aren't restore-durable: they persist with no
-          // pid, so they drop here and re-seed on the next OSC event post-relaunch.
+          let key = PresenceKey(agent: agent, surfaceID: surfaceID)
           let pids = Set(record.pids.filter { $0 > 0 })
+          // A program reports on change only, so a reattached session stays
+          // silent until its next change: keep the record. `working` and
+          // `blocked` may have ended while the app was closed, so they come back
+          // as idle; `error` survives a prompt per the specification.
+          if record.source == Source.programStatusRawValue {
+            let isError = Activity(rawValue: record.activity) == .error
+            staged[key] = StagedRestore(
+              pids: pids,
+              activity: isError ? .error : .idle,
+              source: .programStatus(isError ? .error : .idle)
+            )
+            continue
+          }
+          // Pid-less hook OSC records aren't restore-durable: they persist with no
+          // pid, so they drop here and re-seed on the next OSC event post-relaunch.
           guard !pids.isEmpty else { continue }
           let activity = Activity(rawValue: record.activity) ?? .idle
-          staged[PresenceKey(agent: agent, surfaceID: surfaceID)] =
-            StagedRestore(pids: pids, activity: activity)
+          staged[key] = StagedRestore(pids: pids, activity: activity)
         }
       }
     }
     return staged
+  }
+
+  /// Keeps a hook record whose pids are still alive, and a program status record
+  /// whose zmx session survived. Program status has no pid, so the session is the
+  /// liveness signal: one that didn't survive (a reboot) restarts its shell, and
+  /// the program that reported is gone. An unknown listing restores none of them.
+  nonisolated static func checkRestore(
+    staged: [PresenceKey: StagedRestore],
+    liveSessions: Set<String>
+  ) -> [PresenceKey: RestoredRecord] {
+    var checked: [PresenceKey: RestoredRecord] = [:]
+    for (key, stage) in staged {
+      if stage.source.isProgramStatus {
+        guard liveSessions.contains(ZmxSessionID.make(surfaceID: key.surfaceID)) else { continue }
+        checked[key] = RestoredRecord(alivePids: [], activity: stage.activity, source: stage.source)
+        continue
+      }
+      let alive = stage.pids.filter { isAlive($0) }
+      guard !alive.isEmpty else { continue }
+      checked[key] = RestoredRecord(alivePids: alive, activity: stage.activity)
+    }
+    return checked
   }
 
   /// Rejects non-positive pids; `kill(0, ...)` targets process groups, not
@@ -409,8 +546,9 @@ struct AgentPresenceFeature {
     var dirtySurfaces: Set<UUID> = []
     for (key, record) in records {
       if state.records[key] != nil { continue }
-      // Restored records always have alive pids (pid-less OSC records are dropped in stageRestore).
-      state.records[key] = PresenceRecord(activity: record.activity, pids: record.alivePids)
+      // Restored hook records always have alive pids (pid-less hook OSC records
+      // are dropped in stageRestore); program status records carry none.
+      state.records[key] = PresenceRecord(activity: record.activity, pids: record.alivePids, source: record.source)
       dirtySurfaces.insert(key.surfaceID)
     }
     for surfaceID in dirtySurfaces { rebuildPresence(forSurface: surfaceID, in: &state) }
@@ -440,7 +578,8 @@ extension AgentPresenceFeature.State {
       let entry = TerminalLayoutSnapshot.SurfaceAgentRecord(
         agent: key.agent.rawValue,
         pids: record.pids.sorted(),
-        activity: record.activity.rawValue
+        activity: record.activity.rawValue,
+        source: record.source.isProgramStatus ? AgentPresenceFeature.Source.programStatusRawValue : nil
       )
       result[key.surfaceID, default: []].append(entry)
     }

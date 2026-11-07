@@ -12,6 +12,9 @@ nonisolated enum AgentSignal {
   /// How long the agent's own OSC 9 is held before firing, waiting for a custom
   /// notification to supersede it. Covers the socket-vs-inline-stream arrival skew.
   static let oscHoldWindow: TimeInterval = 0.5
+  /// Minimum gap between two OSC 7501 notifications from one surface, the rate
+  /// limit the specification asks for. Badge updates are never limited.
+  static let programStatusNotificationInterval: Duration = .seconds(3)
 
   /// Monotonic gap between two instants from the same clock. Opens the existentials
   /// so the suppression window can compare instants of the type-erased clock.
@@ -115,6 +118,37 @@ nonisolated enum AgentSignal {
     let body = sanitizeNotificationText(notify.body ?? "", max: 1000)
     guard !(title.isEmpty && body.isEmpty) else { return .failure(.empty) }
     return .success(ResolvedNotification(title: title, body: body, wireBodyByteCount: notify.wireBodyByteCount))
+  }
+
+  /// A notification for an OSC 7501 root record that just changed into a state
+  /// the user should look at: `done`, `blocked`, or `error`. Repeating the same
+  /// state never notifies again, which is the rate limit the specification asks
+  /// for. Child records never notify; the root summarizes the program.
+  static func programStatusNotification(
+    previous: ProgramStatusReport.State?,
+    report: ProgramStatusReport
+  ) -> (title: String, body: String)? {
+    guard report.isRoot, report.state != previous else { return nil }
+    let fallbackBody: String
+    switch report.state {
+    case .done:
+      fallbackBody = "Finished"
+    case .error:
+      fallbackBody = "Stopped with an error"
+    case .blocked:
+      switch report.kind {
+      case .permission: fallbackBody = "Needs your permission"
+      case .question: fallbackBody = "Has a question"
+      case .auth: fallbackBody = "Needs you to sign in"
+      case nil: fallbackBody = "Waiting for you"
+      }
+    case .idle, .working, .clear:
+      return nil
+    }
+    let title = sanitizeNotificationText(
+      report.title ?? report.agent?.displayName ?? report.app ?? "", max: 200)
+    let message = sanitizeNotificationText(report.message ?? "", max: 1000)
+    return (title, message.isEmpty ? fallbackBody : message)
   }
 
   /// Bound length and neutralize control characters in attacker-influenceable

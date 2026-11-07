@@ -2125,6 +2125,12 @@ struct AppFeature {
       case .terminalEvent(.agentHookEventReceived(let event)):
         return .send(.agentPresence(.hookEventReceived(event)))
 
+      case .terminalEvent(.programStatusReceived(let surfaceID, let report)):
+        return .send(.agentPresence(.programStatusReceived(surfaceID: surfaceID, report: report)))
+
+      case .terminalEvent(.programStatusPromptReturned(let surfaceID)):
+        return .send(.agentPresence(.programStatusPromptReturned(surfaceID: surfaceID)))
+
       // The user is looking at this surface, so whatever was parked on them there
       // is acknowledged. Scoped to the focused surface, so a broken session in
       // another split of the same worktree keeps its warning.

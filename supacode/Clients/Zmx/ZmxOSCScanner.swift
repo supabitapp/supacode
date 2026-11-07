@@ -5,7 +5,7 @@ nonisolated private let scannerLogger = SupaLogger("ZmxOSCScanner")
 
 /// A complete OSC sequence lifted off a dormant session's broadcast stream.
 /// `code` is the identifier the sink consumes (9 notification, 3008 agent
-/// events, 0/2 title; other codes drop). `payload` is the bytes after the `;`.
+/// events, 7501 program status, 133 command end, 0/2 title; other codes drop). `payload` is the bytes after the `;`.
 nonisolated struct ZmxOSCSequence: Equatable, Sendable {
   let code: Int
   let payload: [UInt8]
@@ -117,7 +117,7 @@ nonisolated struct ZmxOSCScanner {
   }
 
   /// Parses an all-digit code slice; nil for empty or non-numeric input. Capped
-  /// at six digits since every OSC code the app cares about is <= 3008.
+  /// at six digits since every OSC code the app cares about is <= 7501.
   private static func parseCode(_ bytes: ArraySlice<UInt8>) -> Int? {
     guard !bytes.isEmpty, bytes.count <= 6 else { return nil }
     var value = 0

@@ -19,6 +19,13 @@ nonisolated struct AgentIntegration: @unchecked Sendable {
   /// Codex's `enable hooks` flag) unwinds last.
   let components: [Component]
 
+  /// Artifacts an older Supacode installed that this version no longer wants,
+  /// such as the hooks of an agent that now reports over OSC 7501. Any left on
+  /// disk reads as `.outdated`, so the existing auto-upgrade removes them;
+  /// `install()` and `uninstall()` both remove them. Never part of `state()`
+  /// otherwise, so an agent that never had them is unaffected.
+  let retiredComponents: [Component]
+
   /// The agent's own config directory, which must already exist for `install()`
   /// to run: a proxy for "the CLI is installed" so Supacode never bootstraps a
   /// harness the user hasn't set up. Supacode's subdirectories under it (hooks,
@@ -31,11 +38,13 @@ nonisolated struct AgentIntegration: @unchecked Sendable {
   init(
     agent: SkillAgent,
     components: [Component],
+    retiredComponents: [Component] = [],
     requiredDirectory: URL? = nil,
     fileManager: FileManager = .default
   ) {
     self.agent = agent
     self.components = components
+    self.retiredComponents = retiredComponents
     self.requiredDirectory = requiredDirectory
     self.fileManager = fileManager
   }
@@ -191,6 +200,8 @@ nonisolated extension AgentIntegration {
   /// read to `.outdated` would arm an unattended rewrite of files we can't read.
   func state() throws -> AgentIntegrationState {
     let states = try components.map { try $0.state() }
+    let retiredStates = try retiredComponents.map { try $0.state() }
+    if retiredStates.contains(where: { $0 != .notInstalled }) { return .outdated }
     if states.allSatisfy({ $0 == .installed }) { return .installed }
     if states.allSatisfy({ $0 == .notInstalled }) { return .notInstalled }
     return .outdated
@@ -226,6 +237,11 @@ nonisolated extension AgentIntegration {
       }
       throw error
     }
+    // Retired artifacts go last: they are the evidence that this agent was set
+    // up, so a failure here leaves the integration `.outdated` and retried.
+    for retired in retiredComponents {
+      try retired.uninstall()
+    }
   }
 
   /// Uninstalls every component (in reverse order). Failures on individual
@@ -234,7 +250,7 @@ nonisolated extension AgentIntegration {
   /// removing the rest.
   func uninstall() throws {
     var firstError: Error?
-    for component in components.reversed() {
+    for component in components.reversed() + retiredComponents {
       do {
         try component.uninstall()
       } catch {
