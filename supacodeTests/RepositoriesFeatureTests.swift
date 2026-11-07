@@ -4387,6 +4387,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.setUpstreamBranch = { _, upstream, _ in
         observedUpstream.setValue(upstream)
       }
+      $0.gitClient.fetchRemote = { _, _ in }
       $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
         AsyncThrowingStream { continuation in
           continuation.yield(.finished(createdWorktree))
@@ -4435,6 +4436,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.unsetUpstreamBranch = { branch, _ in
         observedUnset.setValue(branch)
       }
+      $0.gitClient.fetchRemote = { _, _ in }
       $0.gitClient.createWorktreeStream = { _, _, _, _, _, _, _ in
         AsyncThrowingStream { continuation in
           continuation.yield(.finished(createdWorktree))
