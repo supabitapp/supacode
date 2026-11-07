@@ -232,46 +232,47 @@ private struct SidebarBranchNestingRowView: View {
     case .groupHeader(let prefix, let components, let depth, let isCollapsed, let leafDescendantIDs):
       if let bucketID {
         SidebarPathGroupHeaderRow(
-          repositoryID: repositoryID,
-          bucketID: bucketID,
           prefix: prefix,
           components: components,
           depth: depth,
           isCollapsed: isCollapsed,
           leafDescendantIDs: leafDescendantIDs,
           store: store
-        )
+        ) {
+          store.send(
+            .branchNestExpansionChanged(
+              repositoryID: repositoryID,
+              bucketID: bucketID,
+              prefix: prefix,
+              isExpanded: isCollapsed
+            )
+          )
+        }
       }
     }
   }
 }
 
-/// Header row for a nested branch group. Holds only value-type inputs so a
-/// per-row state mutation in the bucket (e.g. an agent tool storm on one
-/// leaf) doesn't invalidate this row; the per-leaf indicator aggregation is
-/// scoped to its own subview that observes only its descendants.
-private struct SidebarPathGroupHeaderRow: View {
-  let repositoryID: Repository.ID
-  let bucketID: SidebarBucket
+/// Header row for a nested branch group or a user group folder. Holds only
+/// value-type inputs plus the toggle action, so a per-row state mutation in the
+/// group (e.g. an agent tool storm on one leaf) doesn't invalidate this row; the
+/// per-leaf indicator aggregation is scoped to its own subview that observes
+/// only its descendants.
+struct SidebarPathGroupHeaderRow: View {
   let prefix: String
   let components: [String]
   let depth: Int
   let isCollapsed: Bool
   let leafDescendantIDs: [SidebarItemID]
   @Bindable var store: StoreOf<RepositoriesFeature>
+  /// Flips this group's collapsed state; the caller picks the reducer action.
+  let onToggle: () -> Void
 
   var body: some View {
     let label = components.isEmpty ? prefix : components.joined(separator: "/")
     Button {
-      _ = withAnimation(.easeOut(duration: 0.2)) {
-        store.send(
-          .branchNestExpansionChanged(
-            repositoryID: repositoryID,
-            bucketID: bucketID,
-            prefix: prefix,
-            isExpanded: isCollapsed
-          )
-        )
+      withAnimation(.easeOut(duration: 0.2)) {
+        onToggle()
       }
     } label: {
       HStack(spacing: 6) {
@@ -660,6 +661,7 @@ private struct SidebarItemContextMenu: View {
     }
 
     pinActions(contextRows: contextRows, isBulkSelection: isBulkSelection)
+    groupActions(contextRows: contextRows, isBulkSelection: isBulkSelection)
 
     if !isBulkSelection {
       SidebarCopyPathnameButton(path: row.workingDirectoryPath)
@@ -805,6 +807,56 @@ private struct SidebarItemContextMenu: View {
         }
       }
       Divider()
+    }
+  }
+
+  @ViewBuilder
+  private func groupActions(contextRows: [SidebarContextRow], isBulkSelection: Bool) -> some View {
+    // Same rows as Customize Appearance: git main worktrees are repository-level, and pending rows
+    // have no worktree to hold the group yet.
+    let groupableRows = contextRows.filter {
+      (!$0.isMainWorktree || $0.isFolder) && !$0.lifecycle.isPending
+    }
+    if store.sidebarFoldersEnabled, !groupableRows.isEmpty {
+      let structure = store.sidebarStructure
+      let currentGroups = Set(groupableRows.map { structure.groupPathByID[$0.id] })
+      Menu("Group", systemImage: "folder") {
+        Button("New Group…") {
+          store.send(
+            .requestNewGroup(
+              Dictionary(groupableRows.map { ($0.id, $0.repositoryID) }, uniquingKeysWith: { first, _ in first })
+            )
+          )
+        }
+        .help("Name a new folder and move these rows into it. Use / for subfolders.")
+        if !structure.groupPaths.isEmpty {
+          Divider()
+          // A checkmark marks the folder every selected row is already in.
+          ForEach(structure.groupPaths, id: \.self) { path in
+            Toggle(
+              path,
+              isOn: Binding(
+                get: { currentGroups == [path] },
+                set: { _ in setGroup(path, for: groupableRows) }
+              )
+            )
+          }
+        }
+        if currentGroups.contains(where: { $0 != nil }) {
+          Divider()
+          Button("Remove from Group") {
+            setGroup(nil, for: groupableRows)
+          }
+          .help("Show these rows outside any group folder")
+        }
+      }
+      Divider()
+    }
+  }
+
+  private func setGroup(_ group: String?, for rows: [SidebarContextRow]) {
+    for row in rows {
+      store.send(.setWorktreeGroup(row.id, row.repositoryID, group: group))
     }
   }
 

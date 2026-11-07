@@ -21,6 +21,7 @@ struct ContentView: View {
   @Environment(\.scenePhase) private var scenePhase
   @Environment(GhosttyShortcutManager.self) private var ghosttyShortcuts
   @State private var leftSidebarVisibility: NavigationSplitViewVisibility = .all
+  @State private var newGroupName = ""
 
   init(store: StoreOf<AppFeature>, terminalManager: WorktreeTerminalManager) {
     self.store = store
@@ -66,6 +67,22 @@ struct ContentView: View {
       }
     }
     .alert($repositoriesStore.scope(state: \.alert, action: \.alert))
+    .alert(
+      "New Group",
+      isPresented: $repositoriesStore.isNewGroupPromptPresented.sending(\.setNewGroupPromptPresented)
+    ) {
+      TextField("Group", text: $newGroupName, prompt: Text("Project 1/Backend"))
+      Button("Create") {
+        repositoriesStore.send(.newGroupPromptSubmitted(name: newGroupName))
+        newGroupName = ""
+      }
+      .keyboardShortcut(.defaultAction)
+      Button("Cancel", role: .cancel) {
+        newGroupName = ""
+      }
+    } message: {
+      Text("Folders appear in the Pinned and Active sections. Use / for subfolders.")
+    }
     .alert($store.scope(state: \.alert, action: \.alert))
     .alert($store.scope(state: \.license.alert, action: \.license.alert))
     .sheet(

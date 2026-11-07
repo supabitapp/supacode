@@ -249,7 +249,7 @@ struct AppFeatureArchivedSelectionTests {
     // User-visible invariant: the row is in the Active hoist now.
     let activeRowIDs = store.state.repositories.sidebarStructure.sections.flatMap {
       section -> [Worktree.ID] in
-      if case .highlight(let kind, let rowIDs) = section, kind == .active { return rowIDs }
+      if case .highlight(let kind, let rowIDs, _) = section, kind == .active { return rowIDs }
       return []
     }
     #expect(activeRowIDs.contains(worktree.id))

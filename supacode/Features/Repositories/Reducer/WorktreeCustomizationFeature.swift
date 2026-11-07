@@ -11,6 +11,11 @@ struct WorktreeCustomizationFeature {
     let defaultName: String
     var title: String
     var color: RepositoryColor?
+    /// Group path as typed; normalized on save (see `SidebarGroupNesting.normalized`).
+    var group: String = ""
+    /// Whether the Group field is offered (Settings > Custom sidebar folders). A hidden
+    /// field still saves the stored group back unchanged.
+    var showsGroup = false
   }
 
   enum Action: BindableAction, Equatable {
@@ -28,6 +33,7 @@ struct WorktreeCustomizationFeature {
       repositoryID: Repository.ID,
       title: String?,
       color: RepositoryColor?,
+      group: String?,
     )
   }
 
@@ -53,6 +59,7 @@ struct WorktreeCustomizationFeature {
               repositoryID: state.repositoryID,
               title: resolvedTitle,
               color: state.color,
+              group: SidebarGroupNesting.normalized(state.group),
             )
           )
         )

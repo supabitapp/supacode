@@ -87,10 +87,16 @@ enum SidebarBranchNesting {
   /// components are treated case-sensitively because git refs themselves are
   /// case-sensitive: `Feature/x` and `feature/x` are distinct branches and
   /// must group separately.
+  ///
+  /// `keepsOrder` skips the alphabetical sort so a group appears where its first
+  /// row would (the Pinned / Active priority order). `depth` is the depth of the
+  /// top-level rows.
   static func buildRows(
     itemIDs: [SidebarItemID],
     branchNames: [SidebarItemID: String],
-    collapsedPrefixes: Set<String>
+    collapsedPrefixes: Set<String>,
+    keepsOrder: Bool = false,
+    depth: Int = 0
   ) -> [Row] {
     guard !itemIDs.isEmpty else { return [] }
 
@@ -98,11 +104,14 @@ enum SidebarBranchNesting {
     // alphabetical sort by branch name. Custom drag-and-drop order is preserved
     // by the caller when grouping is off and is restored verbatim once the user
     // toggles grouping back off.
-    let sortedIDs = itemIDs.sorted { lhs, rhs in
-      let lhsKey = branchNames[lhs] ?? lhs.rawValue
-      let rhsKey = branchNames[rhs] ?? rhs.rawValue
-      return lhsKey.localizedCaseInsensitiveCompare(rhsKey) == .orderedAscending
-    }
+    let sortedIDs =
+      keepsOrder
+      ? itemIDs
+      : itemIDs.sorted { lhs, rhs in
+        let lhsKey = branchNames[lhs] ?? lhs.rawValue
+        let rhsKey = branchNames[rhs] ?? rhs.rawValue
+        return lhsKey.localizedCaseInsensitiveCompare(rhsKey) == .orderedAscending
+      }
 
     var node = PathNode()
     for id in sortedIDs {
@@ -113,7 +122,7 @@ enum SidebarBranchNesting {
 
     var rows: [Row] = []
     node.emit(
-      depth: 0,
+      depth: depth,
       pathFromRoot: [],
       pathFromAncestorHeader: nil,
       collapsedPrefixes: collapsedPrefixes,
