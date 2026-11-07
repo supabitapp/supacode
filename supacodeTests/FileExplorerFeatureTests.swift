@@ -751,12 +751,16 @@ struct FileExplorerFeatureTests {
     let worktree = Self.worktree(path: "/tmp/wt-a")
     let rootListing = Self.listing([("a.txt", isDirectory: false)])
     let snapshot = Self.gitSnapshot([Self.modified("a.txt")])
+    let listingReceived = AsyncStream<Void>.makeStream()
     let store = TestStore(initialState: FileExplorerFeature.State()) {
       FileExplorerFeature()
     } withDependencies: {
       $0.continuousClock = TestClock()
       $0.fileExplorerClient.list = { _, _ in rootListing }
-      $0.gitClient.fileStatus = { _ in snapshot }
+      $0.gitClient.fileStatus = { _ in
+        for await _ in listingReceived.stream {}
+        return snapshot
+      }
     }
 
     await store.send(
@@ -778,6 +782,7 @@ struct FileExplorerFeatureTests {
     await store.receive(\.listingLoaded) {
       $0.trees[worktree.id]?.directories[""]?.status = .loaded(rootListing)
     }
+    listingReceived.continuation.finish()
     await store.receive(\.gitStatusLoaded) {
       $0.trees[worktree.id]?.gitStatus = snapshot
     }
@@ -792,12 +797,16 @@ struct FileExplorerFeatureTests {
     let worktree = Self.worktree(path: "/tmp/wt-a")
     let rootListing = Self.listing([("a.txt", isDirectory: false)])
     let snapshot = Self.gitSnapshot([Self.modified("a.txt")])
+    let listingReceived = AsyncStream<Void>.makeStream()
     let store = TestStore(initialState: FileExplorerFeature.State()) {
       FileExplorerFeature()
     } withDependencies: {
       $0.continuousClock = TestClock()
       $0.fileExplorerClient.list = { _, _ in rootListing }
-      $0.gitClient.fileStatus = { _ in snapshot }
+      $0.gitClient.fileStatus = { _ in
+        for await _ in listingReceived.stream {}
+        return snapshot
+      }
     }
 
     await store.send(
@@ -819,6 +828,7 @@ struct FileExplorerFeatureTests {
     await store.receive(\.listingLoaded) {
       $0.trees[worktree.id]?.directories[""]?.status = .loaded(rootListing)
     }
+    listingReceived.continuation.finish()
     await store.receive(\.gitStatusLoaded) {
       $0.trees[worktree.id]?.gitStatus = snapshot
     }
