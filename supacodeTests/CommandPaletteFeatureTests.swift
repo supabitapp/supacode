@@ -252,6 +252,33 @@ struct CommandPaletteFeatureTests {
     )
   }
 
+  @Test func commandPaletteItems_customizeAppearanceForPendingWorktreeTargetsRepositoryOnly() {
+    let rootPath = "/tmp/repo-customize-pending"
+    let main = makeWorktree(id: rootPath, name: "main", repoRoot: rootPath)
+    let creating = makeWorktree(id: "\(rootPath)/creating", name: "feature/creating", repoRoot: rootPath)
+    let repository = makeRepository(rootPath: rootPath, name: "Repo", worktrees: [main, creating])
+    var state = RepositoriesFeature.State(reconciledRepositories: [repository])
+    state.sidebarItems[id: creating.id]?.lifecycle = .pending
+    state.selection = .worktree(creating.id)
+    state.applyPostReduceCacheRecomputes()
+
+    let items = CommandPaletteFeature.commandPaletteItems(from: state)
+    // A pending row has no stable per-row target (the sidebar hides the entry
+    // too); the repository-level action is still offered.
+    #expect(
+      items.contains {
+        if case .customizeWorktreeAppearance = $0.kind { return true }
+        return false
+      } == false
+    )
+    #expect(
+      items.contains {
+        if case .customizeRepositoryAppearance = $0.kind { return true }
+        return false
+      }
+    )
+  }
+
   @Test func commandPaletteItems_customizeAppearanceForFolderRowTargetsRowOnly() {
     let folderURL = URL(fileURLWithPath: "/tmp/my-folder")
     let folderID = Repository.folderWorktreeID(for: folderURL)
