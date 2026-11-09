@@ -94,9 +94,27 @@ nonisolated enum AgentHookSettingsCommand {
     return "\(oscGuardExpr) && { \(steps.joined(separator: "; ")); } >/dev/null 2>&1 || true \(ownershipMarker)"
   }
 
+  /// Devin `PermissionRequest`: the agent is parked on an approval prompt, which
+  /// is Claude's `Notification` stand-in (Devin has no `Notification` event). Its
+  /// stdin payload (`tool_name` / `tool_input`) carries no displayable text, so
+  /// the notify is a fixed string rather than the stdin-sourced one.
+  static func devinPermissionRequestCommand(agent: SkillAgent) -> String {
+    let steps: [String] = [
+      AgentPresenceOSC.ttyResolveSnippet,
+      AgentPresenceOSC.emitShell(event: .awaitingInput, agent: agent),
+      AgentPresenceOSC.emitFixedNotifyShell(
+        agent: agent, title: Self.inputNeededNotifyTitle, body: Self.inputNeededNotifyBody),
+    ]
+    return "\(oscGuardExpr) && { \(steps.joined(separator: "; ")); } >/dev/null 2>&1 || true \(ownershipMarker)"
+  }
+
   /// Fixed headline / body for the error notification the Stop hook raises.
   static let errorNotifyTitle = "Agent error"
   static let errorNotifyBody = "Session stopped on an error"
+
+  /// Fixed headline / body for the notification Devin's PermissionRequest hook raises.
+  static let inputNeededNotifyTitle = "Input needed"
+  static let inputNeededNotifyBody = "Devin is waiting for a permission decision"
 
   /// Guard for the OSC command: a surface id present (the no-op-outside-Supacode
   /// gate). Fires both locally and over SSH; the pid suffix inside the presence

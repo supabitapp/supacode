@@ -12,8 +12,8 @@ struct SkillAgentTests {
   @Test func allCasesByDisplayNameOrdersBySettingsLabel() {
     #expect(
       SkillAgent.allCasesByDisplayName.map(\.displayName) == [
-        "Claude Code", "Codex", "Copilot CLI", "Google Antigravity", "Grok Code", "Hermes",
-        "Kimi Code", "Kiro CLI", "Oh My Pi", "OpenCode", "Pi",
+        "Claude Code", "Codex", "Copilot CLI", "Devin CLI", "Google Antigravity", "Grok Code",
+        "Hermes", "Kimi Code", "Kiro CLI", "Oh My Pi", "OpenCode", "Pi",
       ]
     )
   }
@@ -23,6 +23,13 @@ struct SkillAgentTests {
     #expect(SkillAgent.antigravity.displayName == "Google Antigravity")
     #expect(SkillAgent.antigravity.assetName == "antigravity-mark")
     #expect(SkillAgent.antigravity.configDirectoryName == ".gemini/antigravity-cli")
+  }
+
+  @Test func devinIdentityUsesExpectedDisplayAndAssetNames() {
+    #expect(SkillAgent.devin.rawValue == "devin")
+    #expect(SkillAgent.devin.displayName == "Devin CLI")
+    #expect(SkillAgent.devin.assetName == "devin-mark")
+    #expect(SkillAgent.devin.configDirectoryName == ".config/devin")
   }
 
   @Test func hermesIdentityUsesExpectedDisplayAndAssetNames() {
@@ -65,7 +72,7 @@ struct SkillAgentTests {
     // Varying rows, authored from each agent's installed hook events.
     #expect(
       SkillAgent.allCases.filter { $0.supports(.inputNeededBadge) }
-        == [.claude, .copilot, .grok, .kimi, .opencode])
+        == [.claude, .copilot, .devin, .grok, .kimi, .opencode])
     #expect(SkillAgent.allCases.filter { $0.supports(.errorDetection) } == [.antigravity, .claude])
     #expect(SkillAgent.allCases.filter { $0.supports(.compactionBadge) } == [.claude])
     #expect(SkillAgent.allCases.filter { !$0.supports(.notifications) } == [.opencode])
@@ -151,7 +158,7 @@ struct SkillAgentTests {
 
   @Test func relocatableAgentsInstallDirectlyIntoCustomConfigDir() async throws {
     // Every relocatable agent whose install is pure file I/O (no CLI subprocess).
-    let agents: [SkillAgent] = [.claude, .copilot, .grok, .hermes, .kimi, .omp, .pi, .opencode]
+    let agents: [SkillAgent] = [.claude, .copilot, .devin, .grok, .hermes, .kimi, .omp, .pi, .opencode]
     for agent in agents {
       let custom = URL(fileURLWithPath: NSTemporaryDirectory())
         .appending(path: "supacode-custom-\(agent.rawValue)-\(UUID().uuidString)", directoryHint: .isDirectory)
