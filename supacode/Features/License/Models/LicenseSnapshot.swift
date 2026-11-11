@@ -66,6 +66,11 @@ nonisolated struct LicenseCreationPermit: Equatable, Sendable {
   let id: UUID
 }
 
+nonisolated struct LicenseMacLimit: Equatable, Sendable {
+  let macs: [String]
+  let canRemoveInPortal: Bool
+}
+
 nonisolated enum LicenseError: Error, Equatable, LocalizedError, Sendable {
   case licenseRequired
   case invalidKey
@@ -75,6 +80,7 @@ nonisolated enum LicenseError: Error, Equatable, LocalizedError, Sendable {
   case creationInProgress
   case trialCreationsPending
   case staleOperation
+  case macLimitReached(message: String, LicenseMacLimit)
   case service(String)
 
   var errorDescription: String? {
@@ -95,7 +101,7 @@ nonisolated enum LicenseError: Error, Equatable, LocalizedError, Sendable {
       "Your remaining free local worktree creations are in progress. Wait for them to finish, then try again."
     case .staleOperation:
       "The license changed while this operation was running. Try again."
-    case .service(let message):
+    case .macLimitReached(let message, _), .service(let message):
       message
     }
   }

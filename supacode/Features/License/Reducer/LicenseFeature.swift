@@ -9,7 +9,7 @@ struct LicenseFeature {
     @Shared(.inMemory("supacode.license")) var snapshot = LicenseSnapshot()
     var keyInput = ""
     var isBusy = false
-    var errorMessage: String?
+    var failure: Failure?
     @Presents var alert: AlertState<Alert>?
 
     var isKeyInputEmpty: Bool {
@@ -22,6 +22,18 @@ struct LicenseFeature {
         var update = update
         update.trialCreations = max(update.trialCreations, current.trialCreations)
         current = update
+      }
+    }
+  }
+
+  struct Failure: Equatable {
+    var message: String
+    var macLimit: LicenseMacLimit?
+
+    init(_ error: any Error) {
+      message = error.localizedDescription
+      if case .macLimitReached(_, let macLimit) = error as? LicenseError {
+        self.macLimit = macLimit
       }
     }
   }
@@ -90,12 +102,12 @@ struct LicenseFeature {
       case .loaded(.failure(let error)):
         // An in-flight activation or deactivation reports its own outcome.
         guard !state.isBusy else { return .none }
-        state.errorMessage = error.localizedDescription
+        state.failure = Failure(error)
         return .none
       case .activate:
         guard !state.isBusy, !state.isKeyInputEmpty else { return .none }
         state.isBusy = true
-        state.errorMessage = nil
+        state.failure = nil
         let key = state.keyInput
         return .run { send in
           do { await send(.completed(.success(try await client.activate(key)))) } catch {
@@ -108,7 +120,7 @@ struct LicenseFeature {
       case .deactivate:
         guard !state.isBusy else { return .none }
         state.isBusy = true
-        state.errorMessage = nil
+        state.failure = nil
         return .run { send in
           do { await send(.completed(.success(try await client.deactivate()))) } catch {
             await send(.completed(.failure(error)))
@@ -130,7 +142,7 @@ struct LicenseFeature {
         return .none
       case .completed(.failure(let error)):
         state.isBusy = false
-        state.errorMessage = error.localizedDescription
+        state.failure = Failure(error)
         return .none
       case .purchaseRequired:
         state.alert = AlertState {
@@ -160,7 +172,7 @@ struct LicenseFeature {
         urlOpener.open(URL(string: "https://license.supacode.sh/buy")!)
         return .none
       case .portal:
-        urlOpener.open(URL(string: "https://license.supacode.sh/login")!)
+        urlOpener.open(URL(string: "https://license.supacode.sh/licenses")!)
         return .none
       case .binding, .delegate:
         return .none
