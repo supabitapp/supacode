@@ -259,6 +259,128 @@ struct RepositoriesFeatureCreationDataLossTests {
     #expect(try await !branchExists("feature", in: sandbox))
   }
 
+  /// An `existing` branch one commit ahead of `main`, with no worktree; returns its tip.
+  private func makeUnusedBranch(in sandbox: Sandbox) async throws -> String {
+    let repoPath = sandbox.repoURL.path(percentEncoded: false)
+    try await Sandbox.git(["-C", repoPath, "switch", "-c", "existing"])
+    try await Sandbox.git(["-C", repoPath, "commit", "--allow-empty", "-m", "work"])
+    try await Sandbox.git(["-C", repoPath, "switch", "main"])
+    return try await Sandbox.git(["-C", repoPath, "rev-parse", "existing"])
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private func sendReuse(_ store: TestStoreOf<RepositoriesFeature>, sandbox: Sandbox, pendingID: Worktree.ID? = nil)
+    async
+  {
+    await store.send(
+      .createWorktreeInRepository(
+        repositoryID: RepositoryID(sandbox.repoURL.path(percentEncoded: false)),
+        nameSource: .explicit("existing"),
+        baseRefSource: .repositorySetting,
+        fetchOrigin: false,
+        reuseExistingBranch: true,
+        pendingID: pendingID
+      )
+    )
+  }
+
+  @Test(.dependencies) func reusedBranchIsCheckedOutAndOwned() async throws {
+    let sandbox = try await Sandbox()
+    defer { sandbox.cleanup() }
+    useSandboxBase(sandbox)
+    let tip = try await makeUnusedBranch(in: sandbox)
+    let store = makeStore(
+      sandbox: sandbox,
+      worktrees: [makeWorktree(at: sandbox.repoURL, branch: "main", sandbox: sandbox)]
+    )
+
+    await sendReuse(store, sandbox: sandbox)
+    await store.receive(
+      { action in
+        guard case .createRandomWorktreeSucceeded(_, _, _, .created) = action else { return false }
+        return true
+      },
+      timeout: .seconds(60)
+    )
+    await store.finish(timeout: .seconds(60))
+
+    let created = sandbox.baseDirectory.appending(path: "existing", directoryHint: .isDirectory)
+    let createdPath = created.path(percentEncoded: false)
+    let head = try await Sandbox.git(["-C", createdPath, "rev-parse", "--abbrev-ref", "HEAD"])
+    #expect(head.trimmingCharacters(in: .whitespacesAndNewlines) == "existing")
+    let commit = try await Sandbox.git(["-C", createdPath, "rev-parse", "HEAD"])
+    #expect(commit.trimmingCharacters(in: .whitespacesAndNewlines) == tip)
+  }
+
+  @Test(.dependencies) func cancelledReuseRemovesTheWorktreeButKeepsTheBranch() async throws {
+    let sandbox = try await Sandbox()
+    defer { sandbox.cleanup() }
+    useSandboxBase(sandbox)
+    let tip = try await makeUnusedBranch(in: sandbox)
+    let store = makeStore(
+      sandbox: sandbox,
+      worktrees: [makeWorktree(at: sandbox.repoURL, branch: "main", sandbox: sandbox)]
+    )
+    let pendingID = WorktreeID("\(WorktreeID.pendingPrefix)reuse-cancel")
+
+    await sendReuse(store, sandbox: sandbox, pendingID: pendingID)
+    await store.send(.cancelPendingWorktree(pendingID))
+    await store.receive(\.createRandomWorktreeSucceeded, timeout: .seconds(60))
+    await store.finish(timeout: .seconds(60))
+
+    let created = sandbox.baseDirectory.appending(path: "existing", directoryHint: .isDirectory)
+    #expect(!FileManager.default.fileExists(atPath: created.path(percentEncoded: false)))
+    let branchTip = try await Sandbox.git(["-C", sandbox.repoURL.path(percentEncoded: false), "rev-parse", "existing"])
+    #expect(branchTip.trimmingCharacters(in: .whitespacesAndNewlines) == tip)
+  }
+
+  @Test(.dependencies) func failedReuseAfterWorktreeAddKeepsTheBranch() async throws {
+    let sandbox = try await Sandbox()
+    defer { sandbox.cleanup() }
+    useSandboxBase(sandbox)
+    let tip = try await makeUnusedBranch(in: sandbox)
+    // A failing post-checkout hook leaves git's worktree registered while `wt` exits non-zero.
+    let hook = sandbox.repoURL.appending(path: ".git/hooks/post-checkout")
+    try FileManager.default.createDirectory(at: hook.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "#!/bin/sh\nexit 1\n".write(to: hook, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path(percentEncoded: false))
+    let store = makeStore(
+      sandbox: sandbox,
+      worktrees: [makeWorktree(at: sandbox.repoURL, branch: "main", sandbox: sandbox)]
+    )
+
+    await sendReuse(store, sandbox: sandbox)
+    await store.receive(\.createRandomWorktreeFailed, timeout: .seconds(60))
+    await store.finish(timeout: .seconds(60))
+
+    let created = sandbox.baseDirectory.appending(path: "existing", directoryHint: .isDirectory)
+    #expect(!FileManager.default.fileExists(atPath: created.path(percentEncoded: false)))
+    let branchTip = try await Sandbox.git(["-C", sandbox.repoURL.path(percentEncoded: false), "rev-parse", "existing"])
+    #expect(branchTip.trimmingCharacters(in: .whitespacesAndNewlines) == tip)
+  }
+
+  /// Through the live shell, which trims the output: an unused branch's line ends in its empty
+  /// worktree path and must still read as reusable.
+  @Test func branchAvailabilityClassifiesRealBranches() async throws {
+    let sandbox = try await Sandbox()
+    defer { sandbox.cleanup() }
+    let repoPath = sandbox.repoURL.path(percentEncoded: false)
+    try await Sandbox.git(["-C", repoPath, "branch", "unused"])
+    try await Sandbox.git([
+      "-C", repoPath, "worktree", "add", "-b", "busy", sandbox.root.appending(path: "busy").path(percentEncoded: false),
+    ])
+    let client = GitClient()
+
+    #expect(try await client.branchAvailability("unused", for: sandbox.repoURL) == .reusable)
+    #expect(try await client.branchAvailability("missing", for: sandbox.repoURL) == .absent)
+    let busy = try await client.branchAvailability("busy", for: sandbox.repoURL)
+    guard case .checkedOut(let path) = busy else {
+      Issue.record("Expected busy to be checked out, got \(busy)")
+      return
+    }
+    #expect(path.hasSuffix("/busy"))
+  }
+
   @Test func localBranchNamesKeepsBranchShadowedByTag() async throws {
     let sandbox = try await Sandbox()
     defer { sandbox.cleanup() }

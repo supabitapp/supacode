@@ -15,6 +15,12 @@ struct WorktreeCreationPromptView: View {
           .onSubmit {
             store.send(.createButtonTapped)
           }
+        if store.canReuseExistingBranch {
+          Toggle(isOn: $store.reuseExistingBranch) {
+            Text("Reuse existing branch")
+            Text("Checks out the branch as it is. Base ref, fetch, and upstream don't apply.")
+          }
+        }
       } header: {
         // `NavigationStack` with title and subtitle is bugged inside
         // sheets in macOS 26.*, and this is a nice enough fallback.
@@ -27,6 +33,7 @@ struct WorktreeCreationPromptView: View {
 
       Section {
         WorktreeBaseRefField(store: store)
+          .disabled(store.reuseExistingBranch)
 
         Toggle(isOn: $store.fetchOrigin) {
           Text("Fetch remote branch")
@@ -34,7 +41,7 @@ struct WorktreeCreationPromptView: View {
             "Runs `git fetch` to ensure the base branch is up to date before creating the worktree."
           )
         }
-        .disabled(store.isSelectedBaseRefLocal)
+        .disabled(store.isFetchOriginDisabled)
       }
 
       WorktreeAppearanceSection(store: store)
@@ -94,6 +101,7 @@ private struct WorktreeOptionsSection: View {
       TextField("Worktree name", text: $store.worktreeNameOverride, prompt: Text(store.worktreeNamePlaceholder))
       TextField("Parent folder", text: $store.worktreePathOverride, prompt: Text(store.defaultWorktreeBaseDirectory))
       WorktreeUpstreamField(store: store)
+        .disabled(store.reuseExistingBranch)
     }
   }
 }

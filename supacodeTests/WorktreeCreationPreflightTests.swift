@@ -100,6 +100,37 @@ struct WorktreeCreationPreflightTests {
     #expect(!target.isWorktreeAddAnnouncement("Preparing worktree (new branch 'feature/x')"))
   }
 
+  @Test func worktreeAddAnnouncementMatchesTheReusedBranchCheckout() {
+    let target = WorktreeCreationCleanupTarget(
+      branchName: "feature", directory: URL(fileURLWithPath: "/tmp/x"), directoryPreexisted: false,
+      reusesBranch: true)
+    #expect(target.isWorktreeAddAnnouncement("Preparing worktree (checking out 'feature')\n"))
+    #expect(!target.isWorktreeAddAnnouncement("Preparing worktree (new branch 'feature')"))
+  }
+
+  @Test func reuseClaimsAnUnusedBranchOnly() {
+    let target = URL(fileURLWithPath: "/tmp/preflight-base/feature")
+    func claim(
+      _ existingBranch: GitBranchAvailability,
+      names: WorktreeCreationPreflight.TakenNames = .init(branches: ["feature", "main"]),
+      state: WorktreeTargetState = .absent
+    ) -> Result<WorktreeCreationCleanupTarget, WorktreeCreationPreflight.Rejection> {
+      WorktreeCreationPreflight.claim(
+        branchName: "feature", targetDirectory: target, targetState: state, takenNames: names, worktrees: [],
+        existingBranch: existingBranch)
+    }
+    #expect(claim(.absent) == .failure(.nameTaken))
+    #expect(
+      claim(.reusable)
+        == .success(
+          WorktreeCreationCleanupTarget(
+            branchName: "feature", directory: target, directoryPreexisted: false, reusesBranch: true)))
+    #expect(claim(.checkedOut("/tmp/wt/feature")) == .failure(.branchCheckedOut(worktreePath: "/tmp/wt/feature")))
+    // A reuse still yields to an in-flight creation of the name and to the folder checks.
+    #expect(claim(.reusable, names: .init(branches: ["feature"], inFlight: ["feature"])) == .failure(.nameTaken))
+    #expect(claim(.reusable, state: .occupied) == .failure(.folderOccupied(target)))
+  }
+
   @Test func enclosingWorktreeMatchesCaseInsensitively() {
     let feature = makeWorktree(path: "/tmp/preflight-base/feature", name: "feature")
     let target = URL(fileURLWithPath: "/tmp/preflight-base/Feature/nested")
