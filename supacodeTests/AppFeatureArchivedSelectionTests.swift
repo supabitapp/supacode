@@ -47,6 +47,7 @@ struct AppFeatureArchivedSelectionTests {
       // Leaving the worktree selection for the archived list clears the menu's
       // "a git worktree is selected" gate.
       $0.worktreeMenuSnapshot.hasSelectedGitWorktree = false
+      $0.worktreeMenuSnapshot.canCustomizeSelectedAppearance = false
     }
     await store.receive(\.repositories.delegate.selectedWorktreeChanged)
     await store.finish()
