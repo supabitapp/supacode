@@ -32,7 +32,7 @@ nonisolated enum PiExtensionContent {
      *   Pi session_shutdown -> session_end + idle (defensive activity reset)
      */
 
-    import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+    import type { AgentEndEvent, ExtensionAPI } from "@mariozechner/pi-coding-agent";
     import { openSync, writeSync, closeSync } from "node:fs";
 
     interface NotifyContent {
@@ -130,23 +130,21 @@ nonisolated enum PiExtensionContent {
       writeToTerminal(`\\x1b]3008;start=${AGENT};${meta}\\x1b\\\\`);
     }
 
-    function lastAssistantText(ctx: { sessionManager: { getEntries(): any[] } }): string | undefined {
-      const entries = ctx.sessionManager.getEntries();
-      for (let i = entries.length - 1; i >= 0; i--) {
-        const entry = entries[i];
-        if (entry.type !== "message") continue;
-        if (entry.message.role !== "assistant") continue;
+    function lastAssistantText(messages: AgentEndEvent["messages"]): string | undefined {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const message = messages[i];
+        if (message.role !== "assistant") continue;
 
-        const content = entry.message.content;
-        if (!Array.isArray(content)) continue;
+        const content = message.content;
+        if (!Array.isArray(content)) return undefined;
 
         const text = content
-          .filter((c: { type: string; text?: string }) => c.type === "text" && typeof c.text === "string")
-          .map((c: { text: string }) => c.text)
+          .filter((c) => c.type === "text")
+          .map((c) => c.text)
           .join("")
           .trim();
 
-        if (text.length > 0) return text;
+        return text || undefined;
       }
       return undefined;
     }
@@ -163,11 +161,12 @@ nonisolated enum PiExtensionContent {
         emitPresence("busy");
       });
 
-      pi.on("agent_end", (_event, ctx) => {
+      pi.on("agent_end", (event, _ctx) => {
         // Atomic state-set: `idle` overwrites whatever was running on the
         // Supacode side (turn-level Stop equivalent).
         emitPresence("idle");
-        emitNotification({ body: lastAssistantText(ctx) });
+        const body = lastAssistantText(event.messages);
+        if (body) emitNotification({ body });
       });
 
       pi.on("session_shutdown", (_event, _ctx) => {
