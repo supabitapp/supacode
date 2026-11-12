@@ -706,7 +706,7 @@ struct AppFeature {
       // re-send as above, gated to folders so git worktree renames (never
       // shown in settings) stay cheap.
       case .repositories(
-        .worktreeCustomization(.presented(.delegate(.save(_, let repositoryID, let title, _))))
+        .worktreeCustomization(.presented(.delegate(.save(_, let repositoryID, let title, _, _))))
       ),
         .repositories(.setWorktreeAppearance(_, let repositoryID, let title, _)):
         guard state.repositories.repositories[id: repositoryID]?.isGitRepository == false
@@ -800,6 +800,7 @@ struct AppFeature {
           .merge(forgeTeardownEffects),
           .send(.repositories(.setMergedWorktreeAction(settings.mergedWorktreeAction))),
           .send(.repositories(.setMoveNotifiedWorktreeToTop(settings.moveNotifiedWorktreeToTop))),
+          .send(.repositories(.setSidebarFoldersEnabled(settings.sidebarFoldersEnabled))),
           // The global default editor feeds every repo's resolved open action, and the
           // selected worktree's own open action resolves against it too.
           .send(.repositories(.openActionSettingsChanged)),

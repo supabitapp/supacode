@@ -192,6 +192,10 @@ struct RepositoriesFeature {
     /// Global fallback applied when a repository has no `mergedWorktreeAction` override.
     var mergedWorktreeAction: MergedWorktreeAction = .ignore
     var moveNotifiedWorktreeToTop = false
+    /// Mirrors `GlobalSettings.sidebarFoldersEnabled`: nest Pinned and Active rows
+    /// under their custom group folders (and offer the Group menu and field) instead
+    /// of by repository and branch.
+    var sidebarFoldersEnabled = false
     /// Installed editors in menu order, mirrored down from `AppFeature` so the
     /// sidebar context menu never probes LaunchServices while building.
     var installedOpenActions: [OpenWorktreeAction] = []
@@ -298,6 +302,9 @@ struct RepositoriesFeature {
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
     @Presents var repositoryCustomization: RepositoryCustomizationFeature.State?
     @Presents var worktreeCustomization: WorktreeCustomizationFeature.State?
+    /// Rows the New Group prompt will move, keyed to their repositories. Empty while it's closed.
+    var newGroupPromptRows: [Worktree.ID: Repository.ID] = [:]
+    var isNewGroupPromptPresented: Bool { !newGroupPromptRows.isEmpty }
     @Presents var renameBranchPrompt: RenameBranchFeature.State?
     @Presents var remoteConnectionForm: RemoteConnectionFormFeature.State?
     @Presents var cloneRepositoryForm: CloneRepositoryFormFeature.State?
@@ -407,6 +414,16 @@ struct RepositoriesFeature {
       repositoryID: Repository.ID,
       bucketID: SidebarBucket,
       prefix: String,
+      isExpanded: Bool
+    )
+    /// Expand or collapse a group folder in the Pinned and Active sections.
+    case sidebarGroupExpansionChanged(path: String, isExpanded: Bool)
+    /// Expand or collapse a header in a repository's Pinned / Active group: the
+    /// repository header when `prefix` is nil, else a branch-prefix header.
+    case highlightGroupExpansionChanged(
+      kind: SidebarStructure.HighlightKind,
+      repositoryID: Repository.ID,
+      prefix: String?,
       isExpanded: Bool
     )
     /// Expand or collapse every sidebar group at once. Expanding also clears
@@ -612,6 +629,14 @@ struct RepositoriesFeature {
     /// Deeplink / CLI appearance update: overwrites the row's sidebar title and tint.
     /// `nil` clears the field; omit-vs-clear was already resolved upstream in `AppFeature`.
     case setWorktreeAppearance(Worktree.ID, Repository.ID, title: String?, color: RepositoryColor?)
+    /// Context-menu group move: overwrites the row's group path. `nil` removes it from its group.
+    case setWorktreeGroup(Worktree.ID, Repository.ID, group: String?)
+    /// Context-menu "New Group…": ask for a folder name for these rows.
+    case requestNewGroup([Worktree.ID: Repository.ID])
+    /// New Group prompt answered: moves the prompt's rows into `name`. A blank name changes nothing.
+    case newGroupPromptSubmitted(name: String)
+    case setNewGroupPromptPresented(Bool)
+    case setSidebarFoldersEnabled(Bool)
     case requestRenameBranch(Worktree.ID, Repository.ID)
     case contextMenuOpenWorktree(Worktree.ID, OpenWorktreeAction)
     case worktreeCreationPrompt(PresentationAction<WorktreeCreationPromptFeature.Action>)
@@ -4114,7 +4139,11 @@ struct RepositoriesFeature {
             for bucketID in Array(section.buckets.keys) {
               section.buckets[bucketID]?.collapsedBranchPrefixes.removeAll()
             }
+            section.collapsedHighlightGroups.removeAll()
             sidebar.sections[repositoryID] = section
+          }
+          if isExpanded {
+            sidebar.collapsedGroups.removeAll()
           }
         }
         return .none
@@ -4197,13 +4226,14 @@ struct RepositoriesFeature {
           bucket.collapsedBranchPrefixes = next
           sidebar.sections[repositoryID]?.buckets[bucketID] = bucket
         }
+        state.expandHighlightGroups(containing: worktreeID)
         state.nextPendingSidebarRevealID += 1
         state.pendingSidebarReveal = .init(id: state.nextPendingSidebarRevealID, worktreeID: worktreeID)
         return .none
 
       case .revealHoistedWorktreeInSidebar(let worktreeID):
-        // The target lives in a highlight section, which is never collapsed,
-        // so no section / branch-prefix uncollapse is needed.
+        // The target lives in a highlight section; open any group hiding it there.
+        state.expandHighlightGroups(containing: worktreeID)
         state.nextPendingSidebarRevealID += 1
         state.pendingSidebarReveal = .init(id: state.nextPendingSidebarRevealID, worktreeID: worktreeID)
         return .none
@@ -4828,6 +4858,13 @@ struct RepositoriesFeature {
 
       case .requestCustomizeWorktree,
         .setWorktreeAppearance,
+        .setWorktreeGroup,
+        .requestNewGroup,
+        .newGroupPromptSubmitted,
+        .setNewGroupPromptPresented,
+        .setSidebarFoldersEnabled,
+        .sidebarGroupExpansionChanged,
+        .highlightGroupExpansionChanged,
         .worktreeCustomization:
         // Handled by `WorktreeCustomizationParentReducer` below; main switch is at type-checker
         // capacity, so the customization arms are split out into a dedicated reducer.
@@ -6050,8 +6087,8 @@ extension RepositoriesFeature.State {
     // Selection hidden behind a collapsed group: land on the nearest visible
     // neighbor in the direction of travel rather than jumping top / bottom.
     // The unfiltered anchor list intentionally walks the per-repo bucket
-    // order (collapsed groups expanded) since hoisted rows are always
-    // visible and therefore never fall through to this branch.
+    // order (collapsed groups expanded), so a hoisted row hidden in a
+    // collapsed Pinned / Active group anchors at its place in its repository.
     if let currentID = selectedWorktreeID,
       let anchor = hiddenSelectionAnchor(currentID: currentID, visibleIDs: ids),
       let neighbor = nearestVisibleNeighbor(
@@ -7245,6 +7282,28 @@ extension RepositoriesFeature.State {
       guard next != bucket.collapsedBranchPrefixes else { continue }
       bucket.collapsedBranchPrefixes = next
       section.buckets[bucketID] = bucket
+    }
+    section.collapsedHighlightGroups = section.collapsedHighlightGroups.filter { group in
+      group.branchPrefix.map(coveredPrefixes.contains) ?? true
+    }
+  }
+
+  /// Opens every Pinned / Active header hiding `worktreeID`: its repository group and
+  /// ancestor branch prefixes, and its custom folder path. No-op for an unhoisted row.
+  mutating func expandHighlightGroups(containing worktreeID: Worktree.ID) {
+    let kind = sidebarStructure.sections.lazy.compactMap { section -> SidebarStructure.HighlightKind? in
+      guard case .highlight(let kind, let rowIDs, _) = section, rowIDs.contains(worktreeID) else { return nil }
+      return kind
+    }.first
+    guard let kind, let item = sidebarItems[id: worktreeID] else { return }
+    let groups = Set(
+      [SidebarState.HighlightGroup(kind: kind, branchPrefix: nil)]
+        + SidebarBranchNesting.ancestorPrefixes(of: item.branchName).map { .init(kind: kind, branchPrefix: $0) }
+    )
+    let folderPaths = sidebarGroupPath(for: worktreeID).map(SidebarGroupNesting.paths(including:)) ?? []
+    $sidebar.withLock { sidebar in
+      sidebar.sections[item.repositoryID]?.collapsedHighlightGroups.subtract(groups)
+      sidebar.collapsedGroups.subtract(folderPaths)
     }
   }
 

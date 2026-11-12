@@ -711,4 +711,59 @@ struct SidebarStateTests {
     #expect(state.customColor(for: repository(id: repoA.rawValue, isGitRepository: true)) == nil)
     #expect(state.customColor(for: repository(id: repoA.rawValue, isGitRepository: false)) == nil)
   }
+
+  // MARK: - groups
+
+  @Test func groupAndCollapsedGroupsRoundTripThroughJSON() throws {
+    var state = SidebarState()
+    state.insert(worktree: "wt-1", in: repoA, bucket: .unpinned, item: .init(group: "Project 1/Backend"))
+    state.collapsedGroups = ["Project 1"]
+    state.sections[repoA]?.collapsedHighlightGroups = [
+      .init(kind: .active, branchPrefix: nil), .init(kind: .pinned, branchPrefix: "feature"),
+    ]
+
+    let decoded = try JSONDecoder().decode(SidebarState.self, from: JSONEncoder().encode(state))
+
+    #expect(decoded == state)
+  }
+
+  @Test func ungroupedStateOmitsGroupKeys() throws {
+    var state = SidebarState()
+    state.insert(worktree: "wt-1", in: repoA, bucket: .unpinned)
+
+    let json = try #require(String(data: JSONEncoder().encode(state), encoding: .utf8))
+
+    #expect(!json.contains("\"group\""))
+    #expect(!json.contains("collapsedGroups"))
+    #expect(!json.contains("collapsedHighlightGroups"))
+  }
+
+  @Test func jsonWrittenBeforeGroupsDecodesWithNoGroups() throws {
+    let item = try JSONDecoder().decode(SidebarState.Item.self, from: Data(#"{"title":"T"}"#.utf8))
+    #expect(item.title == "T")
+    #expect(item.group == nil)
+
+    let state = try JSONDecoder().decode(SidebarState.self, from: Data(#"{"schemaVersion":1,"sections":[]}"#.utf8))
+    #expect(state.collapsedGroups.isEmpty)
+  }
+
+  @Test func groupTravelsWithTheRowWhenPinnedAndArchived() {
+    var state = SidebarState()
+    state.insert(worktree: "wt-1", in: repoA, bucket: .unpinned)
+    state.setGroup("Project 1", worktree: "wt-1", in: repoA)
+
+    state.pin(worktree: "wt-1", in: repoA)
+    #expect(state.sections[repoA]?.buckets[.pinned]?.items["wt-1"]?.group == "Project 1")
+
+    state.archive(worktree: "wt-1", in: repoA, from: .pinned, at: Date(timeIntervalSince1970: 1))
+    #expect(state.sections[repoA]?.buckets[.archived]?.items["wt-1"]?.group == "Project 1")
+  }
+
+  @Test func setGroupSeedsAnUnpinnedItemForAnUnseededRow() {
+    var state = SidebarState()
+
+    state.setGroup("Project 1", worktree: "wt-1", in: repoA)
+
+    #expect(state.sections[repoA]?.buckets[.unpinned]?.items["wt-1"]?.group == "Project 1")
+  }
 }
