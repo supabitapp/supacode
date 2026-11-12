@@ -9,7 +9,7 @@ struct LicenseSettingsView: View {
     let isActivated = snapshot.entitlement?.status == .active
     Form {
       Section {
-        LicenseStatusRow(status: snapshot.displayStatus, errorMessage: store.errorMessage)
+        LicenseStatusRow(status: snapshot.displayStatus, errorMessage: store.failure?.message)
         if isActivated, let updatesThrough = snapshot.entitlement?.updatesThrough {
           LabeledContent("Updates through", value: updatesThrough.formatted())
         }
@@ -45,7 +45,7 @@ struct LicenseSettingsView: View {
             .help("Open the license portal in your browser.")
         } label: {
           Text("License portal")
-          Text("Recover your key, renew updates, or manage your license.")
+          Text("Recover your key, renew updates, or remove a Mac from your license.")
         }
       }
     }
@@ -190,6 +190,17 @@ private struct LicenseActivateSection: View {
       } label: {
         Text("Activate this Mac")
         Text("Lost your key? Recover it from the license portal.")
+      }
+      if let macLimit = store.failure?.macLimit {
+        LabeledContent {
+          if macLimit.canRemoveInPortal {
+            Button("Manage Macs\u{2026}") { store.send(.portal) }
+              .help("Open the license portal in your browser to remove a Mac from this license.")
+          }
+        } label: {
+          Text(macLimit.macs.count == 1 ? "Mac using this license" : "Macs using this license")
+          Text(macLimit.macs.formatted(.list(type: .and)))
+        }
       }
     }
   }

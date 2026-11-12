@@ -30,10 +30,6 @@ nonisolated struct LicenseService: Sendable {
       let appVersion: String
     }
     struct Success: Decodable { let token: String }
-    struct Failure: Decodable {
-      struct Detail: Decodable { let message: String }
-      let error: Detail
-    }
     var request = URLRequest(url: baseURL.appending(path: "v1/\(operation)"))
     request.httpMethod = "POST"
     request.timeoutInterval = 20
@@ -47,14 +43,36 @@ nonisolated struct LicenseService: Sendable {
     )
     let (data, response) = try await session.data(for: request)
     guard let http = response as? HTTPURLResponse else { throw LicenseError.invalidEntitlement }
-    guard http.statusCode == 200 else {
-      let failure = try? JSONDecoder().decode(Failure.self, from: data)
-      throw LicenseError.service(
-        failure?.error.message ?? "The license service is unavailable. Try again.")
-    }
+    guard http.statusCode == 200 else { throw Self.failure(from: data) }
     guard let success = try? JSONDecoder().decode(Success.self, from: data) else {
       throw LicenseError.invalidEntitlement
     }
     return success.token
+  }
+
+  static func failure(from data: Data) -> LicenseError {
+    struct Failure: Decodable {
+      struct Detail: Decodable { let message: String }
+      let error: Detail
+    }
+    struct MacLimit: Decodable {
+      struct Detail: Decodable {
+        let deviceNames: [String]
+        let portalRemoval: Bool?
+      }
+      let error: Detail
+    }
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    guard let message = (try? decoder.decode(Failure.self, from: data))?.error.message else {
+      return .service("The license service is unavailable. Try again.")
+    }
+    guard let limit = (try? decoder.decode(MacLimit.self, from: data))?.error,
+      !limit.deviceNames.isEmpty
+    else { return .service(message) }
+    return .macLimitReached(
+      message: message,
+      LicenseMacLimit(macs: limit.deviceNames, canRemoveInPortal: limit.portalRemoval ?? false)
+    )
   }
 }

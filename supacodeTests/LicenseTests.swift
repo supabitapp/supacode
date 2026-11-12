@@ -305,7 +305,81 @@ struct LicenseTests {
     await store.send(.activate) { $0.isBusy = true }
     await store.receive(\.completed) {
       $0.isBusy = false
-      $0.errorMessage = LicenseError.invalidKey.localizedDescription
+      $0.failure = LicenseFeature.Failure(LicenseError.invalidKey)
+    }
+    #expect(store.state.failure?.message == "Enter a valid Supacode license key.")
+    #expect(store.state.failure?.macLimit == nil)
+  }
+
+  @Test func aLicenseWithNoFreeMacReportsTheMacsHoldingIt() {
+    func failure(_ body: String) -> LicenseError { LicenseService.failure(from: Data(body.utf8)) }
+    let message = "This license is active on two Macs."
+    #expect(
+      failure(
+        """
+        {"error":{"code":"device_limit_reached","device_limit":2,\
+        "device_names":["Work Mac","Home Mac"],"message":"\(message)","portal_removal":true}}
+        """
+      )
+        == .macLimitReached(
+          message: message,
+          LicenseMacLimit(macs: ["Work Mac", "Home Mac"], canRemoveInPortal: true)
+        )
+    )
+    #expect(
+      failure(
+        """
+        {"error":{"code":"device_active","device_name":"Work Mac",\
+        "device_names":["Work Mac"],"message":"\(message)","portal_removal":false}}
+        """
+      )
+        == .macLimitReached(
+          message: message, LicenseMacLimit(macs: ["Work Mac"], canRemoveInPortal: false)
+        )
+    )
+    #expect(
+      failure(#"{"error":{"code":"device_active","device_name":"Work Mac","message":"Busy"}}"#)
+        == .service("Busy")
+    )
+    #expect(
+      failure(#"{"error":{"device_names":["Work Mac",7],"message":"Busy","portal_removal":"no"}}"#)
+        == .service("Busy")
+    )
+    #expect(failure("<html>") == .service("The license service is unavailable. Try again."))
+  }
+
+  @Test(.dependencies) func activationOnAFullLicenseListsItsMacsUntilTheNextAttempt() async {
+    let macLimit = LicenseMacLimit(macs: ["Work Mac", "Home Mac"], canRemoveInPortal: true)
+    let full = LicenseError.macLimitReached(message: "No free Mac.", macLimit)
+    let attempts = LockIsolated(0)
+    let openedURLs = LockIsolated<[URL]>([])
+    let store = TestStore(initialState: LicenseFeature.State()) {
+      LicenseFeature()
+    } withDependencies: {
+      $0[LicenseClient.self].activate = { _ in
+        attempts.withValue { $0 += 1 }
+        if attempts.value == 1 { throw full }
+        return LicenseSnapshot()
+      }
+      $0.urlOpener.open = { url in openedURLs.withValue { $0.append(url) } }
+    }
+    await store.send(.binding(.set(\.keyInput, Self.key))) { $0.keyInput = Self.key }
+    await store.send(.activate) { $0.isBusy = true }
+    await store.receive(\.completed.failure) {
+      $0.isBusy = false
+      $0.failure = LicenseFeature.Failure(full)
+    }
+    #expect(store.state.failure?.message == "No free Mac.")
+    #expect(store.state.failure?.macLimit == macLimit)
+    await store.send(.portal)
+    #expect(openedURLs.value == [URL(string: "https://license.supacode.sh/licenses")!])
+    await store.send(.activate) {
+      $0.isBusy = true
+      $0.failure = nil
+    }
+    await store.receive(\.completed.success) {
+      $0.isBusy = false
+      $0.keyInput = ""
     }
   }
 
@@ -647,7 +721,7 @@ struct LicenseTests {
     }
     await store.receive(\.license.completed.failure) {
       $0.license.isBusy = false
-      $0.license.errorMessage = LicenseError.invalidKey.localizedDescription
+      $0.license.failure = LicenseFeature.Failure(LicenseError.invalidKey)
     }
     #expect(activatedKeys.value == [Self.key])
     await store.send(.settingsWindowOpened) {
