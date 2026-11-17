@@ -93,7 +93,7 @@ private struct WorktreeMainMenu: Commands {
         store.send(.repositories(.requestCustomizeSelectedAppearance))
       }
       .appKeyboardShortcut(customize)
-      .help("Customize the sidebar title and color of the selection (\(customize?.display ?? "none"))")
+      .help(AppShortcut.helpText("Set a custom title or color", shortcut: customize))
       .disabled(!snapshot.canCustomizeSelectedAppearance)
       Divider()
       Button("Refresh Worktrees", systemImage: "arrow.clockwise") {
