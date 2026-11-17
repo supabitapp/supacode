@@ -142,9 +142,14 @@ supacode tab list [-w <id>] [-f]                                    # List tab U
 supacode tab focus [-w <id>] [-t <id>]                              # Focus tab.
 supacode tab new [-w <id>] [-i <cmd>] [-n <uuid>] [--title <title>] [-p <pane-token>] [--background]  # Create tab in a pane (prints UUID to stdout).
 supacode tab rename [-w <id>] [-t <id>] --title <title>             # Rename tab (empty title clears override; script tabs are locked).
+supacode tab send [-w <id>] [-t <id>] -i <text> [--background]      # Type text into a tab's terminal and press Return: a shell command, or a prompt for an agent already running there.
 supacode tab move [-w <id>] [-t <id>] -d l|r|u|d [--background]     # Move a tab into a new split.
 supacode tab close [-w <id>] [-t <id>] [--background]               # Close tab.
 ```
+
+`tab send` fails rather than dropping input. A hibernated tab is woken and the
+command reports that it is waking: run it again. A read-only tab (a finished
+script) and a tab with no terminal are errors.
 
 ### Surface (deprecated)
 
@@ -154,7 +159,7 @@ and **will be removed in the next release**; prefer the pane/tab equivalents.
 
 ```
 supacode surface split …   # Deprecated: use `supacode pane split`.
-supacode surface focus …   # Deprecated: use `supacode tab focus`.
+supacode surface focus …   # Deprecated: use `supacode tab focus`, or `supacode tab send` for `-i`.
 supacode surface close …   # Deprecated: use `supacode tab close`.
 supacode surface list …    # Deprecated: use `supacode tab list`.
 ```
@@ -208,10 +213,10 @@ With `--title` / `--color`, omitted update flags preserve existing values;
 Pass `--background` when acting on behalf of a user working elsewhere: it
 leaves the sidebar selection and keyboard focus untouched, and new panes and
 tabs stay in the background instead of becoming active. It is accepted by every
-action that would otherwise focus its target (`tab new`, `tab move`,
-`pane split`, `pane close`, `repo worktree-new`, `worktree run`/`stop`/
-`archive`/`unarchive`/`delete`/`pin`/`unpin`, and `tab close`); the `focus`,
-`zoom`, `equalize`, and `window` commands do not accept it.
+action that would otherwise focus its target (`tab new`, `tab send`,
+`tab move`, `pane split`, `pane close`, `repo worktree-new`, `worktree run`/
+`stop`/`archive`/`unarchive`/`delete`/`pin`/`unpin`, and `tab close`); the
+`focus`, `zoom`, `equalize`, and `window` commands do not accept it.
 
 ## Flag Reference
 
@@ -224,7 +229,7 @@ action that would otherwise focus its target (`tab new`, `tab move`,
 | `--title` | - | - | Tab title for `tab new`/`rename`, or sidebar title for `worktree appearance`; an empty string clears it for `rename` and `appearance` (rejected by `tab new`). |
 | `--color` | - | - | Sidebar tint override; pass `none` to clear. |
 | `--repo` | `-r` | `$SUPACODE_REPO_ID` | Repository ID. |
-| `--input` | `-i` | - | Command to run in the terminal. |
+| `--input` | `-i` | - | Command to run in a new terminal, or the text `tab send` types into an existing one. |
 | `--direction` | `-d` | `horizontal` | Split direction (`h`/`v`) for splits; neighbor direction (`l`/`r`/`u`/`d`) for `pane focus` and `tab move`. |
 | `--id` | `-n` | random | UUID for a new tab. |
 | `--focused` | `-f` | - | Print only the focused item in `list` commands. |

@@ -75,8 +75,8 @@ struct WorktreeTerminalManagerAckTests {
   }
 
   /// One long-lived subscription per test: resubscribing between commands
-  /// would strand one-shot events in the abandoned stream. Pulls creation
-  /// events only; state replays (indicator counts, projections) pass through.
+  /// would strand one-shot events in the abandoned stream. Pulls creation and
+  /// send acks only; state replays (indicator counts, projections) pass through.
   private final class CreationEvents {
     // Tests pull sequentially on one task; the iterator only needs to escape
     // the actor so its mutating async `next` can run across suspensions.
@@ -92,7 +92,7 @@ struct WorktreeTerminalManagerAckTests {
       var events: [TerminalClient.Event] = []
       while events.count < count, let event = await iterator.next() {
         switch event {
-        case .tabCreated, .surfaceCreated, .surfaceCreationFailed, .initialTabCreationFailed:
+        case .tabCreated, .surfaceCreated, .surfaceCreationFailed, .initialTabCreationFailed, .tabInputSent:
           events.append(event)
         default:
           continue
@@ -115,6 +115,33 @@ struct WorktreeTerminalManagerAckTests {
     // The documented invariant: the initial surface ID equals the tab ID.
     let layout = harness.store.withState { $0.terminals.layouts[id: harness.worktree.id]?.layout }
     #expect(layout?.pane(containingTab: TabID(rawValue: id))?.tabs[id: TabID(rawValue: id)]?.content.id.rawValue == id)
+  }
+
+  @Test(.dependencies) func sendInputToAMissingTabSettlesWithNoTerminal() async {
+    let harness = makeHarness()
+    let pump = CreationEvents(harness.manager)
+    harness.manager.handleCommand(
+      .sendInput(
+        harness.worktree, tabID: TabID(rawValue: UUID()), input: "run the tests", focusing: false,
+        requestID: 7))
+
+    #expect(await pump.next(1) == [.tabInputSent(requestID: 7, delivery: .noTerminal)])
+  }
+
+  @Test(.dependencies) func sendInputToAHibernatedTabWakesItWithoutTyping() async {
+    let harness = makeHarness()
+    let pump = CreationEvents(harness.manager)
+    let id = UUID()
+    harness.manager.handleCommand(
+      .createTab(harness.worktree, runSetupScriptIfNew: false, id: id, focusing: false))
+    _ = await pump.next(2)
+
+    harness.manager.handleCommand(
+      .sendInput(
+        harness.worktree, tabID: TabID(rawValue: id), input: "run the tests", focusing: false,
+        requestID: 8))
+
+    #expect(await pump.next(1) == [.tabInputSent(requestID: 8, delivery: .waking)])
   }
 
   @Test(.dependencies) func createWithoutAStoreDrainsTheAckAsFailure() async {

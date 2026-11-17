@@ -98,6 +98,7 @@ nonisolated struct TerminalClient: Sendable {
     /// Cycles to the next or previous tab in the focused pane, wrapping at the ends.
     case selectRelativeTab(Worktree, forward: Bool)
     case focusSurface(Worktree, tabID: TabID, surfaceID: UUID, input: String? = nil)
+    case sendInput(Worktree, tabID: TabID, input: String, focusing: Bool = true, requestID: Int)
     case splitSurface(
       Worktree, tabID: TabID, surfaceID: UUID, direction: SplitDirection,
       input: String?, id: UUID? = nil, focusing: Bool = true)
@@ -117,6 +118,24 @@ nonisolated struct TerminalClient: Sendable {
     /// Fans a hibernation Beta-flag flip into every worktree state: enabling
     /// re-arms grace timers for hidden tabs, disabling cancels pending ones.
     case setTerminalHibernationEnabled(Bool)
+  }
+
+  enum InputDelivery: Equatable {
+    case delivered
+    /// The terminal was hibernated. It is waking, and typing before its session
+    /// restores would bypass the program's paste framing, so nothing was typed.
+    case waking
+    case readOnly
+    case noTerminal
+
+    var failureMessage: String? {
+      switch self {
+      case .delivered: nil
+      case .waking: "The tab was hibernated and is waking up. Send again in a moment."
+      case .readOnly: "The tab's terminal is read-only."
+      case .noTerminal: "The tab has no terminal to type into."
+      }
+    }
   }
 
   enum Event: Equatable {
@@ -142,6 +161,7 @@ nonisolated struct TerminalClient: Sendable {
     /// A rename command settled. `applied` is false when the tab vanished or its
     /// title was locked, so the CLI ack reports the failure instead of ok.
     case tabRenamed(worktreeID: Worktree.ID, tabID: TabID, applied: Bool)
+    case tabInputSent(requestID: Int, delivery: InputDelivery)
     /// The worktree's terminal state was torn down (prune path).
     case worktreeStateTornDown(worktreeID: Worktree.ID)
     /// Forwarded from the terminal manager when surfaces close (single or bulk).

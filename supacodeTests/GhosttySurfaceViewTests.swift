@@ -617,6 +617,41 @@ struct GhosttySurfaceViewTests {
     #expect(surfaceView.surface == nil)
   }
 
+  // Whether a native surface exists depends on the display, so the first
+  // expectation holds on both paths.
+  @Test func submittedTextIsPastedThenReturnIsPressedOutsideThePaste() {
+    let surfaceView = makeSurfaceView()
+    defer { surfaceView.closeSurface() }
+    let hasNativeSurface = surfaceView.surface != nil
+
+    let delivery = surfaceView.submitText("true")
+
+    if hasNativeSurface {
+      #expect(delivery == .delivered)
+      #expect(surfaceView.recordedInput == [.paste("true"), .returnKey])
+    } else {
+      #expect(delivery == .noTerminal)
+      #expect(surfaceView.recordedInput.isEmpty)
+    }
+  }
+
+  @Test func submittingTextToAClosedSurfaceTypesNothing() {
+    let surfaceView = makeSurfaceView()
+    surfaceView.closeSurface()
+
+    #expect(surfaceView.submitText("true") == .noTerminal)
+    #expect(surfaceView.recordedInput.isEmpty)
+  }
+
+  @Test func submittingTextToAReadOnlySurfaceTypesNothing() {
+    let surfaceView = makeSurfaceView()
+    defer { surfaceView.closeSurface() }
+    surfaceView.enableReadOnly()
+
+    #expect(surfaceView.submitText("true") == .readOnly)
+    #expect(surfaceView.recordedInput.isEmpty)
+  }
+
   @Test func cachedValueServesTheFetchUntilTheDurationElapses() async {
     let clock = TestClock()
     let cache = GhosttySurfaceView.CachedValue<Int, TestClock<Duration>>(

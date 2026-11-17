@@ -1653,6 +1653,16 @@ struct AppFeatureDeeplinkTests {
     #expect(hasDestroy)
   }
 
+  @Test(.dependencies) func tabSendFromAURLAsksBeforeTyping() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let store = makeStore(worktree: worktree)
+
+    await store.send(
+      .deeplink(.worktree(id: worktree.id, action: .tabSend(tabID: tabID, input: "run the tests"))))
+    #expect(store.state.deeplinkInputConfirmation?.message == .command("run the tests"))
+  }
+
   @Test(.dependencies) func surfaceWithInputShowsConfirmation() async {
     let worktree = makeWorktree()
     let tabUUID = UUID()

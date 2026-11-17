@@ -97,6 +97,10 @@ struct DeeplinkReferenceView: View {
       description: "Set the persistent title override; an empty title clears it."
     ),
     .init(
+      url: "supacode://worktree/<worktree_id>/tab/<tab_id>/send?input=<text>",
+      description: "Type text into the tab's terminal and press Return."
+    ),
+    .init(
       url: "supacode://worktree/<worktree_id>/tab/<tab_id>/move",
       description: "Move a tab into a new split neighboring its pane.",
       params: "?direction=left|right|up|down"

@@ -1744,6 +1744,13 @@ final class GhosttySurfaceView: NSView, Identifiable {
     /// binding was actually invoked (the C surface is nil under xctest).
     var recordedBindingActions: [String] = []
 
+    enum RecordedInput: Equatable {
+      case paste(String)
+      case returnKey
+    }
+
+    var recordedInput: [RecordedInput] = []
+
     /// Read-only responder-focus seam for the #757 activity tests.
     var isFocusedForTesting: Bool { focused }
   #endif
@@ -2341,8 +2348,13 @@ extension GhosttySurfaceView: NSServicesMenuRequestor {
     return true
   }
 
-  /// Sends raw text directly to the terminal PTY, bypassing the text input system.
+  /// Pastes text into the terminal. Ghostty frames it as a bracketed paste when the
+  /// foreground program asked for one, so a Return inside `text` is pasted content
+  /// there and never submits: use `submitText` to type and submit.
   func sendText(_ text: String) {
+    #if DEBUG
+      recordedInput.append(.paste(text))
+    #endif
     guard let surface else {
       surfaceLogger.warning("sendText: surface not available, dropping \(text.count) chars.")
       return
@@ -2352,6 +2364,23 @@ extension GhosttySurfaceView: NSServicesMenuRequestor {
     text.withCString { ptr in
       ghostty_surface_text(surface, ptr, UInt(len - 1))
     }
+  }
+
+  @discardableResult
+  func submitText(_ text: String) -> TerminalClient.InputDelivery {
+    // Ghostty drops every write to a read-only surface.
+    guard bridge.state.readOnly != GHOSTTY_READONLY_ON else { return .readOnly }
+    guard surface != nil else { return .noTerminal }
+    sendText(text)
+    pressReturn()
+    return .delivered
+  }
+
+  private func pressReturn() {
+    #if DEBUG
+      recordedInput.append(.returnKey)
+    #endif
+    performBindingAction("text:\\r")
   }
 
   func readSelection(from pboard: NSPasteboard) -> Bool {
