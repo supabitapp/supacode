@@ -49,6 +49,7 @@ final class BrowserContent: TabContent, TabContentToolbar {
   private var observations: [NSKeyValueObservation] = []
   private var retainedInteractionState: Any?
   private var pendingFocusClaim: Task<Void, Never>?
+  let automation = BrowserAutomationSession()
 
   init(
     id: ContentID,
@@ -68,15 +69,19 @@ final class BrowserContent: TabContent, TabContentToolbar {
   var chrome: (any TabChrome)? { page }
   var toolbar: (any TabContentToolbar)? { self }
   var view: AnyView? { AnyView(BrowserToolbarView(page: page, content: self).id(id)) }
-  var isHibernatable: Bool { webView != nil }
+  var isHibernatable: Bool {
+    webView != nil && !automation.wasActive(within: TerminalsFeature.hibernationGraceWindow)
+  }
 
   func startSession(at geometry: ContentGeometry) {
     guard webView == nil else { return }
     let webView = makeWebView()
+    webView.setFrameSize(geometry.pointSize)
     let navigation = BrowserNavigationHandler(
       openInNewTab: callbacks.openInNewTab,
       closeRequested: callbacks.closeRequested
     )
+    navigation.documentChanged = { [weak self] in self?.automation.documentChanged() }
     webView.navigationDelegate = navigation
     webView.uiDelegate = navigation
     webView.onFocus = callbacks.focused
@@ -138,12 +143,14 @@ final class BrowserContent: TabContent, TabContentToolbar {
     load(url)
   }
 
-  func load(_ url: URL) {
+  func load(_ url: URL, focusing: Bool = true) {
     page.url = url
     guard let webView else { return }
     navigation?.failedURL = nil
     webView.load(URLRequest(url: url))
-    focus()
+    if focusing {
+      focus()
+    }
   }
 
   func perform(_ command: BrowserKeyCommand) {
@@ -204,6 +211,7 @@ final class BrowserContent: TabContent, TabContentToolbar {
   }
 
   private func releaseWebView() {
+    automation.documentChanged()
     pendingFocusClaim?.cancel()
     pendingFocusClaim = nil
     observations.forEach { $0.invalidate() }
@@ -265,5 +273,33 @@ final class BrowserContent: TabContent, TabContentToolbar {
     webView.allowsMagnification = true
     webView.isInspectable = true
     return webView
+  }
+}
+
+extension BrowserContent: BrowserAutomationPage {
+  var isLoadingPage: Bool { webView?.isLoading ?? false }
+  var documentGeneration: Int { automation.generation }
+
+  var snapshotBaseline: BrowserSnapshotBaseline? {
+    get { automation.baseline }
+    set { automation.baseline = newValue }
+  }
+
+  func loadPage(_ url: URL) {
+    load(url, focusing: false)
+  }
+
+  func waitUntilLoaded(timeout: Duration) async -> Bool {
+    guard let webView else { return false }
+    return await automation.waitUntilLoaded(webView, timeout: timeout)
+  }
+
+  func drive(
+    _ command: String,
+    _ arguments: [String: Any],
+    timeout: Duration
+  ) async throws(BrowserAutomationError) -> BrowserDriverReply {
+    guard let webView else { throw .unavailable }
+    return try await automation.run(command, arguments, in: webView, timeout: timeout)
   }
 }

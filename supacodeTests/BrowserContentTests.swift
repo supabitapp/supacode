@@ -46,6 +46,13 @@ struct BrowserContentTests {
     content.tearDown()
   }
 
+  @Test func aPageThatWasNeverShownStillHasAViewport() {
+    let content = Self.makeContent(url: Self.pageURL)
+    content.startSession(at: .fallback)
+    #expect(content.renderer?.frame.size == CGSize(width: 800, height: 600))
+    content.tearDown()
+  }
+
   @Test func hibernatingDropsTheWebViewAndKeepsThePage() {
     let content = Self.makeContent(url: Self.pageURL)
     content.startSession(at: .fallback)

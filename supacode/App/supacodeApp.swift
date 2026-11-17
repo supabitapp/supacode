@@ -512,9 +512,27 @@ struct SupacodeApp: App {
       handleWorktreeAppearanceQuery(params: params, repos: repos, clientFD: clientFD, store: store)
     case "scripts":
       handleScriptsQuery(params: params, repos: repos, clientFD: clientFD, store: store)
+    case "browser":
+      handleBrowserQuery(params: params, clientFD: clientFD, terminalManager: terminalManager)
     default:
       AgentHookSocketServer.sendCommandResponse(
         clientFD: clientFD, ok: false, error: "Unknown resource: \(resource)")
+    }
+  }
+
+  private static func handleBrowserQuery(
+    params: [String: String],
+    clientFD: Int32,
+    terminalManager: WorktreeTerminalManager
+  ) {
+    guard let request = params["request"].flatMap({ try? BrowserAutomationRequest(json: $0) }) else {
+      AgentHookSocketServer.sendCommandResponse(clientFD: clientFD, ok: false, error: "Malformed browser request.")
+      return
+    }
+    Task {
+      let result = await terminalManager.runBrowserAutomation(request, worktreeID: params["worktreeID"])
+      let nonce = String(UUID().uuidString.prefix(6)).lowercased()
+      AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: [result.response(nonce: nonce)])
     }
   }
 

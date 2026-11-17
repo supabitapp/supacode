@@ -1124,7 +1124,9 @@ final class WorktreeTerminalManager {
     in worktreeID: Worktree.ID,
     url: URL?,
     placement: BrowserTabPlacement,
-    focusing: Bool = true
+    focusing: Bool = true,
+    tabID: TabID? = nil,
+    contentID: ContentID? = nil
   ) {
     guard let state = layoutState(for: worktreeID) else {
       terminalLogger.warning("openBrowserTab: no layout for worktree \(worktreeID); dropping open.")
@@ -1144,7 +1146,9 @@ final class WorktreeTerminalManager {
     let spec = NewTabSpec.browser(
       url: url,
       geometry: ContentRuntime.liveValue.spawnGeometry(near: anchor, fallback: anchor),
-      select: focusing
+      select: focusing,
+      tabID: tabID,
+      contentID: contentID
     )
     switch resolved {
     case .tab(let paneID):

@@ -150,4 +150,29 @@ struct WorktreeTerminalManagerBrowserTests {
     #expect(host.onOpenLink?(URL(fileURLWithPath: "/tmp/output.txt")) == false)
     #expect(harness.browserURLs.isEmpty)
   }
+
+  @Test(.dependencies) func automationRefusesATabThatDoesNotExist() async {
+    let harness = makeHarness()
+    let unknown = UUID().uuidString
+    let request = BrowserAutomationRequest(tabID: unknown, steps: [BrowserAutomationStep(verb: .snapshot)])
+
+    let result = await harness.manager.runBrowserAutomation(request, worktreeID: nil)
+
+    #expect(result.refusal == "No tab \(unknown). Open one with `supacode browser open <url>`.")
+  }
+
+  @Test(.dependencies) func automationDefaultsToTheWorktreesOnlyBrowserTab() async {
+    let harness = makeHarness()
+    harness.manager.handleCommand(
+      .openBrowserTab(harness.worktree, url: URL(string: "http://localhost:3000"), focusing: false))
+    let request = BrowserAutomationRequest(steps: [BrowserAutomationStep(verb: .snapshot)])
+
+    let found = await harness.manager.runBrowserAutomation(request, worktreeID: "%2Ftmp%2Frepo%2Fwt-browser")
+    let elsewhere = await harness.manager.runBrowserAutomation(request, worktreeID: "/tmp/repo/other")
+    let unfocused = await harness.manager.runBrowserAutomation(request, worktreeID: nil)
+
+    #expect(found.refusal == "The browser tab could not be started.")
+    #expect(elsewhere.refusal == "No browser tab in this worktree. Open one with `supacode browser open <url>`.")
+    #expect(unfocused.refusal == "No worktree is focused. Pass -t <tab>.")
+  }
 }

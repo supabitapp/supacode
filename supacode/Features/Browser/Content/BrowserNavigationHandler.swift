@@ -13,6 +13,7 @@ final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelega
   private static let logger = SupaLogger("Browser")
 
   var failedURL: URL?
+  var documentChanged: (() -> Void)?
   private var isLoadingErrorPage = false
   private var isAskingToLeave = false
   private let openInNewTab: (URL) -> Void
@@ -128,8 +129,13 @@ final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelega
     )
   }
 
+  func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    documentChanged?()
+  }
+
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
     Self.logger.warning("Web content process terminated; reloading.")
+    documentChanged?()
     webView.reload()
   }
 

@@ -67,6 +67,10 @@ nonisolated struct ContentGeometry: Equatable, Sendable {
     self.pixelSize = pixelSize
     self.scale = scale
   }
+
+  var pointSize: CGSize {
+    CGSize(width: pixelSize.width / scale, height: pixelSize.height / scale)
+  }
 }
 
 nonisolated extension ContentGeometry {

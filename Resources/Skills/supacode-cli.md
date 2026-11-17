@@ -152,6 +152,16 @@ supacode tab close [-w <id>] [-t <id>] [--background]               # Close tab.
 command reports that it is waking: run it again. A read-only tab (a finished
 script) and a tab with no terminal are errors.
 
+### Browser
+
+A browser tab sits in a pane beside your terminals. Read `supacode browser guide`
+before the first use: it covers snapshots, refs, and batches.
+
+```
+supacode browser open [<url>] [-w <id>] [--background]   # Open a browser tab; prints its tab ID.
+supacode browser guide                                    # How to read and drive the page.
+```
+
 ### Surface (deprecated)
 
 A surface is now a tab's content. These commands still work and still read the
