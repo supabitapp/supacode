@@ -413,8 +413,10 @@ final class WorktreeTerminalManager {
       sendLayout(worktree.id, .selectTab(id: owningTab))
       host.liveSurface(surfaceID)?.requestFocus()
       if let input, !input.isEmpty {
-        host.focusAndInsertText(input + "\r")
+        host.liveSurface(surfaceID)?.submitText(input)
       }
+    case .sendInput(let worktree, let tabID, let input, let focusing, let requestID):
+      sendInput(input, toTab: tabID, in: worktree, focusing: focusing, requestID: requestID)
     case .splitSurface(
       let worktree, let tabID, let surfaceID, let direction, let input, let id, let focusing
     ):
@@ -481,6 +483,23 @@ final class WorktreeTerminalManager {
     sendLayout(worktree.id, .selectTab(id: target.id))
   }
 
+  private func sendInput(
+    _ input: String, toTab tabID: TabID, in worktree: Worktree, focusing: Bool, requestID: Int
+  ) {
+    let host = host(for: worktree)
+    let surfaceID = host.tab(withID: tabID)?.content.id.rawValue
+    let wasDormant = surfaceID.map(host.isDormantSurface) ?? false
+    sendLayout(worktree.id, .wakeTab(id: tabID))
+    let surface = surfaceID.flatMap(host.liveSurface)
+    if focusing {
+      sendLayout(worktree.id, .selectTab(id: tabID))
+      surface?.requestFocus()
+    }
+    let delivery: TerminalClient.InputDelivery =
+      if wasDormant { .waking } else { surface?.submitText(input) ?? .noTerminal }
+    emit(.tabInputSent(requestID: requestID, delivery: delivery))
+  }
+
   /// The tab ID when it exists in the worktree's layout, else nil.
   private func presentTab(_ tabID: TabID, in worktreeID: Worktree.ID) -> TabID? {
     layoutState(for: worktreeID)?.layout.pane(containingTab: tabID) != nil ? tabID : nil
@@ -498,8 +517,8 @@ final class WorktreeTerminalManager {
       host(for: worktree).navigateSearchOnFocusedSurface(.previous)
     case .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
-      .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface, .splitSurface,
-      .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .removeWorktreeLayout,
+      .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface, .sendInput,
+      .splitSurface, .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .removeWorktreeLayout,
       .setNotificationsEnabled, .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
       .setTerminalHibernationEnabled, .toggleWindowModeForFocusedPane,
       .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits,
@@ -544,7 +563,7 @@ final class WorktreeTerminalManager {
     case .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .selectTab, .selectTabAtIndex, .selectRelativeTab,
-      .focusSurface, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .removeWorktreeLayout,
+      .focusSurface, .sendInput, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .removeWorktreeLayout,
       .setNotificationsEnabled, .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
       .setTerminalHibernationEnabled, .toggleWindowModeForFocusedPane:
       return false
@@ -594,7 +613,7 @@ final class WorktreeTerminalManager {
     case .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
-      .navigateSearchPrevious, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface,
+      .navigateSearchPrevious, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface, .sendInput,
       .splitSurface, .destroyTab, .destroySurface, .renameTab, .beginTabRename,
       .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits,
       .splitPane, .focusPane, .closePane, .toggleZoomPane, .toggleWindowModeForPane, .moveTabToSplit:

@@ -115,7 +115,7 @@ extension AppFeature.Action {
       case .notificationReceived, .tabCreated, .tabClosed, .focusChanged,
         .taskStatusChanged, .blockingScriptCompleted, .commandPaletteToggleRequested,
         .setupScriptConsumed, .worktreeProjectionChanged, .surfaceCreated,
-        .tabRemoved, .tabRenamed, .worktreeStateTornDown,
+        .tabRemoved, .tabRenamed, .tabInputSent, .worktreeStateTornDown,
         .surfacesClosed, .agentHookEventReceived, .programStatusReceived, .programStatusPromptReturned,
         .terminalHasAnySurfaceChanged,
         .surfaceCreationFailed, .initialTabCreationFailed:

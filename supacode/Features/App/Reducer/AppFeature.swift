@@ -273,6 +273,7 @@ struct AppFeature {
     case tabRemoved(worktreeID: Worktree.ID, tabID: TabID)
     /// tab rename: resolves when the manager reports whether the title applied.
     case tabRenamed(worktreeID: Worktree.ID, tabID: TabID)
+    case tabInputSent(requestID: Int)
     /// surface close (scoped by worktree so a duplicate id elsewhere can't cross-resolve).
     case surfaceClosed(worktreeID: Worktree.ID, surfaceID: UUID)
     /// worktree delete (git worktree removed).
@@ -2082,6 +2083,11 @@ struct AppFeature {
           return ackWorktree == worktreeID && renamed == tabID
         }
 
+      case .terminalEvent(.tabInputSent(let requestID, let delivery)):
+        return resolveCommandAcks(
+          ok: delivery == .delivered, error: delivery.failureMessage, state: &state
+        ) { $0 == .tabInputSent(requestID: requestID) }
+
       case .terminalEvent(.worktreeStateTornDown):
         // The manager already detached the layout; nothing app-level remains.
         return .none
@@ -2659,7 +2665,7 @@ struct AppFeature {
     // user can actually clear the orphan.
     let spawnsShell: Bool
     switch action {
-    case .run, .runScript, .tabNew, .surfaceSplit, .paneSplit:
+    case .run, .runScript, .tabNew, .tabSend, .surfaceSplit, .paneSplit:
       spawnsShell = true
     case .surface(_, _, let input):
       spawnsShell = input?.isEmpty == false
@@ -2916,6 +2922,22 @@ struct AppFeature {
       return awaitingCompletion(
         effect, match: .tabRenamed(worktreeID: worktreeID, tabID: TabID(rawValue: tabID)),
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
+    case .tabSend(let tabID, let input):
+      guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
+      if requiresInputConfirmation(state: state, bypassConfirmation: bypassConfirmation) {
+        return presentDeeplinkConfirmation(
+          worktreeID: worktreeID, responseFD: responseFD, timeoutSeconds: timeoutSeconds,
+          message: .command(input), action: action, state: &state, background: background)
+      }
+      state.commandAckGeneration += 1
+      let requestID = state.commandAckGeneration
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .sendInput(
+          worktree, tabID: TabID(rawValue: tabID), input: input, focusing: !background, requestID: requestID)
+      }
+      return awaitingCompletion(
+        effect, match: .tabInputSent(requestID: requestID),
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .tabDestroy(let tabID):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
       guard bypassConfirmation else {
@@ -3117,7 +3139,7 @@ struct AppFeature {
     guard let definition = resolveScript(scriptID: scriptID, in: worktree) else {
       state.alert = scriptAlert(
         title: "Script not found",
-        message: "No script matching the deeplink could be found. It may have been removed."
+        message: "The script could not be found. It may have been removed."
       )
       return .none
     }
@@ -3173,7 +3195,7 @@ struct AppFeature {
     guard let definition = resolveScript(scriptID: scriptID, in: worktree) else {
       state.alert = scriptAlert(
         title: "Script not found",
-        message: "No script matching the deeplink could be found. It may have been removed."
+        message: "The script could not be found. It may have been removed."
       )
       return .none
     }
@@ -3263,7 +3285,7 @@ struct AppFeature {
         TextState("OK")
       }
     } message: {
-      TextState("No worktree matching the deeplink could be found. It may have been removed.")
+      TextState("The worktree could not be found. It may have been removed.")
     }
   }
 
@@ -3287,7 +3309,7 @@ struct AppFeature {
         TextState("OK")
       }
     } message: {
-      TextState("No repository matching the deeplink could be found.")
+      TextState("The repository could not be found.")
     }
   }
 
@@ -3877,7 +3899,7 @@ struct AppFeature {
           TextState("OK")
         }
       } message: {
-        TextState("No pane matching the deeplink could be found. It may have been closed.")
+        TextState("The pane could not be found. It may have been closed.")
       }
       return false
     }
@@ -3899,7 +3921,7 @@ struct AppFeature {
           TextState("OK")
         }
       } message: {
-        TextState("No tab matching the deeplink could be found. It may have been closed.")
+        TextState("The tab could not be found. It may have been closed.")
       }
       return false
     }
@@ -3929,7 +3951,7 @@ struct AppFeature {
           TextState("OK")
         }
       } message: {
-        TextState("No surface matching the deeplink could be found. It may have been closed.")
+        TextState("The surface could not be found. It may have been closed.")
       }
       return false
     }

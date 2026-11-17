@@ -728,6 +728,103 @@ struct AppFeatureCommandAckTests {
     #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("closed") == true)
   }
 
+  @Test(.dependencies) func tabSendSocketDeeplinkResolvesWhenTheInputIsDelivered() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = makeStore(worktree: worktree, tabExists: true) {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    let (readFD, writeFD) = makePipe()
+    defer { close(readFD) }
+
+    await store.send(
+      .deeplink(
+        .worktree(id: worktree.id, action: .tabSend(tabID: tabID, input: "run the tests"), background: true),
+        source: .socket,
+        responseFD: writeFD,
+        timeoutSeconds: 0
+      )
+    )
+    let requestID = pendingSendRequestID(store, responseFD: writeFD)
+
+    await store.send(.terminalEvent(.tabInputSent(requestID: requestID, delivery: .delivered)))
+    await store.finish()
+
+    #expect(store.state.pendingCommandAcks.isEmpty)
+    #expect(readPipeJSON(readFD)?["ok"] as? Bool == true)
+    #expect(
+      sent.value.contains(
+        .sendInput(
+          worktree, tabID: TabID(rawValue: tabID), input: "run the tests", focusing: false,
+          requestID: requestID)))
+  }
+
+  @Test(.dependencies) func tabSendSocketDeeplinkReportsWhyTheInputWasNotTyped() async {
+    let failures: [(TerminalClient.InputDelivery, String)] = [
+      (.waking, "waking up"), (.readOnly, "read-only"), (.noTerminal, "no terminal"),
+    ]
+    for (delivery, expectedError) in failures {
+      let worktree = makeWorktree()
+      let store = makeStore(worktree: worktree, tabExists: true)
+      let (readFD, writeFD) = makePipe()
+      defer { close(readFD) }
+
+      await store.send(
+        .deeplink(
+          .worktree(id: worktree.id, action: .tabSend(tabID: UUID(), input: "run the tests")),
+          source: .socket,
+          responseFD: writeFD,
+          timeoutSeconds: 0
+        )
+      )
+      let requestID = pendingSendRequestID(store, responseFD: writeFD)
+      await store.send(.terminalEvent(.tabInputSent(requestID: requestID, delivery: delivery)))
+      await store.finish()
+
+      let response = readPipeJSON(readFD)
+      #expect(response?["ok"] as? Bool == false)
+      #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains(expectedError) == true)
+    }
+  }
+
+  @Test(.dependencies) func concurrentTabSendsToOneTabEachSettleTheirOwnAck() async {
+    let worktree = makeWorktree()
+    let tabID = UUID()
+    let store = makeStore(worktree: worktree, tabExists: true)
+    let (firstReadFD, firstWriteFD) = makePipe()
+    let (secondReadFD, secondWriteFD) = makePipe()
+    defer {
+      close(firstReadFD)
+      close(secondReadFD)
+    }
+
+    for writeFD in [firstWriteFD, secondWriteFD] {
+      await store.send(
+        .deeplink(
+          .worktree(id: worktree.id, action: .tabSend(tabID: tabID, input: "run the tests")),
+          source: .socket,
+          responseFD: writeFD,
+          timeoutSeconds: 0
+        )
+      )
+    }
+    let firstRequestID = pendingSendRequestID(store, responseFD: firstWriteFD)
+    let secondRequestID = pendingSendRequestID(store, responseFD: secondWriteFD)
+
+    await store.send(.terminalEvent(.tabInputSent(requestID: firstRequestID, delivery: .delivered)))
+    await store.finish()
+    #expect(readPipeJSON(firstReadFD)?["ok"] as? Bool == true)
+    #expect(store.state.pendingCommandAcks[id: secondWriteFD] != nil)
+
+    // The tab closed before the second send ran.
+    await store.send(.terminalEvent(.tabInputSent(requestID: secondRequestID, delivery: .noTerminal)))
+    await store.finish()
+    #expect(readPipeJSON(secondReadFD)?["ok"] as? Bool == false)
+  }
+
   @Test(.dependencies) func successfulSocketDeeplinkPreservesExistingAlert() async {
     let worktree = makeWorktree()
     let tabID = UUID()
@@ -1089,7 +1186,7 @@ struct AppFeatureCommandAckTests {
 
     let response = readPipeJSON(closeReadFD)
     #expect(response?["ok"] as? Bool == false)
-    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("no tab matching") == true)
+    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("the tab could not be found") == true)
     #expect(!sent.value.contains { if case .destroyTab = $0 { true } else { false } })
   }
 
@@ -1978,6 +2075,14 @@ struct AppFeatureCommandAckTests {
     }
     store.exhaustivity = .off
     return store
+  }
+
+  private func pendingSendRequestID(_ store: TestStoreOf<AppFeature>, responseFD: Int32) -> Int {
+    guard case .tabInputSent(let requestID)? = store.state.pendingCommandAcks[id: responseFD]?.match else {
+      Issue.record("No pending tab send ack on fd \(responseFD)")
+      return -1
+    }
+    return requestID
   }
 
   private func makePipe() -> (readFD: Int32, writeFD: Int32) {

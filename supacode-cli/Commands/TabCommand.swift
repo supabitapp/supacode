@@ -10,6 +10,7 @@ struct TabCommand: ParsableCommand {
       Focus.self,
       New.self,
       Rename.self,
+      Send.self,
       Move.self,
       Close.self,
     ],
@@ -138,6 +139,40 @@ extension TabCommand {
       let tID = try IDResolvers.resolveFocusedTabID(tab, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
       try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.tabRename(worktreeID: wID, tabID: tID, title: title),
+        timeoutSeconds: timeoutOption.timeout
+      )
+    }
+  }
+
+  struct Send: ParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "Type text into a tab's terminal and press Return.")
+
+    @Option(name: [.short, .long], help: "Worktree ID. Defaults to the focused worktree.")
+    var worktree: String?
+
+    @Option(name: [.short, .long], help: "Tab ID. Defaults to the focused tab.")
+    var tab: String?
+
+    @Option(name: [.short, .long], help: "Text to type, such as a shell command or a prompt for a running agent.")
+    var input: String
+
+    @OptionGroup var backgroundOption: BackgroundOption
+
+    @OptionGroup var timeoutOption: TimeoutOption
+
+    func validate() throws {
+      if input.isEmpty {
+        throw ValidationError("--input cannot be empty.")
+      }
+    }
+
+    func run() throws {
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let tID = try IDResolvers.resolveFocusedTabID(tab, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
+      try Dispatcher.dispatch(
+        deeplinkURL: backgroundOption.applied(
+          to: DeeplinkURLBuilder.tabSend(worktreeID: wID, tabID: tID, input: input)),
         timeoutSeconds: timeoutOption.timeout
       )
     }

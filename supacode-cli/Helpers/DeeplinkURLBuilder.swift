@@ -58,6 +58,10 @@ nonisolated enum DeeplinkURLBuilder {
     "supacode://worktree/\(worktreeID)/tab/\(tabID)/rename?title=\(percentEncodeQueryValue(title))"
   }
 
+  static func tabSend(worktreeID: String, tabID: String, input: String) -> String {
+    "supacode://worktree/\(worktreeID)/tab/\(tabID)/send?input=\(percentEncodeQueryValue(input))"
+  }
+
   static func tabClose(worktreeID: String, tabID: String) -> String {
     "supacode://worktree/\(worktreeID)/tab/\(tabID)/destroy"
   }

@@ -442,6 +442,30 @@ struct DeeplinkClientTests {
     #expect(parse(url) == nil)
   }
 
+  @Test func worktreeTabSend() {
+    let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!
+    let url = URL(string: "supacode://worktree/\(encoded)/tab/\(tabUUID.uuidString)/send?input=run%20the%20tests")!
+    #expect(
+      parse(url) == .worktree(id: "/tmp/repo/wt-1", action: .tabSend(tabID: tabUUID, input: "run the tests")))
+  }
+
+  @Test func worktreeTabSendInBackground() {
+    let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!
+    let url = URL(
+      string: "supacode://worktree/\(encoded)/tab/\(tabUUID.uuidString)/send?input=ls&background=true")!
+    #expect(
+      parse(url)
+        == .worktree(id: "/tmp/repo/wt-1", action: .tabSend(tabID: tabUUID, input: "ls"), background: true))
+  }
+
+  @Test func worktreeTabSendWithoutInputReturnsNil() {
+    let tabUUID = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!
+    for query in ["", "?input="] {
+      let url = URL(string: "supacode://worktree/\(encoded)/tab/\(tabUUID.uuidString)/send\(query)")!
+      #expect(parse(url) == nil)
+    }
+  }
+
   // MARK: - Repo actions.
 
   @Test func repoOpen() {

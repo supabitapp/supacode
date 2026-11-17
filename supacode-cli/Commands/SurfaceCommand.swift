@@ -7,8 +7,9 @@ struct SurfaceCommand: ParsableCommand {
     abstract: "[Deprecated] Manage terminal surfaces. Use `pane` and `tab` instead.",
     discussion: """
       Deprecated, and removed in the next release: a surface is now a tab's \
-      content. Use `supacode pane split` in place of `surface split`, and \
-      `supacode tab focus` / `tab close` / `tab list` in place of the surface \
+      content. Use `supacode pane split` in place of `surface split`, \
+      `supacode tab send` in place of `surface focus -i`, and `supacode tab \
+      focus` / `tab close` / `tab list` in place of the other surface \
       equivalents. These commands still read the deprecated $SUPACODE_TAB_ID / \
       $SUPACODE_SURFACE_ID environment variables.
       """,

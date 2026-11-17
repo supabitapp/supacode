@@ -226,6 +226,7 @@ private nonisolated enum DeeplinkParser {
     // "tab/<tab-uuid>" → focus tab.
     // "tab/new" → create new tab.
     // "tab/<tab-uuid>/rename" → rename tab.
+    // "tab/<tab-uuid>/send" → type into the tab's terminal and submit.
     // "tab/<tab-uuid>/destroy" → close tab.
     // "tab/<tab-uuid>/surface/<surface-uuid>" → focus surface.
     // "tab/<tab-uuid>/surface/<surface-uuid>/split" → split surface.
@@ -266,6 +267,13 @@ private nonisolated enum DeeplinkParser {
         id: worktreeID,
         action: .tabRename(tabID: tabUUID, title: titleItem.value ?? "")
       )
+    }
+    if pathSegments.count >= 4, pathSegments[3] == "send" {
+      guard let input = queryItems.first(where: { $0.name == "input" })?.value, !input.isEmpty else {
+        logger.warning("Tab send deeplink missing input")
+        return nil
+      }
+      return .worktree(id: worktreeID, action: .tabSend(tabID: tabUUID, input: input))
     }
     if pathSegments.count >= 4, pathSegments[3] == "destroy" {
       return .worktree(id: worktreeID, action: .tabDestroy(tabID: tabUUID))
