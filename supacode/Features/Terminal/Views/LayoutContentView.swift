@@ -131,6 +131,13 @@ final class LayoutAXContainerView: NSView {
 
   nonisolated deinit {}
 
+  static func size(enclosing view: NSView) -> CGSize? {
+    sequence(first: view, next: \.superview)
+      .lazy
+      .compactMap { ($0 as? LayoutAXContainerView)?.bounds.size }
+      .first
+  }
+
   func update(rootView: LayoutPaneTreeView, panes: [NSView]) {
     if let hostingView {
       hostingView.rootView = rootView

@@ -531,19 +531,22 @@ final class WorktreeTerminalManager {
   private func handleBindingActionCommand(_ command: TerminalClient.Command) -> Bool {
     switch command {
     case .splitFocusedPane(let worktree, let direction):
-      sendFocusedContentLayoutAction(worktree.id) {
+      sendSelectedContentLayoutAction(worktree.id) {
         .contentRequestedSplit(content: $0, direction: direction.newSplitDirection)
       }
     case .focusSplit(let worktree, let direction):
-      sendFocusedContentLayoutAction(worktree.id) {
+      sendSelectedContentLayoutAction(worktree.id) {
         .contentRequestedFocusSplit(content: $0, direction: direction.focusSplitDirection)
       }
     case .toggleSplitZoom(let worktree):
-      sendFocusedContentLayoutAction(worktree.id) { .contentRequestedToggleZoom(content: $0) }
+      sendSelectedContentLayoutAction(worktree.id) { .contentRequestedToggleZoom(content: $0) }
     case .equalizeSplits(let worktree):
       sendLayout(worktree.id, .equalizePanes)
     case .resizePane(let worktree, let paneToken, let direction, let amount):
-      resizePane(in: worktree, paneToken: paneToken, direction: direction, amount: amount)
+      sendSelectedContentLayoutAction(worktree.id, paneToken: paneToken) {
+        .contentRequestedResize(
+          content: $0, direction: direction.spatialDirection, amount: amount ?? Self.paneResizeStep)
+      }
     case .splitPane(let worktree, let token, let direction, let input, let id, let focusing):
       splitPane(in: worktree, paneToken: token, direction: direction, input: input, id: id, focusing: focusing)
     case .focusPane(let worktree, let paneToken):
@@ -710,16 +713,23 @@ final class WorktreeTerminalManager {
     appStore?.send(.terminals(.layouts(.element(id: worktreeID, action: action))))
   }
 
-  /// Routes a layout action targeting the focused pane's selected content.
-  private func sendFocusedContentLayoutAction(
+  private static let paneResizeStep: UInt16 = 10
+
+  /// Routes a layout action targeting the selected content of the pane
+  /// `paneToken` resolves to, or of the focused pane when there is no token.
+  private func sendSelectedContentLayoutAction(
     _ worktreeID: Worktree.ID,
+    paneToken: UUID? = nil,
     _ action: (ContentID) -> LayoutFeature.Action
   ) {
-    guard
-      let layout = layoutState(for: worktreeID)?.layout,
-      let contentID = layout.focusedPaneID
-        .flatMap({ layout.panes[id: $0]?.selectedTab?.content.id })
-    else { return }
+    guard let layout = layoutState(for: worktreeID)?.layout else { return }
+    let pane =
+      if let paneToken {
+        layout.pane(forToken: paneToken)
+      } else {
+        layout.focusedPaneID.flatMap { layout.panes[id: $0] }
+      }
+    guard let contentID = pane?.selectedTab?.content.id else { return }
     sendLayout(worktreeID, action(contentID))
   }
 
@@ -1334,6 +1344,13 @@ final class WorktreeTerminalManager {
     resolvePane(token, in: worktreeID) != nil
   }
 
+  func paneIsWindowed(worktreeID: Worktree.ID, token: UUID) -> Bool {
+    guard let layoutState = layoutState(for: worktreeID),
+      let pane = layoutState.layout.pane(forToken: token)
+    else { return false }
+    return layoutState.windowedPaneIDs.contains(pane.id)
+  }
+
   /// Whether `tab move` is permitted: the tab's pane holds more than one tab
   /// and is not windowed, matching the reducer's `moveTabToSplit` guard.
   func canMoveTabToNewSplit(worktreeID: Worktree.ID, tabID: UUID) -> Bool {
@@ -1429,29 +1446,6 @@ final class WorktreeTerminalManager {
       return
     }
     sendLayout(worktree.id, .toggleZoom(paneID: paneID))
-  }
-
-  private static let paneResizeStep: UInt16 = 10
-
-  private func resizePane(
-    in worktree: Worktree, paneToken: UUID?, direction: TerminalSplitMenuDirection, amount: UInt16?
-  ) {
-    guard let layout = layoutState(for: worktree.id)?.layout else { return }
-    let pane =
-      if let paneToken {
-        layout.pane(forToken: paneToken)
-      } else {
-        layout.focusedPaneID.flatMap { layout.panes[id: $0] }
-      }
-    guard let contentID = pane?.selectedTab?.content.id else {
-      terminalLogger.debug("resizePane: no pane to resize in worktree \(worktree.id).")
-      return
-    }
-    sendLayout(
-      worktree.id,
-      .contentRequestedResize(
-        content: contentID, direction: direction.spatialDirection, amount: amount ?? Self.paneResizeStep)
-    )
   }
 
   private func toggleWindowModeForPane(in worktree: Worktree, paneToken: UUID) {

@@ -1786,11 +1786,11 @@ struct LayoutFeatureTests {
     let harness = await makeHarness()
     let split = await splitPane(harness, anchor: harness.paneID, direction: .down)
     let paneTree = LayoutAXContainerView(frame: NSRect(x: 0, y: 0, width: 800, height: 800))
-    for contentID in [harness.contentID, split.contentID] {
-      let renderer = try #require(harness.recorder.contents[contentID]?.renderer)
-      renderer.frame = NSRect(x: 0, y: 0, width: 800, height: 366)
-      paneTree.addSubview(renderer)
-    }
+    let unmounted = try #require(harness.mock?.renderer)
+    let mounted = try #require(harness.recorder.contents[split.contentID]?.renderer)
+    unmounted.frame = NSRect(x: 0, y: 0, width: 800, height: 366)
+    mounted.frame = NSRect(x: 0, y: 0, width: 800, height: 366)
+    paneTree.addSubview(mounted)
     await harness.store.send(
       .contentRequestedResize(content: harness.contentID, direction: .down, amount: 100)
     ) {

@@ -3141,6 +3141,17 @@ struct AppFeature {
       }
     case .paneResize(let token, let direction, let amount):
       guard validatePane(worktreeID: worktreeID, token: token, state: &state) else { return .none }
+      guard !terminalClient.paneIsWindowed(worktreeID, token) else {
+        deeplinkLogger.warning("Pane \(token) is in window mode and cannot be resized in worktree \(worktreeID)")
+        state.alert = AlertState {
+          TextState("Pane cannot be resized")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+        } message: {
+          TextState("It is in window mode, so it has no divider to move.")
+        }
+        return .none
+      }
       return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .resizePane(worktree, paneToken: token, direction: direction, amount: amount)
       }
