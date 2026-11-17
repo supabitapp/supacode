@@ -718,7 +718,7 @@ private struct PaneTabLabelView: View {
       if let accessory {
         accessory
       }
-      if let icon = tab.icon {
+      if let icon = tab.icon ?? tab.content.kind.tabIcon {
         Image(systemName: icon)
           .imageScale(.small)
           .foregroundStyle(tab.tintColor?.color ?? TerminalTabBarColors.activeText)

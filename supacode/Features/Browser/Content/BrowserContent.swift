@@ -16,7 +16,7 @@ final class BrowserPageState: TabChrome {
 
   nonisolated deinit {}
 
-  var accessory: AnyView? { AnyView(BrowserTabAccessory()) }
+  var accessory: AnyView? { nil }
   var isWorking: Bool { isLoading }
   var progress: TerminalTabProgressDisplay? { nil }
   var isReadOnly: Bool { false }
@@ -25,15 +25,6 @@ final class BrowserPageState: TabChrome {
     if let title, !title.isEmpty { return title }
     if let host = url?.host(), !host.isEmpty { return host }
     return "New Tab"
-  }
-}
-
-private struct BrowserTabAccessory: View {
-  var body: some View {
-    Image(systemName: "globe")
-      .imageScale(.small)
-      .foregroundStyle(.secondary)
-      .accessibilityHidden(true)
   }
 }
 
@@ -54,7 +45,6 @@ final class BrowserContent: TabContent {
   private let callbacks: BrowserContentCallbacks
   private let makeWebView: @MainActor () -> BrowserWebView
   private let browserToolbar: BrowserToolbar
-  private var state: BrowserContentState
   private var webView: BrowserWebView?
   private var navigation: BrowserNavigationHandler?
   private var observations: [NSKeyValueObservation] = []
@@ -68,7 +58,6 @@ final class BrowserContent: TabContent {
     makeWebView: @escaping @MainActor () -> BrowserWebView = BrowserContent.makeDefaultWebView
   ) {
     self.id = id
-    self.state = initialState
     self.callbacks = callbacks
     self.makeWebView = makeWebView
     self.browserToolbar = BrowserToolbar(contentID: id, page: page)
@@ -109,14 +98,13 @@ final class BrowserContent: TabContent {
     if let retainedInteractionState {
       webView.interactionState = retainedInteractionState
       self.retainedInteractionState = nil
-    } else if let url = state.url, url != BrowserAddress.blank {
+    } else if let url = page.url, url != BrowserAddress.blank {
       webView.load(URLRequest(url: url))
     }
   }
 
   func hibernate() {
     guard let webView else { return }
-    state = recordedState(from: webView)
     retainedInteractionState = webView.interactionState
     releaseWebView()
   }
@@ -127,13 +115,17 @@ final class BrowserContent: TabContent {
   }
 
   func snapshot() -> ContentSnapshot {
-    ContentSnapshot(id: id, state: .browser(webView.map(recordedState(from:)) ?? state))
+    ContentSnapshot(id: id, state: .browser(BrowserContentState(url: page.url)))
   }
 
   var holdsKeyboardFocus: Bool {
     if page.isAddressFocused || page.addressFocusRequested { return true }
     guard let webView, let responder = webView.window?.firstResponder as? NSView else { return false }
     return responder === webView || responder.isDescendant(of: webView)
+  }
+
+  func claimsKeyEquivalent(_ event: NSEvent) -> Bool {
+    holdsKeyboardFocus && BrowserKeyCommand(event: event) != nil
   }
 
   func focus() {
@@ -156,7 +148,6 @@ final class BrowserContent: TabContent {
   }
 
   func load(_ url: URL) {
-    state = BrowserContentState(url: url)
     page.url = url
     guard let webView else { return }
     navigation?.failedURL = nil
@@ -208,10 +199,6 @@ final class BrowserContent: TabContent {
     if focused {
       callbacks.focused()
     }
-  }
-
-  private func recordedState(from webView: BrowserWebView) -> BrowserContentState {
-    BrowserContentState(url: navigation?.failedURL ?? webView.url ?? state.url)
   }
 
   // AppKit does not promote a re-attached view to first responder, and an

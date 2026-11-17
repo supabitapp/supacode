@@ -37,6 +37,13 @@ nonisolated enum ContentKind: String, Codable, Sendable {
     case .browser: false
     }
   }
+
+  var tabIcon: String? {
+    switch self {
+    case .terminal: nil
+    case .browser: "globe"
+    }
+  }
 }
 
 /// How a command-running terminal launches (scripts, prompts). Blocking

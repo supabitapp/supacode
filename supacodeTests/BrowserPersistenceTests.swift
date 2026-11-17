@@ -78,6 +78,11 @@ struct BrowserPersistenceTests {
     #expect(!ContentKind.browser.hasPersistentSession)
   }
 
+  @Test func browserTabsCarryAGlobeInEveryState() {
+    #expect(ContentKind.browser.tabIcon == "globe")
+    #expect(ContentKind.terminal.tabIcon == nil)
+  }
+
   @Test func aFreshSeedOfABrowserIsABlankBrowser() {
     let state = ContentState.browser(BrowserContentState(url: URL(string: "https://example.com")))
     #expect(state.freshSeed == .browser(BrowserContentState()))

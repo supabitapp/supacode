@@ -26,6 +26,11 @@ nonisolated enum BrowserKeyCommand: Equatable, Sendable {
     default: return nil
     }
   }
+
+  init?(event: NSEvent) {
+    guard event.type == .keyDown else { return nil }
+    self.init(characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags)
+  }
 }
 
 final class BrowserWebView: WKWebView {
@@ -57,9 +62,7 @@ final class BrowserWebView: WKWebView {
     guard event.type == .keyDown, holdsBrowserFocus() else {
       return super.performKeyEquivalent(with: event)
     }
-    if let command = BrowserKeyCommand(
-      characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags)
-    {
+    if let command = BrowserKeyCommand(event: event) {
       onKeyCommand?(command)
       return true
     }

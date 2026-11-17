@@ -34,18 +34,24 @@ final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelega
   }
 
   private func policy(for navigationAction: WKNavigationAction) -> WKNavigationActionPolicy {
-    guard let url = navigationAction.request.url else { return .cancel }
-    guard BrowserAddress.isLoadable(url) else {
-      NSWorkspace.shared.open(url)
+    let url = navigationAction.request.url
+    let decision = BrowserAddress.navigationDecision(
+      for: url,
+      isLinkActivation: navigationAction.navigationType == .linkActivated,
+      holdsCommand: navigationAction.modifierFlags.contains(.command)
+    )
+    switch decision {
+    case .load:
+      return .allow
+    case .openInNewTab:
+      url.map(openInNewTab)
+      return .cancel
+    case .handOffToSystem:
+      url.map { _ = NSWorkspace.shared.open($0) }
+      return .cancel
+    case .cancel:
       return .cancel
     }
-    let opensInNewTab =
-      navigationAction.navigationType == .linkActivated && navigationAction.modifierFlags.contains(.command)
-    guard !opensInNewTab else {
-      openInNewTab(url)
-      return .cancel
-    }
-    return .allow
   }
 
   private func policy(for navigationResponse: WKNavigationResponse) -> WKNavigationResponsePolicy {

@@ -14,6 +14,26 @@ nonisolated enum BrowserAddress {
     ["http", "https"].contains(url.scheme?.lowercased()) && url.host() != nil
   }
 
+  enum NavigationDecision: Equatable, Sendable {
+    case load
+    case openInNewTab
+    case handOffToSystem
+    case cancel
+  }
+
+  static func navigationDecision(
+    for url: URL?,
+    isLinkActivation: Bool,
+    holdsCommand: Bool
+  ) -> NavigationDecision {
+    guard let url else { return .cancel }
+    if isLoadable(url) {
+      return isLinkActivation && holdsCommand ? .openInNewTab : .load
+    }
+    guard isLinkActivation, !url.isFileURL else { return .cancel }
+    return .handOffToSystem
+  }
+
   static func resolve(_ input: String) -> URL? {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
@@ -38,9 +58,8 @@ nonisolated enum BrowserAddress {
     let host = isBracketedIPv6 ? String(authority) : String(authority.prefix { $0 != ":" })
     guard !host.isEmpty else { return nil }
     let isLocal = isBracketedIPv6 || host == "localhost" || host.hasSuffix(".localhost") || isIPv4(host)
-    let hasPort =
-      !isBracketedIPv6 && authority.dropFirst(host.count).dropFirst().allSatisfy(\.isNumber)
-      && authority.count > host.count + 1
+    let port = authority.dropFirst(host.count).dropFirst()
+    let hasPort = !isBracketedIPv6 && !port.isEmpty && port.allSatisfy(\.isNumber)
     let isDomain = looksLikeDomain(host)
     guard isLocal || isDomain || (hasPort && isHostLabel(host)) else { return nil }
     let scheme = isDomain && !isLocal ? "https" : "http"

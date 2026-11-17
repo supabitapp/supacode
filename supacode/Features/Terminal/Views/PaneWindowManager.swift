@@ -63,17 +63,14 @@ enum PaneWindowShortcut {
     if matched(AppShortcuts.toggleWindowMode) {
       return event.isARepeat ? .ignore : .exitWindowMode
     }
-    if matched(AppShortcuts.newTerminalTab) {
+    let selectedContentChords: [(shortcut: AppShortcut, intent: (ContentID) -> Intent)] = [
+      (AppShortcuts.newTerminalTab, Intent.newTab),
+      (AppShortcuts.newBrowserTab, Intent.newBrowserTab),
+      (AppShortcuts.closeTab, Intent.closeTab),
+    ]
+    for chord in selectedContentChords where matched(chord.shortcut) {
       guard !event.isARepeat, let contentID = pane.selectedTab?.content.id else { return .ignore }
-      return .newTab(contentID)
-    }
-    if matched(AppShortcuts.newBrowserTab) {
-      guard !event.isARepeat, let contentID = pane.selectedTab?.content.id else { return .ignore }
-      return .newBrowserTab(contentID)
-    }
-    if matched(AppShortcuts.closeTab) {
-      guard !event.isARepeat, let contentID = pane.selectedTab?.content.id else { return .ignore }
-      return .closeTab(contentID)
+      return chord.intent(contentID)
     }
     if matched(AppShortcuts.renameTab) {
       guard !event.isARepeat, let tab = pane.selectedTab, !tab.isLocked else { return .ignore }
@@ -298,6 +295,11 @@ final class PaneWindowManager {
     guard let pane = terminalManager.layoutState(for: worktreeID)?.layout.panes[id: paneID] else {
       // The window outlived its pane; consuming here would deaden every chord.
       Self.logger.error("Pane window \(paneID.rawValue) has no pane in \(worktreeID); passing the chord through.")
+      return false
+    }
+    if let contentID = pane.selectedTab?.content.id,
+      ContentRuntime.liveValue.content(for: contentID)?.claimsKeyEquivalent(event) == true
+    {
       return false
     }
     let isWorktreeSelected =

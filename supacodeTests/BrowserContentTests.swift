@@ -127,6 +127,39 @@ struct BrowserContentTests {
     window.close()
   }
 
+  private static func keyDown(_ characters: String, modifiers: NSEvent.ModifierFlags) throws -> NSEvent {
+    try #require(
+      NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: modifiers,
+        timestamp: 0,
+        windowNumber: 0,
+        context: nil,
+        characters: characters,
+        charactersIgnoringModifiers: characters,
+        isARepeat: false,
+        keyCode: 0
+      )
+    )
+  }
+
+  @Test func aFocusedPageClaimsItsOwnChordsAndLeavesTheRest() throws {
+    let content = Self.makeContent(url: Self.pageURL)
+    content.startSession(at: .fallback)
+    let window = try Self.mount(content)
+    let reload = try Self.keyDown("r", modifiers: .command)
+    let newTerminalTab = try Self.keyDown("t", modifiers: .command)
+
+    #expect(!content.claimsKeyEquivalent(reload))
+    content.focus()
+    #expect(content.claimsKeyEquivalent(reload))
+    #expect(!content.claimsKeyEquivalent(newTerminalTab))
+
+    content.tearDown()
+    window.close()
+  }
+
   @Test func theAddressKeyCommandRequestsAddressFocus() {
     let content = Self.makeContent(url: Self.pageURL)
     content.startSession(at: .fallback)

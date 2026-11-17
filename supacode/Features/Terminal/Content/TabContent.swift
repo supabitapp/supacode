@@ -32,6 +32,7 @@ protocol TabContent: AnyObject {
   func snapshot() -> ContentSnapshot
   var holdsKeyboardFocus: Bool { get }
   func focus()
+  func claimsKeyEquivalent(_ event: NSEvent) -> Bool
 }
 
 extension TabContent {
@@ -48,6 +49,7 @@ extension TabContent {
   var toolbar: (any TabContentToolbar)? { nil }
   var holdsKeyboardFocus: Bool { false }
   func focus() {}
+  func claimsKeyEquivalent(_ event: NSEvent) -> Bool { false }
 }
 
 /// Where in the layout a content is being created; a runtime hint for the
