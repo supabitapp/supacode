@@ -352,6 +352,7 @@ struct WorktreeTerminalManagerAckTests {
   }
 
   private func layOutLeftPaneBesideTopOverFocusedBottom(_ harness: Harness) async -> (left: UUID, top: UUID) {
+    harness.manager.handleCommand(.setSelectedWorktreeID(harness.worktree.id))
     let pump = CreationEvents(harness.manager)
     let (left, top) = (UUID(), UUID())
     harness.manager.handleCommand(
