@@ -1,4 +1,5 @@
 import AppKit
+import SupacodeSettingsShared
 import WebKit
 
 nonisolated enum BrowserKeyCommand: Equatable, Sendable {
@@ -34,12 +35,32 @@ nonisolated enum BrowserKeyCommand: Equatable, Sendable {
 }
 
 final class BrowserWebView: WKWebView {
+  private static let logger = SupaLogger("Browser")
+
   var onFocus: (() -> Void)?
   var onAttach: (() -> Void)?
   var onKeyCommand: ((BrowserKeyCommand) -> Void)?
   var holdsBrowserFocus: () -> Bool = { false }
 
+  override init(frame: CGRect, configuration: WKWebViewConfiguration) {
+    super.init(frame: frame, configuration: configuration)
+    keepPageScriptsFromTakingKeyboardFocus()
+  }
+
+  required init?(coder: NSCoder) {
+    super.init(coder: coder)
+    keepPageScriptsFromTakingKeyboardFocus()
+  }
+
   nonisolated deinit {}
+
+  private func keepPageScriptsFromTakingKeyboardFocus() {
+    guard responds(to: NSSelectorFromString("_setShouldSuppressFirstResponderChanges:")) else {
+      Self.logger.warning("This WebKit cannot stop page scripts from taking keyboard focus.")
+      return
+    }
+    setValue(true, forKey: "shouldSuppressFirstResponderChanges")
+  }
 
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
@@ -55,9 +76,6 @@ final class BrowserWebView: WKWebView {
     return became
   }
 
-  // AppKit offers a key equivalent to every view in the window, and WebKit
-  // consumes it for the page before the menu sees it, so the app's own chords
-  // are routed here first and only while this browser holds keyboard focus.
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
     guard event.type == .keyDown, holdsBrowserFocus() else {
       return super.performKeyEquivalent(with: event)

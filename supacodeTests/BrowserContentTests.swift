@@ -114,6 +114,34 @@ struct BrowserContentTests {
     window.close()
   }
 
+  private final class FocusHolder: NSView {
+    nonisolated deinit {}
+
+    override var acceptsFirstResponder: Bool { true }
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func aPageScriptCannotTakeKeyboardFocus() async throws {
+    let content = Self.makeContent(url: Self.pageURL)
+    content.startSession(at: .fallback)
+    let window = try Self.mount(content)
+    let holder = FocusHolder(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
+    window.contentView?.addSubview(holder)
+    #expect(window.makeFirstResponder(holder))
+    let webView = try #require(content.renderer as? WKWebView)
+    let focused = try await webView.callAsyncJavaScript(
+      """
+      document.body.innerHTML = '<input id="field">';
+      document.getElementById('field').focus();
+      return document.activeElement.id;
+      """,
+      arguments: [:], in: nil, contentWorld: .page)
+    #expect(focused as? String == "field")
+    #expect(window.firstResponder === holder)
+    content.tearDown()
+    window.close()
+  }
+
   @Test func aLoadedTabTakesFocusInThePage() throws {
     let content = Self.makeContent(url: Self.pageURL)
     content.startSession(at: .fallback)
