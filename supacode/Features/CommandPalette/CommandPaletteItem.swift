@@ -227,6 +227,10 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
   case focusSplitLeft = "focus-split-left"
   case focusSplitDown = "focus-split-down"
   case focusSplitUp = "focus-split-up"
+  case resizePaneRight = "resize-pane-right"
+  case resizePaneLeft = "resize-pane-left"
+  case resizePaneDown = "resize-pane-down"
+  case resizePaneUp = "resize-pane-up"
   case toggleSplitZoom = "toggle-split-zoom"
   case equalizeSplits = "equalize-splits"
 
@@ -242,6 +246,10 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
     case .focusSplitLeft: "Focus Split Left"
     case .focusSplitDown: "Focus Split Down"
     case .focusSplitUp: "Focus Split Up"
+    case .resizePaneRight: TerminalSplitMenuDirection.right.resizeTitle
+    case .resizePaneLeft: TerminalSplitMenuDirection.left.resizeTitle
+    case .resizePaneDown: TerminalSplitMenuDirection.down.resizeTitle
+    case .resizePaneUp: TerminalSplitMenuDirection.up.resizeTitle
     case .toggleSplitZoom: "Toggle Split Zoom"
     case .equalizeSplits: "Equalize Splits"
     }
@@ -260,6 +268,10 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
     case .focusSplitLeft: "arrow.left"
     case .focusSplitDown: "arrow.down"
     case .focusSplitUp: "arrow.up"
+    case .resizePaneRight: TerminalSplitMenuDirection.right.resizeSystemImage
+    case .resizePaneLeft: TerminalSplitMenuDirection.left.resizeSystemImage
+    case .resizePaneDown: TerminalSplitMenuDirection.down.resizeSystemImage
+    case .resizePaneUp: TerminalSplitMenuDirection.up.resizeSystemImage
     case .toggleSplitZoom: "arrow.up.left.and.arrow.down.right"
     case .equalizeSplits: "rectangle.split.2x1"
     }
@@ -278,6 +290,10 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
     case .focusSplitLeft: AppShortcuts.focusSplitLeft
     case .focusSplitDown: AppShortcuts.focusSplitDown
     case .focusSplitUp: AppShortcuts.focusSplitUp
+    case .resizePaneRight: AppShortcuts.resizePaneRight
+    case .resizePaneLeft: AppShortcuts.resizePaneLeft
+    case .resizePaneDown: AppShortcuts.resizePaneDown
+    case .resizePaneUp: AppShortcuts.resizePaneUp
     case .toggleSplitZoom: AppShortcuts.toggleSplitZoom
     case .equalizeSplits: AppShortcuts.equalizeSplits
     }

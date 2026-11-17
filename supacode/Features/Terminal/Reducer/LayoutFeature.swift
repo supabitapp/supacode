@@ -888,17 +888,7 @@ extension LayoutFeature {
       Self.logger.info("resize refused: pane \(located.pane.id.rawValue) is windowed")
       return .none
     }
-    // Pane extents come from each pane's visible renderer; a pane mid-wake
-    // reports zero, and a degenerate total would slam ratios to the clamp.
-    // A windowed pane's renderer sizes its own window, not its placeholder,
-    // so it must not feed main-tree geometry; the total then under-reports
-    // the placeholder's area, an accepted approximation.
-    let panes = state.layout.panes
-    let windowedPaneIDs = state.windowedPaneIDs
-    let size = state.layout.tree.viewBounds { paneID in
-      guard !windowedPaneIDs.contains(paneID), let selected = panes[id: paneID]?.selectedTab else { return .zero }
-      return contentRuntime.renderer(for: selected.content.id)?.bounds.size ?? .zero
-    }
+    let size = paneTreeSize(state)
     guard size.width >= 1, size.height >= 1 else {
       Self.logger.info("resize skipped: pane extents are degenerate.")
       return .none
@@ -914,6 +904,23 @@ extension LayoutFeature {
       Self.logger.warning("contentRequestedResize found no resizable split for \(contentID.rawValue)")
     }
     return .none
+  }
+
+  /// The pane tree's size. On screen the tree's own view is exact. Off screen
+  /// the extents come from each pane's visible renderer, which leaves out the
+  /// pane's strip; a pane mid-wake reports zero, and a degenerate total would
+  /// slam ratios to the clamp. A windowed pane's renderer sizes its own window,
+  /// not its placeholder, so it must not feed main-tree geometry; the total
+  /// then under-reports the placeholder's area, an accepted approximation.
+  private func paneTreeSize(_ state: State) -> CGSize {
+    var renderers: [PaneID: NSView] = [:]
+    for pane in state.layout.panes where !state.windowedPaneIDs.contains(pane.id) {
+      renderers[pane.id] = pane.selectedTab.flatMap { contentRuntime.renderer(for: $0.content.id) }
+    }
+    if let mountedSize = renderers.values.lazy.compactMap({ LayoutAXContainerView.size(enclosing: $0) }).first {
+      return mountedSize
+    }
+    return state.layout.tree.viewBounds { renderers[$0]?.bounds.size ?? .zero }
   }
 
   private func reduceClosePane(_ state: inout State, paneID: PaneID) -> Effect<Action> {

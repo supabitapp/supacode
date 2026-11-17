@@ -16,6 +16,7 @@ nonisolated struct TerminalClient: Sendable {
   /// Whether a CLI / deeplink pane token (a pane, tab, or content id) resolves
   /// to a pane in the worktree.
   var paneExists: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
+  var paneIsWindowed: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
   /// Whether a tab can move into a new split: its pane holds more than one tab
   /// and is not windowed. A single-tab or windowed pane refuses the move.
   var canMoveTabToNewSplit: @MainActor @Sendable (Worktree.ID, UUID) -> Bool
@@ -76,6 +77,8 @@ nonisolated struct TerminalClient: Sendable {
     case focusSplit(Worktree, direction: TerminalSplitMenuDirection)
     case toggleSplitZoom(Worktree)
     case equalizeSplits(Worktree)
+    case resizePane(
+      Worktree, paneToken: UUID? = nil, direction: TerminalSplitMenuDirection, amount: UInt16? = nil)
     /// Pane-addressed layout ops from the CLI / deeplinks. `paneToken` is a pane
     /// id, or the id of a tab / content the pane hosts.
     case splitPane(
@@ -202,6 +205,7 @@ nonisolated extension TerminalClient: DependencyKey {
     surfaceExistsInWorktree: { _, _ in fatalError("TerminalClient.surfaceExistsInWorktree not configured") },
     idExistsAnywhere: { _ in fatalError("TerminalClient.idExistsAnywhere not configured") },
     paneExists: { _, _ in fatalError("TerminalClient.paneExists not configured") },
+    paneIsWindowed: { _, _ in fatalError("TerminalClient.paneIsWindowed not configured") },
     canMoveTabToNewSplit: { _, _ in fatalError("TerminalClient.canMoveTabToNewSplit not configured") },
     tabID: { _, _ in fatalError("TerminalClient.tabID not configured") },
     selectedTabID: { _ in fatalError("TerminalClient.selectedTabID not configured") },
@@ -226,6 +230,7 @@ nonisolated extension TerminalClient: DependencyKey {
     // tests that don't exercise cross-worktree collisions need not override it.
     idExistsAnywhere: { _ in false },
     paneExists: unimplemented("TerminalClient.paneExists", placeholder: true),
+    paneIsWindowed: unimplemented("TerminalClient.paneIsWindowed", placeholder: false),
     canMoveTabToNewSplit: unimplemented("TerminalClient.canMoveTabToNewSplit", placeholder: true),
     tabID: unimplemented("TerminalClient.tabID", placeholder: nil),
     selectedTabID: unimplemented("TerminalClient.selectedTabID", placeholder: nil),

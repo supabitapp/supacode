@@ -98,13 +98,15 @@ enum PaneWindowShortcut {
       guard !event.isARepeat, isWorktreeSelected else { return .ignore }
       return isRunScript ? .runScript : .stopRunScripts
     }
-    // Splits, neighbor focus, zoom, and equalize are unavailable in a pane
-    // window; consume them so the menu cannot apply them to the selected
+    // Splits, neighbor focus, resize, zoom, and equalize are unavailable in a
+    // pane window; consume them so the menu cannot apply them to the selected
     // worktree's layout instead.
     let unavailable = [
       AppShortcuts.splitRight, AppShortcuts.splitLeft, AppShortcuts.splitDown, AppShortcuts.splitUp,
       AppShortcuts.focusSplitLeft, AppShortcuts.focusSplitRight,
       AppShortcuts.focusSplitUp, AppShortcuts.focusSplitDown,
+      AppShortcuts.resizePaneLeft, AppShortcuts.resizePaneRight,
+      AppShortcuts.resizePaneUp, AppShortcuts.resizePaneDown,
       AppShortcuts.toggleSplitZoom, AppShortcuts.equalizeSplits,
     ]
     if unavailable.contains(where: matched) {
@@ -620,11 +622,12 @@ private struct WindowedPaneRootView: View {
           // One content per tab: closing the surface closes the tab.
           requestCloseSelectedTab(of: pane)
         }
-        // Published disabled: a pane window takes no splits, zoom, or
+        // Published disabled: a pane window takes no splits, zoom, resize, or
         // neighbor focus, and the main scene's actions would otherwise hit
         // the selected worktree.
         .focusedAction(\.splitTerminalAction, enabled: false) { (_: TerminalSplitMenuDirection) in }
         .focusedAction(\.focusSplitAction, enabled: false) { (_: TerminalSplitMenuDirection) in }
+        .focusedAction(\.resizePaneAction, enabled: false) { (_: TerminalSplitMenuDirection) in }
         .focusedAction(\.toggleSplitZoomAction, enabled: false) {}
         .focusedAction(\.equalizeSplitsAction, enabled: false) {}
         .focusedSceneAction(\.toggleWindowModeAction, enabled: true, token: paneID.rawValue) {

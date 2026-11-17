@@ -926,6 +926,11 @@ struct PaneWindowShortcutTests {
       PaneWindowShortcut.intent(for: zoom, pane: pane, overrides: [:], isWorktreeSelected: true)
         == .ignore
     )
+    let resize = Self.keyEvent(keyCode: kVK_LeftArrow, modifiers: [.command, .option, .shift])
+    #expect(
+      PaneWindowShortcut.intent(for: resize, pane: pane, overrides: [:], isWorktreeSelected: true)
+        == .ignore
+    )
   }
 
   @Test func relativeTabCyclingShortcutsUseTabChords() {

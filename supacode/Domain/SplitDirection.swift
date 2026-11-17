@@ -30,7 +30,7 @@ nonisolated enum TerminalSplitMenuDirection: Equatable, Sendable, CaseIterable {
   case down
   case up
 
-  /// Parses the four-way direction a `pane focus` / `tab move` deeplink carries.
+  /// Parses the four-way direction a `pane focus` / `pane resize` / `tab move` deeplink carries.
   nonisolated init?(deeplinkValue: String) {
     switch deeplinkValue {
     case "right", "r": self = .right
@@ -51,14 +51,18 @@ nonisolated enum TerminalSplitMenuDirection: Equatable, Sendable, CaseIterable {
     }
   }
 
+  var spatialDirection: SplitTree<PaneID>.SpatialDirection {
+    switch self {
+    case .right: .right
+    case .left: .left
+    case .down: .down
+    case .up: .top
+    }
+  }
+
   /// The spatial focus direction for this menu direction.
   var focusSplitDirection: SplitTree<PaneID>.FocusDirection {
-    switch self {
-    case .right: .spatial(.right)
-    case .left: .spatial(.left)
-    case .down: .spatial(.down)
-    case .up: .spatial(.top)
-    }
+    .spatial(spatialDirection)
   }
 
   var systemImage: String {
@@ -106,6 +110,33 @@ nonisolated enum TerminalSplitMenuDirection: Equatable, Sendable, CaseIterable {
     case .left: "Focus Split Left"
     case .down: "Focus Split Down"
     case .up: "Focus Split Up"
+    }
+  }
+
+  @MainActor var resizeAppShortcut: AppShortcut {
+    switch self {
+    case .right: AppShortcuts.resizePaneRight
+    case .left: AppShortcuts.resizePaneLeft
+    case .down: AppShortcuts.resizePaneDown
+    case .up: AppShortcuts.resizePaneUp
+    }
+  }
+
+  var resizeTitle: String {
+    switch self {
+    case .right: "Resize Pane Right"
+    case .left: "Resize Pane Left"
+    case .down: "Resize Pane Down"
+    case .up: "Resize Pane Up"
+    }
+  }
+
+  var resizeSystemImage: String {
+    switch self {
+    case .right: "arrow.right.to.line"
+    case .left: "arrow.left.to.line"
+    case .down: "arrow.down.to.line"
+    case .up: "arrow.up.to.line"
     }
   }
 

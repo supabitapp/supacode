@@ -107,6 +107,22 @@ struct SplitTreeTests {
     #expect(SplitTree(view: leafA).parentSplitInfo(ofLeaf: leafA) == nil)
   }
 
+  @Test func resizingNeverMovesADividerAgainstTheRequestedDirection() throws {
+    let leafA = IDLeaf(id: 1)
+    let leafB = IDLeaf(id: 2)
+    let tree = SplitTree(
+      root: .split(
+        .init(direction: .horizontal, ratio: 0.05, left: .leaf(view: leafA), right: .leaf(view: leafB))))
+    let bounds = CGRect(x: 0, y: 0, width: 1000, height: 500)
+    func ratio(afterResizing direction: SplitTree<IDLeaf>.SpatialDirection) throws -> Double? {
+      let resized = try tree.resizing(node: .leaf(view: leafA), by: 10, in: direction, with: bounds)
+      guard case .split(let split) = resized.root else { return nil }
+      return split.ratio
+    }
+    #expect(try ratio(afterResizing: .left) == 0.05)
+    #expect(try ratio(afterResizing: .right) == 0.05 + 10.0 / 1000)
+  }
+
   @Test func insertingSpanningParentWrapsTheImmediateParentSplit() throws {
     let leafA = IDLeaf(id: 1)
     let leafB = IDLeaf(id: 2)

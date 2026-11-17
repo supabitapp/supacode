@@ -240,6 +240,85 @@ struct AppFeatureDeeplinkTests {
       })
   }
 
+  @Test(.dependencies) func paneResizeDeeplinkEmitsResizeCommand() async {
+    let worktree = makeWorktree()
+    let token = UUID()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+      $0.terminalClient.paneExists = { _, _ in true }
+      $0.terminalClient.paneIsWindowed = { _, _ in false }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(.worktree(id: worktree.id, action: .paneResize(token: token, direction: .left, amount: 120))))
+    await store.finish()
+    #expect(sent.value.contains(.resizePane(worktree, paneToken: token, direction: .left, amount: 120)))
+  }
+
+  @Test(.dependencies) func paneResizeOnAWindowedPaneAlertsInsteadOfAcking() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+      $0.terminalClient.paneExists = { _, _ in true }
+      $0.terminalClient.paneIsWindowed = { _, _ in true }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(.worktree(id: worktree.id, action: .paneResize(token: UUID(), direction: .right, amount: nil))))
+    await store.finish()
+    #expect(
+      !sent.value.contains {
+        if case .resizePane = $0 { return true }
+        return false
+      })
+    #expect(store.state.alert != nil)
+  }
+
+  @Test(.dependencies) func paneResizeOnAMissingPaneAlertsInsteadOfAcking() async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+      $0.terminalClient.paneExists = { _, _ in false }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .deeplink(.worktree(id: worktree.id, action: .paneResize(token: UUID(), direction: .right, amount: nil))))
+    await store.finish()
+    #expect(
+      !sent.value.contains {
+        if case .resizePane = $0 { return true }
+        return false
+      })
+    #expect(store.state.alert != nil)
+  }
+
   @Test(.dependencies) func paneDestroyPresentsConfirmationBeforeClosing() async {
     let worktree = makeWorktree()
     let sent = LockIsolated<[TerminalClient.Command]>([])

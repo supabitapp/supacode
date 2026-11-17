@@ -288,6 +288,9 @@ struct SupacodeApp: App {
         paneExists: { worktreeID, token in
           terminalManager.paneExists(worktreeID: worktreeID, token: token)
         },
+        paneIsWindowed: { worktreeID, token in
+          terminalManager.paneIsWindowed(worktreeID: worktreeID, token: token)
+        },
         canMoveTabToNewSplit: { worktreeID, tabID in
           terminalManager.canMoveTabToNewSplit(worktreeID: worktreeID, tabID: tabID)
         },

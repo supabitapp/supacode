@@ -54,6 +54,18 @@ struct AppFeatureSplitTerminalTests {
     #expect(direction.focusAppShortcut.id == focus)
   }
 
+  @Test(
+    arguments: [
+      (TerminalSplitMenuDirection.right, AppShortcutID.resizePaneRight),
+      (.left, .resizePaneLeft),
+      (.down, .resizePaneDown),
+      (.up, .resizePaneUp),
+    ]
+  )
+  func directionMapsToItsResizeShortcut(direction: TerminalSplitMenuDirection, resize: AppShortcutID) {
+    #expect(direction.resizeAppShortcut.id == resize)
+  }
+
   @Test(.dependencies, arguments: TerminalSplitMenuDirection.allCases)
   func splitTerminalForwardsTheLayoutCommand(direction: TerminalSplitMenuDirection) async {
     let worktree = makeWorktree()
@@ -114,6 +126,80 @@ struct AppFeatureSplitTerminalTests {
     await store.send(.focusSplit(direction))
     await store.finish()
     #expect(sent.value == [.focusSplit(worktree, direction: direction)])
+  }
+
+  @Test(.dependencies, arguments: TerminalSplitMenuDirection.allCases)
+  func resizePaneForwardsTheLayoutCommand(direction: TerminalSplitMenuDirection) async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+
+    await store.send(.resizePane(direction))
+    await store.finish()
+    #expect(sent.value == [.resizePane(worktree, paneToken: nil, direction: direction, amount: nil)])
+  }
+
+  @Test(
+    .dependencies,
+    arguments: [
+      (LayoutPaletteCommand.resizePaneRight, TerminalSplitMenuDirection.right),
+      (.resizePaneLeft, .left),
+      (.resizePaneDown, .down),
+      (.resizePaneUp, .up),
+    ]
+  )
+  func paletteResizeCommandResizesInItsDirection(
+    command: LayoutPaletteCommand,
+    direction: TerminalSplitMenuDirection
+  ) async {
+    let worktree = makeWorktree()
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sent.withValue { $0.append(command) }
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.commandPalette(.delegate(.layoutCommand(command))))
+    await store.finish()
+    #expect(sent.value == [.resizePane(worktree, paneToken: nil, direction: direction, amount: nil)])
+  }
+
+  @Test(.dependencies) func resizePaneWithoutSelectionIsNoop() async {
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: RepositoriesFeature.State(),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in
+        Issue.record("terminalClient.send should not be called without a selected worktree")
+      }
+    }
+
+    await store.send(.resizePane(.left))
+    await store.finish()
   }
 
   @Test(.dependencies) func toggleSplitZoomForwardsTheLayoutCommand() async {

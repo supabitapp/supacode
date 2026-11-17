@@ -12,6 +12,7 @@ struct TerminalCommands: Commands {
   @FocusedValue(\.toggleSplitZoomAction) private var toggleSplitZoomAction
   @FocusedValue(\.equalizeSplitsAction) private var equalizeSplitsAction
   @FocusedValue(\.focusSplitAction) private var focusSplitAction
+  @FocusedValue(\.resizePaneAction) private var resizePaneAction
   @FocusedValue(\.startSearchAction) private var startSearchAction
   @FocusedValue(\.searchSelectionAction) private var searchSelectionAction
   @FocusedValue(\.navigateSearchNextAction) private var navigateSearchNextAction
@@ -54,6 +55,14 @@ struct TerminalCommands: Commands {
         }
         .appKeyboardShortcut(direction.focusAppShortcut.effective(from: overrides))
         .disabled(focusSplitAction?.isEnabled != true)
+      }
+
+      ForEach(TerminalSplitMenuDirection.allCases, id: \.self) { direction in
+        Button(direction.resizeTitle, systemImage: direction.resizeSystemImage) {
+          resizePaneAction?(direction)
+        }
+        .appKeyboardShortcut(direction.resizeAppShortcut.effective(from: overrides))
+        .disabled(resizePaneAction?.isEnabled != true)
       }
 
       Button("Toggle Split Zoom", systemImage: "arrow.up.left.and.arrow.down.right") {
@@ -199,6 +208,10 @@ private struct FocusSplitActionKey: FocusedValueKey {
   typealias Value = FocusedAction<TerminalSplitMenuDirection>
 }
 
+private struct ResizePaneActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<TerminalSplitMenuDirection>
+}
+
 private struct RenameTabActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
@@ -222,6 +235,11 @@ extension FocusedValues {
   var focusSplitAction: FocusedAction<TerminalSplitMenuDirection>? {
     get { self[FocusSplitActionKey.self] }
     set { self[FocusSplitActionKey.self] = newValue }
+  }
+
+  var resizePaneAction: FocusedAction<TerminalSplitMenuDirection>? {
+    get { self[ResizePaneActionKey.self] }
+    set { self[ResizePaneActionKey.self] = newValue }
   }
 
   var renameTabAction: FocusedAction<Void>? {

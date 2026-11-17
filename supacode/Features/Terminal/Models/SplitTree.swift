@@ -312,7 +312,7 @@ nonisolated struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
       throw SplitError.viewNotFound
     }
 
-    let clamped = max(0.1, min(0.9, newRatio))
+    let clamped = max(min(0.1, split.ratio), min(max(0.9, split.ratio), newRatio))
     let newSplit = Split(
       direction: split.direction,
       ratio: clamped,

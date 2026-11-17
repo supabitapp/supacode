@@ -1,3 +1,4 @@
+import AppKit
 import ComposableArchitecture
 import Dependencies
 import DependenciesTestSupport
@@ -37,7 +38,10 @@ struct WorktreeTerminalManagerAckTests {
   private func makeHarness(
     storage: SettingsFileStorage = .inMemory(),
     defaults: UserDefaults = .inMemory,
-    killRemoteSession: @escaping @Sendable (RemoteHost, String) -> Void = { _, _ in }
+    killRemoteSession: @escaping @Sendable (RemoteHost, String) -> Void = { _, _ in },
+    makeContent: @escaping @MainActor @Sendable (ContentRequest) -> any TabContent = { request in
+      InertTabContent(id: request.contentID, state: request.content)
+    }
   ) -> Harness {
     let worktree = makeWorktree()
     let manager = withDependencies {
@@ -65,9 +69,7 @@ struct WorktreeTerminalManagerAckTests {
       // One shared registry: the per-access `testValue` would otherwise hand
       // provision and lookup different runtimes.
       $0.contentRuntime = ContentRuntime()
-      $0[LayoutContentFactory.self] = LayoutContentFactory { request in
-        InertTabContent(id: request.contentID, state: request.content)
-      }
+      $0[LayoutContentFactory.self] = LayoutContentFactory(make: makeContent)
       $0[ContentSessionKiller.self] = ContentSessionKiller(kill: { _, _ in })
     }
     manager.appStore = store
@@ -327,6 +329,78 @@ struct WorktreeTerminalManagerAckTests {
     let kill = await kills.next()
     #expect(kill?.0 == "build-box")
     #expect(kill?.1 == ZmxSessionID.make(surfaceID: contentID))
+  }
+
+  private final class SizedTabContent: TabContent {
+    let id: ContentID
+    let kind: ContentKind = .terminal
+    let renderer: NSView? = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
+
+    init(id: ContentID) {
+      self.id = id
+    }
+
+    nonisolated deinit {}
+
+    func startSession(at geometry: ContentGeometry) {}
+
+    func hibernate() {}
+
+    func snapshot() -> ContentSnapshot {
+      ContentSnapshot(id: id, state: .terminal(TerminalContentState(workingDirectory: nil)))
+    }
+  }
+
+  private func layOutLeftPaneBesideTopOverFocusedBottom(_ harness: Harness) async -> (left: UUID, top: UUID) {
+    harness.manager.handleCommand(.setSelectedWorktreeID(harness.worktree.id))
+    let pump = CreationEvents(harness.manager)
+    let (left, top) = (UUID(), UUID())
+    harness.manager.handleCommand(
+      .createTab(harness.worktree, runSetupScriptIfNew: false, id: left))
+    _ = await pump.next(2)
+    harness.manager.handleCommand(
+      .splitPane(harness.worktree, paneToken: left, direction: .horizontal, input: nil, id: top))
+    _ = await pump.next(1)
+    harness.manager.handleCommand(
+      .splitPane(harness.worktree, paneToken: top, direction: .vertical, input: nil, id: UUID()))
+    _ = await pump.next(1)
+    return (left, top)
+  }
+
+  private func dividerRatios(_ harness: Harness) -> (columns: Double?, stack: Double?) {
+    let root = harness.store.withState { $0.terminals.layouts[id: harness.worktree.id]?.layout.tree.root }
+    guard case .split(let columns) = root else { return (nil, nil) }
+    guard case .split(let stack) = columns.right else { return (columns.ratio, nil) }
+    return (columns.ratio, stack.ratio)
+  }
+
+  @Test(.dependencies) func resizePaneWithoutATokenStepsTheFocusedPanesDividers() async {
+    let harness = makeHarness(makeContent: { SizedTabContent(id: $0.contentID) })
+    _ = await layOutLeftPaneBesideTopOverFocusedBottom(harness)
+
+    harness.manager.handleCommand(.resizePane(harness.worktree, direction: .down))
+    #expect(dividerRatios(harness).stack == 0.5 + 10.0 / 960)
+    #expect(dividerRatios(harness).columns == 0.5)
+
+    harness.manager.handleCommand(.resizePane(harness.worktree, direction: .left))
+    #expect(dividerRatios(harness).columns == 0.5 - 10.0 / 1280)
+  }
+
+  @Test(.dependencies) func resizePaneWithATokenMovesThatPanesDividerByTheGivenAmount() async {
+    let harness = makeHarness(makeContent: { SizedTabContent(id: $0.contentID) })
+    let panes = await layOutLeftPaneBesideTopOverFocusedBottom(harness)
+
+    harness.manager.handleCommand(
+      .resizePane(harness.worktree, paneToken: panes.left, direction: .down, amount: 120))
+    #expect(dividerRatios(harness).stack == 0.5)
+
+    harness.manager.handleCommand(
+      .resizePane(harness.worktree, paneToken: panes.top, direction: .up, amount: 120))
+    #expect(dividerRatios(harness).stack == 0.375)
+
+    harness.manager.handleCommand(
+      .resizePane(harness.worktree, paneToken: panes.left, direction: .right, amount: 160))
+    #expect(dividerRatios(harness).columns == 0.625)
   }
 
   @Test(.dependencies) func anchoredCreateLandsInTheAnchorsPane() async {

@@ -129,6 +129,7 @@ supacode pane focus [-w <id>] [-p <id>] [-d l|r|u|d]                # Focus a pa
 supacode pane split [-w <id>] [-p <token>] [-d h|v] [-i <cmd>] [-n <uuid>] [--background]  # Split into a new pane (prints the new tab UUID).
 supacode pane close [-w <id>] [-p <token>] [--background]           # Close a pane and all its tabs.
 supacode pane zoom [-w <id>] [-p <token>]                           # Toggle a pane's zoom.
+supacode pane resize [-w <id>] [-p <token>] -d l|r|u|d [--amount <points>]  # Move a pane's divider toward a direction (default: one shortcut step).
 supacode pane equalize [-w <id>]                                    # Equalize every split ratio.
 supacode pane window [-w <id>] [-p <token>]                         # Toggle a pane's window mode.
 ```
@@ -216,7 +217,7 @@ tabs stay in the background instead of becoming active. It is accepted by every
 action that would otherwise focus its target (`tab new`, `tab send`,
 `tab move`, `pane split`, `pane close`, `repo worktree-new`, `worktree run`/
 `stop`/`archive`/`unarchive`/`delete`/`pin`/`unpin`, and `tab close`); the
-`focus`, `zoom`, `equalize`, and `window` commands do not accept it.
+`focus`, `zoom`, `resize`, `equalize`, and `window` commands do not accept it.
 
 ## Flag Reference
 
@@ -230,7 +231,8 @@ action that would otherwise focus its target (`tab new`, `tab send`,
 | `--color` | - | - | Sidebar tint override; pass `none` to clear. |
 | `--repo` | `-r` | `$SUPACODE_REPO_ID` | Repository ID. |
 | `--input` | `-i` | - | Command to run in a new terminal, or the text `tab send` types into an existing one. |
-| `--direction` | `-d` | `horizontal` | Split direction (`h`/`v`) for splits; neighbor direction (`l`/`r`/`u`/`d`) for `pane focus` and `tab move`. |
+| `--direction` | `-d` | `horizontal` | Split direction (`h`/`v`) for splits; neighbor direction (`l`/`r`/`u`/`d`) for `pane focus`, `pane resize`, and `tab move`. |
+| `--amount` | - | one shortcut step | Points to move the divider for `pane resize`. |
 | `--id` | `-n` | random | UUID for a new tab. |
 | `--focused` | `-f` | - | Print only the focused item in `list` commands. |
 | `--background` | - | - | Do not move the selection or focus; see Background Mode. |

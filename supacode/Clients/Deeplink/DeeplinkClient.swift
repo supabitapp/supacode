@@ -397,10 +397,36 @@ private nonisolated enum DeeplinkParser {
       return .worktree(id: worktreeID, action: .paneZoom(token: token))
     case "window":
       return .worktree(id: worktreeID, action: .paneWindow(token: token))
+    case "resize":
+      return parseWorktreePaneResize(worktreeID: worktreeID, token: token, queryItems: queryItems)
     default:
       logger.warning("Unrecognized pane action: \(pathSegments[3])")
       return nil
     }
+  }
+
+  private static func parseWorktreePaneResize(
+    worktreeID: Worktree.ID,
+    token: UUID,
+    queryItems: [URLQueryItem]
+  ) -> Deeplink? {
+    let directionRaw = queryItems.first(where: { $0.name == "direction" })?.value ?? ""
+    guard let direction = TerminalSplitMenuDirection(deeplinkValue: directionRaw) else {
+      logger.warning("Invalid pane resize direction '\(directionRaw)'.")
+      return nil
+    }
+    var amount: UInt16?
+    if let rawAmount = queryItems.first(where: { $0.name == "amount" })?.value {
+      guard let points = UInt16(rawAmount), points > 0 else {
+        logger.warning("Invalid pane resize amount '\(rawAmount)'.")
+        return nil
+      }
+      amount = points
+    }
+    return .worktree(
+      id: worktreeID,
+      action: .paneResize(token: token, direction: direction, amount: amount)
+    )
   }
 
   // MARK: - Repo.

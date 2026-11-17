@@ -1782,6 +1782,33 @@ struct LayoutFeatureTests {
     #expect(harness.store.state.layout.isConsistent)
   }
 
+  @Test func contentRequestedResizeMeasuresAgainstTheMountedPaneTree() async throws {
+    let harness = await makeHarness()
+    let split = await splitPane(harness, anchor: harness.paneID, direction: .down)
+    let paneTree = LayoutAXContainerView(frame: NSRect(x: 0, y: 0, width: 800, height: 800))
+    let unmounted = try #require(harness.mock?.renderer)
+    let mounted = try #require(harness.recorder.contents[split.contentID]?.renderer)
+    unmounted.frame = NSRect(x: 0, y: 0, width: 800, height: 366)
+    mounted.frame = NSRect(x: 0, y: 0, width: 800, height: 366)
+    paneTree.addSubview(mounted)
+    await harness.store.send(
+      .contentRequestedResize(content: harness.contentID, direction: .down, amount: 100)
+    ) {
+      $0.layout.tree = try $0.layout.tree.resizing(
+        node: try #require($0.layout.tree.find(id: harness.paneID.rawValue)),
+        by: 100,
+        in: .down,
+        with: paneTree.bounds
+      )
+    }
+    let ratio: Double? =
+      switch harness.store.state.layout.tree.root {
+      case .split(let split): split.ratio
+      case .leaf, nil: nil
+      }
+    #expect(ratio == 0.625)
+  }
+
   @Test func contentRequestedResizeWithoutAMatchingAxisIsANoOp() async {
     let harness = await makeHarness()
     harness.mock?.renderer?.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
