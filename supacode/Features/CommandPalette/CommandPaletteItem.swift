@@ -246,10 +246,10 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
     case .focusSplitLeft: "Focus Split Left"
     case .focusSplitDown: "Focus Split Down"
     case .focusSplitUp: "Focus Split Up"
-    case .resizePaneRight: TerminalSplitMenuDirection.right.resizeMenuBarTitle
-    case .resizePaneLeft: TerminalSplitMenuDirection.left.resizeMenuBarTitle
-    case .resizePaneDown: TerminalSplitMenuDirection.down.resizeMenuBarTitle
-    case .resizePaneUp: TerminalSplitMenuDirection.up.resizeMenuBarTitle
+    case .resizePaneRight: TerminalSplitMenuDirection.right.resizeTitle
+    case .resizePaneLeft: TerminalSplitMenuDirection.left.resizeTitle
+    case .resizePaneDown: TerminalSplitMenuDirection.down.resizeTitle
+    case .resizePaneUp: TerminalSplitMenuDirection.up.resizeTitle
     case .toggleSplitZoom: "Toggle Split Zoom"
     case .equalizeSplits: "Equalize Splits"
     }

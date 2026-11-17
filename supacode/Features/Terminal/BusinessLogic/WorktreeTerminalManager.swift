@@ -1438,7 +1438,9 @@ final class WorktreeTerminalManager {
   ) {
     guard let layout = layoutState(for: worktree.id)?.layout else { return }
     let pane =
-      if let paneToken { layout.pane(forToken: paneToken) } else {
+      if let paneToken {
+        layout.pane(forToken: paneToken)
+      } else {
         layout.focusedPaneID.flatMap { layout.panes[id: $0] }
       }
     guard let contentID = pane?.selectedTab?.content.id else {

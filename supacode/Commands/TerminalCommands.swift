@@ -58,7 +58,7 @@ struct TerminalCommands: Commands {
       }
 
       ForEach(TerminalSplitMenuDirection.allCases, id: \.self) { direction in
-        Button(direction.resizeMenuBarTitle, systemImage: direction.resizeSystemImage) {
+        Button(direction.resizeTitle, systemImage: direction.resizeSystemImage) {
           resizePaneAction?(direction)
         }
         .appKeyboardShortcut(direction.resizeAppShortcut.effective(from: overrides))

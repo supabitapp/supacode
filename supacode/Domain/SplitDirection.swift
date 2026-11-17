@@ -122,7 +122,7 @@ nonisolated enum TerminalSplitMenuDirection: Equatable, Sendable, CaseIterable {
     }
   }
 
-  var resizeMenuBarTitle: String {
+  var resizeTitle: String {
     switch self {
     case .right: "Resize Pane Right"
     case .left: "Resize Pane Left"
