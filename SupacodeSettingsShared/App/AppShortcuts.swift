@@ -33,7 +33,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
       false
     case .commandPalette, .worktreeSwitcher, .openSettings, .checkForUpdates, .showMainWindow,
       .toggleLeftSidebar, .revealInSidebar, .expandAllSidebarGroups, .collapseAllSidebarGroups,
-      .newWorktree, .refreshWorktrees, .archivedWorktrees, .confirmWorktreeAction,
+      .newWorktree, .refreshWorktrees, .archivedWorktrees, .confirmWorktreeAction, .customizeAppearance,
       .selectNextWorktree, .selectPreviousWorktree, .worktreeHistoryBack, .worktreeHistoryForward,
       .selectWorktree, .selectTab, .selectNextTab, .selectPreviousTab,
       .openWorktree, .revealInFinder, .openRepository, .addRemoteRepository, .cloneRepository,
