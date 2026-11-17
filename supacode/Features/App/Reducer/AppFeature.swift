@@ -3117,7 +3117,7 @@ struct AppFeature {
     guard let definition = resolveScript(scriptID: scriptID, in: worktree) else {
       state.alert = scriptAlert(
         title: "Script not found",
-        message: "No script matching the deeplink could be found. It may have been removed."
+        message: "The script could not be found. It may have been removed."
       )
       return .none
     }
@@ -3173,7 +3173,7 @@ struct AppFeature {
     guard let definition = resolveScript(scriptID: scriptID, in: worktree) else {
       state.alert = scriptAlert(
         title: "Script not found",
-        message: "No script matching the deeplink could be found. It may have been removed."
+        message: "The script could not be found. It may have been removed."
       )
       return .none
     }
@@ -3263,7 +3263,7 @@ struct AppFeature {
         TextState("OK")
       }
     } message: {
-      TextState("No worktree matching the deeplink could be found. It may have been removed.")
+      TextState("The worktree could not be found. It may have been removed.")
     }
   }
 
@@ -3287,7 +3287,7 @@ struct AppFeature {
         TextState("OK")
       }
     } message: {
-      TextState("No repository matching the deeplink could be found.")
+      TextState("The repository could not be found.")
     }
   }
 
@@ -3877,7 +3877,7 @@ struct AppFeature {
           TextState("OK")
         }
       } message: {
-        TextState("No pane matching the deeplink could be found. It may have been closed.")
+        TextState("The pane could not be found. It may have been closed.")
       }
       return false
     }
@@ -3899,7 +3899,7 @@ struct AppFeature {
           TextState("OK")
         }
       } message: {
-        TextState("No tab matching the deeplink could be found. It may have been closed.")
+        TextState("The tab could not be found. It may have been closed.")
       }
       return false
     }
@@ -3929,7 +3929,7 @@ struct AppFeature {
           TextState("OK")
         }
       } message: {
-        TextState("No surface matching the deeplink could be found. It may have been closed.")
+        TextState("The surface could not be found. It may have been closed.")
       }
       return false
     }

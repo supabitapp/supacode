@@ -1089,7 +1089,7 @@ struct AppFeatureCommandAckTests {
 
     let response = readPipeJSON(closeReadFD)
     #expect(response?["ok"] as? Bool == false)
-    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("no tab matching") == true)
+    #expect((response?["error"] as? String)?.localizedCaseInsensitiveContains("the tab could not be found") == true)
     #expect(!sent.value.contains { if case .destroyTab = $0 { true } else { false } })
   }
 
