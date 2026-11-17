@@ -55,6 +55,14 @@ final class ContentRuntime {
     ])
   }
 
+  func mountedLayoutSize(for id: ContentID) -> CGSize? {
+    guard let renderer = contents[id]?.renderer else { return nil }
+    return sequence(first: renderer, next: \.superview)
+      .lazy
+      .compactMap { ($0 as? LayoutAXContainerView)?.bounds.size }
+      .first
+  }
+
   func content(for id: ContentID) -> (any TabContent)? {
     contents[id]
   }

@@ -82,6 +82,7 @@ supacode://worktree/<worktree_id>/pane/focus?direction=left|right|up|down   # Fo
 supacode://worktree/<worktree_id>/pane/<token>/split?direction=horizontal|vertical&input=<cmd>&id=<uuid>   # Split a pane.
 supacode://worktree/<worktree_id>/pane/<token>/destroy            # Close a pane and all its tabs.
 supacode://worktree/<worktree_id>/pane/<token>/zoom               # Toggle a pane's zoom.
+supacode://worktree/<worktree_id>/pane/<token>/resize?direction=left|right|up|down&amount=<points>   # Move a pane's divider toward a direction; amount defaults to one shortcut step.
 supacode://worktree/<worktree_id>/pane/<token>/window             # Toggle a pane's window mode.
 supacode://worktree/<worktree_id>/pane/equalize                   # Equalize every split ratio.
 ```

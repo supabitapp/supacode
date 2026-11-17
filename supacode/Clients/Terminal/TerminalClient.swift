@@ -76,6 +76,8 @@ nonisolated struct TerminalClient: Sendable {
     case focusSplit(Worktree, direction: TerminalSplitMenuDirection)
     case toggleSplitZoom(Worktree)
     case equalizeSplits(Worktree)
+    case resizePane(
+      Worktree, paneToken: UUID? = nil, direction: TerminalSplitMenuDirection, amount: UInt16? = nil)
     /// Pane-addressed layout ops from the CLI / deeplinks. `paneToken` is a pane
     /// id, or the id of a tab / content the pane hosts.
     case splitPane(

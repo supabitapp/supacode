@@ -135,6 +135,11 @@ struct DeeplinkReferenceView: View {
       description: "Toggle a pane's zoom."
     ),
     .init(
+      url: "supacode://worktree/<worktree_id>/pane/<token>/resize",
+      description: "Move a pane's divider toward a direction. amount is in points and defaults to one shortcut step.",
+      params: "?direction=left|right|up|down&amount=<points>"
+    ),
+    .init(
       url: "supacode://worktree/<worktree_id>/pane/<token>/window",
       description: "Toggle a pane's window mode."
     ),

@@ -11,6 +11,7 @@ struct PaneCommand: ParsableCommand {
       Split.self,
       Close.self,
       Zoom.self,
+      Resize.self,
       Equalize.self,
       Window.self,
     ],
@@ -175,6 +176,42 @@ extension PaneCommand {
       let token = try IDResolvers.resolveFocusedPaneToken(pane, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
       try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.paneZoom(worktreeID: wID, paneToken: token),
+        timeoutSeconds: timeoutOption.timeout
+      )
+    }
+  }
+
+  struct Resize: ParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Move a pane's divider toward a direction.")
+
+    @Option(name: [.short, .long], help: "Worktree ID. Defaults to the focused worktree.")
+    var worktree: String?
+
+    @Option(
+      name: [.customShort("p"), .customLong("pane")],
+      help: "Pane to resize (a pane, tab, or content UUID). Defaults to the focused pane.")
+    var pane: String?
+
+    @Option(name: [.short, .long], help: "Direction to move the divider: left, right, up, or down.")
+    var direction: CLIFocusDirection
+
+    @Option(help: "Distance in points. Defaults to one shortcut step.")
+    var amount: UInt16?
+
+    @OptionGroup var timeoutOption: TimeoutOption
+
+    func validate() throws {
+      if amount == 0 {
+        throw ValidationError("--amount must be at least 1.")
+      }
+    }
+
+    func run() throws {
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let token = try IDResolvers.resolveFocusedPaneToken(pane, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
+      try Dispatcher.dispatch(
+        deeplinkURL: DeeplinkURLBuilder.paneResize(
+          worktreeID: wID, paneToken: token, direction: direction.rawValue, amount: amount),
         timeoutSeconds: timeoutOption.timeout
       )
     }

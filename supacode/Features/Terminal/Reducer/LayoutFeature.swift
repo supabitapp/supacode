@@ -888,17 +888,21 @@ extension LayoutFeature {
       Self.logger.info("resize refused: pane \(located.pane.id.rawValue) is windowed")
       return .none
     }
-    // Pane extents come from each pane's visible renderer; a pane mid-wake
-    // reports zero, and a degenerate total would slam ratios to the clamp.
-    // A windowed pane's renderer sizes its own window, not its placeholder,
-    // so it must not feed main-tree geometry; the total then under-reports
-    // the placeholder's area, an accepted approximation.
+    // On screen the pane tree's own size is exact. Off screen the extents
+    // come from each pane's visible renderer, which leaves out the pane's
+    // strip; a pane mid-wake reports zero, and a degenerate total would slam
+    // ratios to the clamp. A windowed pane's renderer sizes its own window,
+    // not its placeholder, so it must not feed main-tree geometry; the total
+    // then under-reports the placeholder's area, an accepted approximation.
     let panes = state.layout.panes
     let windowedPaneIDs = state.windowedPaneIDs
-    let size = state.layout.tree.viewBounds { paneID in
-      guard !windowedPaneIDs.contains(paneID), let selected = panes[id: paneID]?.selectedTab else { return .zero }
-      return contentRuntime.renderer(for: selected.content.id)?.bounds.size ?? .zero
-    }
+    let mountedSize = located.pane.selectedTab.flatMap { contentRuntime.mountedLayoutSize(for: $0.content.id) }
+    let size =
+      mountedSize
+      ?? state.layout.tree.viewBounds { paneID in
+        guard !windowedPaneIDs.contains(paneID), let selected = panes[id: paneID]?.selectedTab else { return .zero }
+        return contentRuntime.renderer(for: selected.content.id)?.bounds.size ?? .zero
+      }
     guard size.width >= 1, size.height >= 1 else {
       Self.logger.info("resize skipped: pane extents are degenerate.")
       return .none

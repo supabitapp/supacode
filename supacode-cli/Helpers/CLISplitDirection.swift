@@ -17,8 +17,8 @@ nonisolated enum CLISplitDirection: String, CaseIterable, ExpressibleByArgument 
   }
 }
 
-/// Four-way direction for `pane focus` and `tab move`. Accepts single-letter
-/// abbreviations. Keep in sync with `TerminalSplitMenuDirection`.
+/// Four-way direction for `pane focus`, `pane resize`, and `tab move`. Accepts
+/// single-letter abbreviations. Keep in sync with `TerminalSplitMenuDirection`.
 nonisolated enum CLIFocusDirection: String, CaseIterable, ExpressibleByArgument {
   case left
   case right

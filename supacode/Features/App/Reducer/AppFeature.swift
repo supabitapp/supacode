@@ -326,6 +326,7 @@ struct AppFeature {
     case toggleSplitZoom
     case equalizeSplits
     case focusSplit(TerminalSplitMenuDirection)
+    case resizePane(TerminalSplitMenuDirection)
     case selectTerminalTabAtIndex(Int)
     case selectNextTerminalTab
     case selectPreviousTerminalTab
@@ -1156,6 +1157,16 @@ struct AppFeature {
           await terminalClient.send(.focusSplit(worktree, direction: direction))
         }
 
+      case .resizePane(let direction):
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(.resizePane(worktree, direction: direction))
+        }
+
       case .jumpToLatestUnread:
         guard let location = terminalClient.latestUnreadNotification() else {
           jumpLogger.debug("jumpToLatestUnread invoked with no unread notifications.")
@@ -1774,6 +1785,14 @@ struct AppFeature {
           return .send(.focusSplit(.down))
         case .focusSplitUp:
           return .send(.focusSplit(.up))
+        case .resizePaneRight:
+          return .send(.resizePane(.right))
+        case .resizePaneLeft:
+          return .send(.resizePane(.left))
+        case .resizePaneDown:
+          return .send(.resizePane(.down))
+        case .resizePaneUp:
+          return .send(.resizePane(.up))
         case .toggleSplitZoom:
           return .send(.toggleSplitZoom)
         case .equalizeSplits:
@@ -2671,7 +2690,8 @@ struct AppFeature {
       spawnsShell = input?.isEmpty == false
     case .select, .stop, .stopScript, .tab, .tabRename, .tabDestroy, .surfaceDestroy,
       .archive, .unarchive, .delete, .pin, .unpin, .appearance,
-      .tabMove, .paneFocus, .paneFocusDirection, .paneDestroy, .paneZoom, .paneWindow, .paneEqualize:
+      .tabMove, .paneFocus, .paneFocusDirection, .paneDestroy, .paneZoom, .paneWindow, .paneEqualize,
+      .paneResize:
       spawnsShell = false
     }
     if spawnsShell, let worktree = state.repositories.worktree(for: worktreeID), worktree.isMissing {
@@ -3118,6 +3138,11 @@ struct AppFeature {
     case .paneEqualize:
       return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
         .equalizeSplits(worktree)
+      }
+    case .paneResize(let token, let direction, let amount):
+      guard validatePane(worktreeID: worktreeID, token: token, state: &state) else { return .none }
+      return sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .resizePane(worktree, paneToken: token, direction: direction, amount: amount)
       }
     }
   }

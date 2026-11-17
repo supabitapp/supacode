@@ -108,6 +108,10 @@ struct CLIReferenceView: View {
       description: "Close a pane and all its tabs. Defaults to the focused pane."
     ),
     .init(command: "supacode pane zoom [-w <id>] [-p <token>]", description: "Toggle a pane's zoom."),
+    .init(
+      command: "supacode pane resize [-w <id>] [-p <token>] -d l|r|u|d [--amount <points>]",
+      description: "Move a pane's divider toward a direction. Defaults to the focused pane and one shortcut step."
+    ),
     .init(command: "supacode pane equalize [-w <id>]", description: "Equalize every split ratio."),
     .init(command: "supacode pane window [-w <id>] [-p <token>]", description: "Toggle a pane's window mode."),
   ]

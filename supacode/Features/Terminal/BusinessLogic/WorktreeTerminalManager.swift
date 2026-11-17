@@ -521,7 +521,7 @@ final class WorktreeTerminalManager {
       .splitSurface, .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .removeWorktreeLayout,
       .setNotificationsEnabled, .enforceNotificationRetentionLimit, .setSelectedWorktreeID, .beginTabRename,
       .setTerminalHibernationEnabled, .toggleWindowModeForFocusedPane,
-      .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits,
+      .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits, .resizePane,
       .splitPane, .focusPane, .closePane, .toggleZoomPane, .toggleWindowModeForPane, .moveTabToSplit:
       return false
     }
@@ -542,6 +542,8 @@ final class WorktreeTerminalManager {
       sendFocusedContentLayoutAction(worktree.id) { .contentRequestedToggleZoom(content: $0) }
     case .equalizeSplits(let worktree):
       sendLayout(worktree.id, .equalizePanes)
+    case .resizePane(let worktree, let paneToken, let direction, let amount):
+      resizePane(in: worktree, paneToken: paneToken, direction: direction, amount: amount)
     case .splitPane(let worktree, let token, let direction, let input, let id, let focusing):
       splitPane(in: worktree, paneToken: token, direction: direction, input: input, id: id, focusing: focusing)
     case .focusPane(let worktree, let paneToken):
@@ -615,7 +617,7 @@ final class WorktreeTerminalManager {
       .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface, .sendInput,
       .splitSurface, .destroyTab, .destroySurface, .renameTab, .beginTabRename,
-      .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits,
+      .splitFocusedPane, .focusSplit, .toggleSplitZoom, .equalizeSplits, .resizePane,
       .splitPane, .focusPane, .closePane, .toggleZoomPane, .toggleWindowModeForPane, .moveTabToSplit:
       assertionFailure("Unhandled terminal command reached management handler: \(command)")
     }
@@ -1427,6 +1429,27 @@ final class WorktreeTerminalManager {
       return
     }
     sendLayout(worktree.id, .toggleZoom(paneID: paneID))
+  }
+
+  private static let paneResizeStep: UInt16 = 10
+
+  private func resizePane(
+    in worktree: Worktree, paneToken: UUID?, direction: TerminalSplitMenuDirection, amount: UInt16?
+  ) {
+    guard let layout = layoutState(for: worktree.id)?.layout else { return }
+    let pane =
+      if let paneToken { layout.pane(forToken: paneToken) } else {
+        layout.focusedPaneID.flatMap { layout.panes[id: $0] }
+      }
+    guard let contentID = pane?.selectedTab?.content.id else {
+      terminalLogger.debug("resizePane: no pane to resize in worktree \(worktree.id).")
+      return
+    }
+    sendLayout(
+      worktree.id,
+      .contentRequestedResize(
+        content: contentID, direction: direction.spatialDirection, amount: amount ?? Self.paneResizeStep)
+    )
   }
 
   private func toggleWindowModeForPane(in worktree: Worktree, paneToken: UUID) {
