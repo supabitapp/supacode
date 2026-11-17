@@ -28,7 +28,7 @@ nonisolated enum PiExtensionContent {
      * Hook event mapping:
      *   extension load      -> session_start  (agent presence badge)
      *   Pi agent_start      -> busy
-     *   Pi agent_end        -> idle + notification with last_assistant_message
+     *   Pi agent_end        -> idle + notification with the run's last assistant text, if any
      *   Pi session_shutdown -> session_end + idle (defensive activity reset)
      */
 
@@ -136,7 +136,7 @@ nonisolated enum PiExtensionContent {
         if (message.role !== "assistant") continue;
 
         const content = message.content;
-        if (!Array.isArray(content)) return undefined;
+        if (!Array.isArray(content)) continue;
 
         const text = content
           .filter((c) => c.type === "text")
@@ -144,7 +144,7 @@ nonisolated enum PiExtensionContent {
           .join("")
           .trim();
 
-        return text || undefined;
+        if (text.length > 0) return text;
       }
       return undefined;
     }
