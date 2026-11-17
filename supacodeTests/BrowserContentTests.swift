@@ -100,7 +100,7 @@ struct BrowserContentTests {
     return window
   }
 
-  @Test func aBlankTabIsTitledNewTabAndTakesFocusInItsAddressField() throws {
+  @Test func aBlankTabIsTitledNewTabAndAsksForItsAddressFieldInsteadOfThePage() throws {
     let content = Self.makeContent()
     content.startSession(at: .fallback)
     let window = try Self.mount(content)
@@ -108,7 +108,7 @@ struct BrowserContentTests {
     #expect(!content.page.addressFocusRequested)
     content.focus()
     #expect(content.page.addressFocusRequested)
-    #expect(content.holdsKeyboardFocus)
+    #expect(!content.holdsKeyboardFocus)
     #expect(window.firstResponder !== content.renderer)
     content.tearDown()
     window.close()
@@ -216,9 +216,59 @@ struct BrowserContentTests {
   @Test func errorPageEscapesTheMessageAndAddress() {
     let html = BrowserErrorPage.html(
       message: "<script>alert(1)</script>",
-      url: URL(string: "http://localhost:1/?a=%3Cb%3E&c=\"d\"")
+      url: URL(string: "http://localhost:1/?a=1&b=2")
     )
     #expect(!html.contains("<script>alert(1)</script>"))
     #expect(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"))
+    #expect(html.contains("http://localhost:1/?a=1&amp;b=2"))
+    #expect(!html.contains("a=1&b=2"))
+  }
+
+  @Test func anAddressFieldFocusReachesTheHostWithoutLookingItUpAgain() throws {
+    let worktree = Worktree(
+      id: WorktreeID("/tmp/repo/wt-browser-builder"),
+      name: "wt-browser-builder",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-browser-builder"),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
+    )
+    let host = WorktreeContentHost(
+      worktree: worktree, runtime: ContentRuntime(), clock: ContinuousClock(), runSetupScript: false)
+    var layoutActions: [LayoutFeature.Action] = []
+    host.sendLayoutAction = { layoutActions.append($0) }
+    var lookups = 0
+    let builder = BrowserContentBuilder(
+      host: { _ in
+        lookups += 1
+        return host
+      },
+      openBrowserTab: { _, _, _ in }
+    )
+    let contentID = ContentID()
+    let content = try #require(
+      builder.browserContent(
+        ContentRequest(
+          worktreeID: worktree.id,
+          tabID: TabID(),
+          contentID: contentID,
+          content: .browser(BrowserContentState()),
+          origin: .tab
+        ),
+        browserState: BrowserContentState()
+      ) as? BrowserContent
+    )
+
+    content.addressFocusChanged(true)
+    content.addressFocusChanged(false)
+    content.addressFocusChanged(true)
+
+    #expect(lookups == 1)
+    #expect(
+      layoutActions == [
+        .contentRequestedFocus(content: contentID),
+        .contentRequestedFocus(content: contentID),
+      ]
+    )
+    #expect(content.holdsKeyboardFocus)
   }
 }

@@ -33,18 +33,17 @@ struct BrowserContentCallbacks {
   var stateChanged: () -> Void = {}
   var openInNewTab: (URL) -> Void = { _ in }
   var closeRequested: () -> Void = {}
-  var shouldClaimFocus: () -> Bool = { false }
+  var mayClaimFocus: (NSWindow) -> Bool = { _ in false }
   var attached: () -> Void = {}
 }
 
-final class BrowserContent: TabContent {
+final class BrowserContent: TabContent, TabContentToolbar {
   let id: ContentID
   let kind: ContentKind = .browser
   let page = BrowserPageState()
 
   private let callbacks: BrowserContentCallbacks
   private let makeWebView: @MainActor () -> BrowserWebView
-  private let browserToolbar: BrowserToolbar
   private var webView: BrowserWebView?
   private var navigation: BrowserNavigationHandler?
   private var observations: [NSKeyValueObservation] = []
@@ -60,23 +59,15 @@ final class BrowserContent: TabContent {
     self.id = id
     self.callbacks = callbacks
     self.makeWebView = makeWebView
-    self.browserToolbar = BrowserToolbar(contentID: id, page: page)
     page.url = initialState.url
-    browserToolbar.actions = BrowserToolbarActions(
-      goBack: { [weak self] in self?.perform(.goBack) },
-      goForward: { [weak self] in self?.perform(.goForward) },
-      reloadOrStop: { [weak self] in self?.reloadOrStop() },
-      navigate: { [weak self] in self?.navigate(to: $0) },
-      addressFocusChanged: { [weak self] in self?.addressFocusChanged($0) },
-      focusPage: { [weak self] in self?.focus() }
-    )
   }
 
   nonisolated deinit {}
 
   var renderer: NSView? { webView }
   var chrome: (any TabChrome)? { page }
-  var toolbar: (any TabContentToolbar)? { browserToolbar }
+  var toolbar: (any TabContentToolbar)? { self }
+  var view: AnyView? { AnyView(BrowserToolbarView(page: page, content: self).id(id)) }
   var isHibernatable: Bool { webView != nil }
 
   func startSession(at geometry: ContentGeometry) {
@@ -119,7 +110,7 @@ final class BrowserContent: TabContent {
   }
 
   var holdsKeyboardFocus: Bool {
-    if page.isAddressFocused || page.addressFocusRequested { return true }
+    if page.isAddressFocused { return true }
     guard let webView, let responder = webView.window?.firstResponder as? NSView else { return false }
     return responder === webView || responder.isDescendant(of: webView)
   }
@@ -175,7 +166,7 @@ final class BrowserContent: TabContent {
     }
   }
 
-  private func reloadOrStop() {
+  func reloadOrStop() {
     guard let webView else { return }
     if webView.isLoading {
       webView.stopLoading()
@@ -194,7 +185,7 @@ final class BrowserContent: TabContent {
     }
   }
 
-  private func addressFocusChanged(_ focused: Bool) {
+  func addressFocusChanged(_ focused: Bool) {
     page.isAddressFocused = focused
     if focused {
       callbacks.focused()
@@ -203,20 +194,13 @@ final class BrowserContent: TabContent {
 
   // AppKit does not promote a re-attached view to first responder, and an
   // immediate claim is unreliable while SwiftUI is still mounting, so the
-  // claim runs on the next tick and only takes focus from no owner or
-  // another pane's content.
+  // claim runs on the next tick.
   private func claimFocusAfterAttach() {
     pendingFocusClaim?.cancel()
     pendingFocusClaim = Task { [weak self] in
       guard let self, !Task.isCancelled else { return }
       self.callbacks.attached()
-      guard let webView = self.webView, let window = webView.window,
-        self.callbacks.shouldClaimFocus(), !self.holdsKeyboardFocus
-      else { return }
-      let responder = window.firstResponder
-      guard
-        responder == nil || responder === window || responder is GhosttySurfaceView
-          || responder is BrowserWebView
+      guard let window = self.webView?.window, !self.holdsKeyboardFocus, self.callbacks.mayClaimFocus(window)
       else { return }
       self.focus()
     }

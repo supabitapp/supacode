@@ -44,6 +44,20 @@ nonisolated enum ContentKind: String, Codable, Sendable {
     case .browser: "globe"
     }
   }
+
+  var dimsWhenUnfocused: Bool {
+    switch self {
+    case .terminal: true
+    case .browser: false
+    }
+  }
+
+  var unavailableMessage: String {
+    switch self {
+    case .terminal: "This terminal is unavailable."
+    case .browser: "This page is unavailable."
+    }
+  }
 }
 
 /// How a command-running terminal launches (scripts, prompts). Blocking

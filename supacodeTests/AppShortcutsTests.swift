@@ -858,6 +858,20 @@ struct PaneWindowShortcutTests {
     )
   }
 
+  @Test func newTerminalTabChordAsksForATerminalEvenWhenABrowserTabIsSelected() {
+    let browserTab = TabItem(
+      id: TabID(),
+      title: "Docs",
+      content: ContentSnapshot(id: ContentID(), state: .browser(BrowserContentState()))
+    )
+    let pane = Self.pane(tabs: [browserTab])
+    let event = Self.keyEvent(keyCode: kVK_ANSI_T, modifiers: .command)
+    #expect(
+      PaneWindowShortcut.intent(for: event, pane: pane, overrides: [:], isWorktreeSelected: true)
+        == .newTerminalTab
+    )
+  }
+
   @Test func newBrowserTabChordOpensNextToTheSelectedTabsContent() {
     let tab = Self.tab()
     let pane = Self.pane(tabs: [tab])

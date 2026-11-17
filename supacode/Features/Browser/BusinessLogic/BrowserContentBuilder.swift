@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 struct BrowserContentBuilder {
   var host: (Worktree.ID) -> WorktreeContentHost?
@@ -7,31 +7,30 @@ struct BrowserContentBuilder {
   func browserContent(_ request: ContentRequest, browserState: BrowserContentState) -> any TabContent {
     let contentID = request.contentID
     let worktreeID = request.worktreeID
-    let host = host
     let openBrowserTab = openBrowserTab
+    let host = host(worktreeID)
     return BrowserContent(
       id: contentID,
       initialState: browserState,
       callbacks: BrowserContentCallbacks(
-        focused: {
-          guard let host = host(worktreeID) else { return }
-          host.sendLayoutAction(.contentRequestedFocus(content: contentID))
-          host.recordActiveSurface(contentID.rawValue)
+        focused: { [weak host] in
+          host?.sendLayoutAction(.contentRequestedFocus(content: contentID))
+          host?.recordActiveSurface(contentID.rawValue)
         },
-        stateChanged: {
-          host(worktreeID)?.onReportedTitleChanged?()
+        stateChanged: { [weak host] in
+          host?.onReportedTitleChanged?()
         },
         openInNewTab: { url in
           openBrowserTab(worktreeID, url, contentID)
         },
-        closeRequested: {
-          host(worktreeID)?.sendLayoutAction(.contentRequestedClose(content: contentID, scope: .tab))
+        closeRequested: { [weak host] in
+          host?.sendLayoutAction(.contentRequestedClose(content: contentID, scope: .tab))
         },
-        shouldClaimFocus: {
-          host(worktreeID)?.shouldClaimFocus(contentID.rawValue) ?? false
+        mayClaimFocus: { [weak host] window in
+          host?.mayClaimFocus(contentID.rawValue, in: window) ?? false
         },
-        attached: {
-          host(worktreeID)?.reassertSurfaceActivity()
+        attached: { [weak host] in
+          host?.reassertSurfaceActivity()
         }
       )
     )

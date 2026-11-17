@@ -1097,6 +1097,15 @@ final class WorktreeTerminalManager {
     }
   }
 
+  /// A terminal tab in a pane, whatever its selected tab hosts.
+  func createTerminalTab(inPane paneID: PaneID, of worktreeID: Worktree.ID) {
+    guard let worktree = appStore?.withState({ $0.repositories.worktree(for: worktreeID) }) else {
+      terminalLogger.warning("createTerminalTab: no worktree \(worktreeID); dropping the request.")
+      return
+    }
+    handleCommand(.createTab(worktree, runSetupScriptIfNew: false, anchor: paneID.rawValue))
+  }
+
   private func handleBrowserCommand(_ command: TerminalClient.Command) -> Bool {
     guard case .openBrowserTab(let worktree, let url, let placement, let focusing) = command else {
       return false
@@ -1603,7 +1612,7 @@ final class WorktreeTerminalManager {
     }
     let prunedSurfaceIDs = Set(removed.flatMap { _, host in host.allSurfaceIDs })
     let prunedSessionIDs = removed.flatMap { _, host in
-      host.allSurfaceIDs.map { ZmxSessionID.make(surfaceID: $0) }
+      host.sessionSurfaceIDs.map { ZmxSessionID.make(surfaceID: $0) }
     }
     let prunedRemoteSessions = Self.remoteSessions(in: removed.map(\.1))
     for (id, host) in removed {
@@ -1653,7 +1662,7 @@ final class WorktreeTerminalManager {
   ) -> [(host: RemoteHost, sessionID: String)] {
     hosts.flatMap { host -> [(host: RemoteHost, sessionID: String)] in
       guard let remoteHost = host.worktree.host else { return [] }
-      return host.allSurfaceIDs.map { (remoteHost, ZmxSessionID.make(surfaceID: $0)) }
+      return host.sessionSurfaceIDs.map { (remoteHost, ZmxSessionID.make(surfaceID: $0)) }
     }
   }
 
@@ -1875,7 +1884,7 @@ final class WorktreeTerminalManager {
   func terminateAllSessions(killBudget: Duration = WorktreeTerminalManager.quitKillBudget) async {
     // Captured before `tearDown`, which clears the hosts' surface tracking.
     let trackedByWorktree = hosts.flatMap { worktreeID, host in
-      host.allSurfaceIDs.map { (worktreeID: worktreeID, surfaceID: $0) }
+      host.sessionSurfaceIDs.map { (worktreeID: worktreeID, surfaceID: $0) }
     }
     let trackedSessionIDs = Set(trackedByWorktree.map { ZmxSessionID.make(surfaceID: $0.surfaceID) })
     // "Quit and Terminate" promises nothing keeps running, so the host-side

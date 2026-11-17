@@ -1,59 +1,31 @@
 import SupacodeSettingsShared
 import SwiftUI
 
-struct BrowserToolbarActions {
-  var goBack: () -> Void = {}
-  var goForward: () -> Void = {}
-  var reloadOrStop: () -> Void = {}
-  var navigate: (String) -> Void = { _ in }
-  var addressFocusChanged: (Bool) -> Void = { _ in }
-  var focusPage: () -> Void = {}
-}
-
-final class BrowserToolbar: TabContentToolbar {
-  let contentID: ContentID
+struct BrowserToolbarView: View {
   let page: BrowserPageState
-  var actions = BrowserToolbarActions()
-
-  init(contentID: ContentID, page: BrowserPageState) {
-    self.contentID = contentID
-    self.page = page
-  }
-
-  nonisolated deinit {}
-
-  var view: AnyView? {
-    AnyView(BrowserToolbarView(page: page, actions: actions).id(contentID))
-  }
-}
-
-private struct BrowserToolbarView: View {
-  let page: BrowserPageState
-  let actions: BrowserToolbarActions
+  weak var content: BrowserContent?
 
   @State private var addressText = ""
   @FocusState private var isAddressFocused: Bool
 
   var body: some View {
     HStack(spacing: 6) {
-      Button("Back", systemImage: "chevron.left", action: actions.goBack)
+      Button("Back", systemImage: "chevron.left") { content?.perform(.goBack) }
         .disabled(!page.canGoBack)
         .help("Back (⌘[)")
-      Button("Forward", systemImage: "chevron.right", action: actions.goForward)
+      Button("Forward", systemImage: "chevron.right") { content?.perform(.goForward) }
         .disabled(!page.canGoForward)
         .help("Forward (⌘])")
-      Button(
-        page.isLoading ? "Stop" : "Reload",
-        systemImage: page.isLoading ? "xmark" : "arrow.clockwise",
-        action: actions.reloadOrStop
-      )
+      Button(page.isLoading ? "Stop" : "Reload", systemImage: page.isLoading ? "xmark" : "arrow.clockwise") {
+        content?.reloadOrStop()
+      }
       .help(page.isLoading ? "Stop Loading" : "Reload Page (⌘R)")
       TextField("Search or enter address", text: $addressText)
         .textFieldStyle(.roundedBorder)
         .appFont(.callout, monospaced: true)
         .focused($isAddressFocused)
-        .onSubmit { actions.navigate(addressText) }
-        .onExitCommand(perform: actions.focusPage)
+        .onSubmit { content?.navigate(to: addressText) }
+        .onExitCommand { content?.focus() }
         .help("Address (⌘L)")
         .accessibilityLabel("Address")
     }
@@ -82,13 +54,13 @@ private struct BrowserToolbarView: View {
       page.addressFocusRequested = false
     }
     .onChange(of: isAddressFocused) {
-      actions.addressFocusChanged(isAddressFocused)
+      content?.addressFocusChanged(isAddressFocused)
       if !isAddressFocused {
         addressText = BrowserAddress.display(page.url)
       }
     }
     .onDisappear {
-      actions.addressFocusChanged(false)
+      content?.addressFocusChanged(false)
     }
   }
 }

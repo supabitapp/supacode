@@ -14,26 +14,6 @@ nonisolated enum BrowserAddress {
     ["http", "https"].contains(url.scheme?.lowercased()) && url.host() != nil
   }
 
-  enum NavigationDecision: Equatable, Sendable {
-    case load
-    case openInNewTab
-    case handOffToSystem
-    case cancel
-  }
-
-  static func navigationDecision(
-    for url: URL?,
-    isLinkActivation: Bool,
-    holdsCommand: Bool
-  ) -> NavigationDecision {
-    guard let url else { return .cancel }
-    if isLoadable(url) {
-      return isLinkActivation && holdsCommand ? .openInNewTab : .load
-    }
-    guard isLinkActivation, !url.isFileURL else { return .cancel }
-    return .handOffToSystem
-  }
-
   static func resolve(_ input: String) -> URL? {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
@@ -52,19 +32,16 @@ nonisolated enum BrowserAddress {
   }
 
   private static func hostURL(_ text: String) -> URL? {
-    guard !text.contains(where: \.isWhitespace) else { return nil }
-    let authority = text.prefix { $0 != "/" && $0 != "?" && $0 != "#" }
-    let isBracketedIPv6 = authority.hasPrefix("[")
-    let host = isBracketedIPv6 ? String(authority) : String(authority.prefix { $0 != ":" })
-    guard !host.isEmpty else { return nil }
-    let isLocal = isBracketedIPv6 || host == "localhost" || host.hasSuffix(".localhost") || isIPv4(host)
-    let port = authority.dropFirst(host.count).dropFirst()
-    let hasPort = !isBracketedIPv6 && !port.isEmpty && port.allSatisfy(\.isNumber)
+    guard !text.contains(where: \.isWhitespace),
+      var components = URLComponents(string: "http://\(text)"),
+      components.user == nil,
+      let host = components.host?.lowercased(), !host.isEmpty
+    else { return nil }
+    let isLocal = host == "localhost" || host.hasSuffix(".localhost") || isIPv4(host) || host.contains(":")
     let isDomain = looksLikeDomain(host)
-    guard isLocal || isDomain || (hasPort && isHostLabel(host)) else { return nil }
-    let scheme = isDomain && !isLocal ? "https" : "http"
-    guard let url = URL(string: "\(scheme)://\(text)"), url.host() != nil else { return nil }
-    return url
+    guard isLocal || isDomain || components.port != nil else { return nil }
+    components.scheme = isDomain && !isLocal ? "https" : "http"
+    return components.url
   }
 
   private static func isIPv4(_ host: String) -> Bool {
@@ -72,14 +49,9 @@ nonisolated enum BrowserAddress {
     return parts.count == 4 && parts.allSatisfy { UInt8($0) != nil }
   }
 
-  private static func isHostLabel(_ host: String) -> Bool {
-    host.allSatisfy { $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" }
-  }
-
   private static func looksLikeDomain(_ host: String) -> Bool {
     let labels = host.split(separator: ".", omittingEmptySubsequences: false)
-    guard labels.count >= 2, labels.allSatisfy({ !$0.isEmpty }), isHostLabel(host) else { return false }
-    guard let last = labels.last else { return false }
+    guard labels.count >= 2, labels.allSatisfy({ !$0.isEmpty }), let last = labels.last else { return false }
     return last.count >= 2 && last.allSatisfy(\.isLetter)
   }
 

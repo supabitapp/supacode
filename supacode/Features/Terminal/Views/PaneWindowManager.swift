@@ -38,7 +38,7 @@ final class PaneWindow: NSWindow, WindowTintColorProviding {
 enum PaneWindowShortcut {
   enum Intent: Equatable {
     case exitWindowMode
-    case newTab(ContentID)
+    case newTerminalTab
     case newBrowserTab(ContentID)
     case closeTab(ContentID)
     case beginRename(TabID)
@@ -64,7 +64,7 @@ enum PaneWindowShortcut {
       return event.isARepeat ? .ignore : .exitWindowMode
     }
     let selectedContentChords: [(shortcut: AppShortcut, intent: (ContentID) -> Intent)] = [
-      (AppShortcuts.newTerminalTab, Intent.newTab),
+      (AppShortcuts.newTerminalTab, { _ in .newTerminalTab }),
       (AppShortcuts.newBrowserTab, Intent.newBrowserTab),
       (AppShortcuts.closeTab, Intent.closeTab),
     ]
@@ -314,8 +314,8 @@ final class PaneWindowManager {
     switch intent {
     case .exitWindowMode:
       terminalManager.sendLayout(worktreeID, .exitWindowMode(paneID: paneID))
-    case .newTab(let contentID):
-      terminalManager.sendLayout(worktreeID, .contentRequestedNewTab(content: contentID))
+    case .newTerminalTab:
+      terminalManager.createTerminalTab(inPane: paneID, of: worktreeID)
     case .newBrowserTab(let contentID):
       terminalManager.openBrowserTab(in: worktreeID, url: nil, placement: .tab(near: contentID))
     case .closeTab(let contentID):
@@ -605,8 +605,16 @@ private struct WindowedPaneRootView: View {
           enabled: pane.selectedTab != nil,
           token: pane.selectedTab?.content.id
         ) {
+          guard windowIsKey() else { return }
+          manager.createTerminalTab(inPane: paneID, of: worktreeID)
+        }
+        .focusedSceneAction(
+          \.newBrowserTabAction,
+          enabled: pane.selectedTab != nil,
+          token: pane.selectedTab?.content.id
+        ) {
           guard windowIsKey(), let contentID = pane.selectedTab?.content.id else { return }
-          store.send(.contentRequestedNewTab(content: contentID))
+          manager.openBrowserTab(in: worktreeID, url: nil, placement: .tab(near: contentID))
         }
         .focusedSceneAction(
           \.renameTabAction,

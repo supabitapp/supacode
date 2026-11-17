@@ -185,6 +185,11 @@ final class TerminalContent: TabContent {
   // Only a zmx-backed live surface can drop its renderer and reattach.
   var isHibernatable: Bool { surfaceView != nil && usesZmx }
 
+  var holdsKeyboardFocus: Bool {
+    guard let surfaceView else { return false }
+    return surfaceView.window?.firstResponder === surfaceView
+  }
+
   func startSession(at geometry: ContentGeometry) {
     guard surfaceView == nil else { return }
     let spawned = makeSurface(geometry, state, hasSpawned ? .rewake : .first)

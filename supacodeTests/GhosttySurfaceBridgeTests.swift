@@ -109,7 +109,7 @@ struct GhosttySurfaceBridgeTests {
   }
 
   @Test
-  func openUrlHandsTheLinkToTheLinkHandlerInsteadOfTheSystem() {
+  func openUrlHandsTheLinkToTheLinkHandler() {
     let bridge = GhosttySurfaceBridge()
     let target = ghostty_target_s(tag: GHOSTTY_TARGET_SURFACE, target: .init())
     var received: [URL] = []

@@ -168,6 +168,13 @@ final class WorktreeContentHost {
     layout()?.allContentIDs.map(\.rawValue) ?? []
   }
 
+  /// Content ids whose session outlives the renderer and needs an explicit kill.
+  var sessionSurfaceIDs: [UUID] {
+    (layout()?.panes ?? []).flatMap(\.tabs)
+      .filter { $0.content.kind.hasPersistentSession }
+      .map(\.content.id.rawValue)
+  }
+
   var hasAnySurface: Bool {
     !(layout()?.panes.isEmpty ?? true)
   }
@@ -888,6 +895,14 @@ final class WorktreeContentHost {
   /// Whether a content may claim AppKit first responder.
   func shouldClaimFocus(_ surfaceID: UUID) -> Bool {
     focusedContentID == surfaceID
+  }
+
+  /// Whether a content attaching to `window` may take keyboard focus: it is
+  /// the focused content, and focus has no owner or sits in a pane's content.
+  func mayClaimFocus(_ contentID: UUID, in window: NSWindow) -> Bool {
+    guard shouldClaimFocus(contentID), let layout = layout() else { return false }
+    let responder = window.firstResponder
+    return responder == nil || responder === window || contentHoldsKeyboardFocus(in: layout, window: window)
   }
 
   /// Cross-tab focus by content id (deeplinks, unread jumps): wake and select

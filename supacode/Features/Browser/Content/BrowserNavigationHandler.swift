@@ -3,10 +3,18 @@ import SupacodeSettingsShared
 import WebKit
 
 final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelegate {
+  nonisolated enum NavigationDecision: Equatable, Sendable {
+    case load
+    case openInNewTab
+    case askBeforeLeavingForAnotherApp
+    case cancel
+  }
+
   private static let logger = SupaLogger("Browser")
 
   var failedURL: URL?
   private var isLoadingErrorPage = false
+  private var isAskingToLeave = false
   private let openInNewTab: (URL) -> Void
   private let closeRequested: () -> Void
 
@@ -22,7 +30,7 @@ final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelega
     decidePolicyFor navigationAction: WKNavigationAction,
     decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
   ) {
-    decisionHandler(policy(for: navigationAction))
+    decisionHandler(policy(for: navigationAction, in: webView))
   }
 
   func webView(
@@ -33,9 +41,22 @@ final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelega
     decisionHandler(policy(for: navigationResponse))
   }
 
-  private func policy(for navigationAction: WKNavigationAction) -> WKNavigationActionPolicy {
+  nonisolated static func navigationDecision(
+    for url: URL?,
+    isLinkActivation: Bool,
+    holdsCommand: Bool
+  ) -> NavigationDecision {
+    guard let url else { return .cancel }
+    if BrowserAddress.isLoadable(url) {
+      return isLinkActivation && holdsCommand ? .openInNewTab : .load
+    }
+    guard isLinkActivation, !url.isFileURL else { return .cancel }
+    return .askBeforeLeavingForAnotherApp
+  }
+
+  private func policy(for navigationAction: WKNavigationAction, in webView: WKWebView) -> WKNavigationActionPolicy {
     let url = navigationAction.request.url
-    let decision = BrowserAddress.navigationDecision(
+    let decision = Self.navigationDecision(
       for: url,
       isLinkActivation: navigationAction.navigationType == .linkActivated,
       holdsCommand: navigationAction.modifierFlags.contains(.command)
@@ -46,11 +67,30 @@ final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelega
     case .openInNewTab:
       url.map(openInNewTab)
       return .cancel
-    case .handOffToSystem:
-      url.map { _ = NSWorkspace.shared.open($0) }
+    case .askBeforeLeavingForAnotherApp:
+      url.map { askBeforeLeaving(for: $0, from: webView) }
       return .cancel
     case .cancel:
       return .cancel
+    }
+  }
+
+  // WebKit reports a link clicked by page script as a link activation too, so
+  // a click alone never proves intent; leaving for another app always asks.
+  private func askBeforeLeaving(for url: URL, from webView: WKWebView) {
+    guard !isAskingToLeave, let window = webView.window,
+      let application = NSWorkspace.shared.urlForApplication(toOpen: url)
+    else { return }
+    isAskingToLeave = true
+    let alert = NSAlert()
+    alert.messageText = "Open this link in \(application.deletingPathExtension().lastPathComponent)?"
+    alert.informativeText = String(url.absoluteString.prefix(300))
+    alert.addButton(withTitle: "Open").keyEquivalent = ""
+    alert.addButton(withTitle: "Cancel")
+    alert.beginSheetModal(for: window) { [weak self] response in
+      self?.isAskingToLeave = false
+      guard response == .alertFirstButtonReturn else { return }
+      NSWorkspace.shared.open(url)
     }
   }
 

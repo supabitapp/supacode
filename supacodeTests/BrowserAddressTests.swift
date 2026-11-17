@@ -18,6 +18,9 @@ struct BrowserAddressTests {
     ("192.168.1.20", "http://192.168.1.20"),
     ("[::1]:3000", "http://[::1]:3000"),
     ("devbox:9000", "http://devbox:9000"),
+    ("LOCALHOST:3000", "http://LOCALHOST:3000"),
+    ("app.LOCALHOST", "http://app.LOCALHOST"),
+    ("[::1]", "http://[::1]"),
     ("  example.com  ", "https://example.com"),
     ("about:blank", "about:blank"),
   ])
@@ -25,7 +28,7 @@ struct BrowserAddressTests {
     #expect(BrowserAddress.resolve(input)?.absoluteString == expected)
   }
 
-  @Test(arguments: ["swift concurrency", "hello", "what is 1.5", "readme.m d"])
+  @Test(arguments: ["swift concurrency", "hello", "what is 1.5", "readme.m d", "someone@example.com", "host:port"])
   func searchesForTextThatIsNotAnAddress(input: String) throws {
     let url = try #require(BrowserAddress.resolve(input))
     let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
@@ -59,33 +62,39 @@ struct BrowserAddressTests {
 
   @Test func aPlainNavigationToAWebPageLoadsInPlace() throws {
     let url = try #require(URL(string: "https://example.com"))
-    #expect(BrowserAddress.navigationDecision(for: url, isLinkActivation: false, holdsCommand: false) == .load)
-    #expect(BrowserAddress.navigationDecision(for: url, isLinkActivation: true, holdsCommand: false) == .load)
-    #expect(BrowserAddress.navigationDecision(for: url, isLinkActivation: false, holdsCommand: true) == .load)
+    #expect(
+      BrowserNavigationHandler.navigationDecision(for: url, isLinkActivation: false, holdsCommand: false) == .load)
+    #expect(BrowserNavigationHandler.navigationDecision(for: url, isLinkActivation: true, holdsCommand: false) == .load)
+    #expect(BrowserNavigationHandler.navigationDecision(for: url, isLinkActivation: false, holdsCommand: true) == .load)
   }
 
   @Test func aCommandClickedLinkOpensInANewTab() throws {
     let url = try #require(URL(string: "https://example.com"))
     #expect(
-      BrowserAddress.navigationDecision(for: url, isLinkActivation: true, holdsCommand: true) == .openInNewTab)
+      BrowserNavigationHandler.navigationDecision(for: url, isLinkActivation: true, holdsCommand: true) == .openInNewTab
+    )
   }
 
-  @Test func onlyAClickedLinkMayLeaveForAnotherApp() throws {
+  @Test func onlyAnActivatedLinkMayAskToLeaveForAnotherApp() throws {
     let mail = try #require(URL(string: "mailto:someone@example.com"))
     #expect(
-      BrowserAddress.navigationDecision(for: mail, isLinkActivation: true, holdsCommand: false)
-        == .handOffToSystem)
-    #expect(BrowserAddress.navigationDecision(for: mail, isLinkActivation: false, holdsCommand: false) == .cancel)
+      BrowserNavigationHandler.navigationDecision(for: mail, isLinkActivation: true, holdsCommand: false)
+        == .askBeforeLeavingForAnotherApp)
+    #expect(
+      BrowserNavigationHandler.navigationDecision(for: mail, isLinkActivation: false, holdsCommand: false) == .cancel)
   }
 
   @Test func aPageCanNeverOpenALocalFile() {
     let file = URL(fileURLWithPath: "/Applications/Calculator.app")
-    #expect(BrowserAddress.navigationDecision(for: file, isLinkActivation: true, holdsCommand: false) == .cancel)
-    #expect(BrowserAddress.navigationDecision(for: file, isLinkActivation: false, holdsCommand: false) == .cancel)
+    #expect(
+      BrowserNavigationHandler.navigationDecision(for: file, isLinkActivation: true, holdsCommand: false) == .cancel)
+    #expect(
+      BrowserNavigationHandler.navigationDecision(for: file, isLinkActivation: false, holdsCommand: false) == .cancel)
   }
 
   @Test func aNavigationWithoutAURLIsCancelled() {
-    #expect(BrowserAddress.navigationDecision(for: nil, isLinkActivation: true, holdsCommand: false) == .cancel)
+    #expect(
+      BrowserNavigationHandler.navigationDecision(for: nil, isLinkActivation: true, holdsCommand: false) == .cancel)
   }
 
   @Test(arguments: [

@@ -3,7 +3,6 @@ import IdentifiedCollections
 
 nonisolated enum BrowserTabPlacement: Equatable, Sendable {
   case tab(near: ContentID)
-  case focusedPane
   case beside
 
   nonisolated enum Resolved: Equatable, Sendable {
@@ -20,8 +19,6 @@ nonisolated enum BrowserTabPlacement: Equatable, Sendable {
     switch self {
     case .tab(let contentID):
       return .tab(layout.tab(containingContent: contentID)?.pane.id ?? focused)
-    case .focusedPane:
-      return .tab(focused)
     case .beside:
       return Self.resolveBeside(
         focused: focused,

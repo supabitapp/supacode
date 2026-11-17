@@ -361,7 +361,9 @@ struct PaneStripView: View {
   /// zoomed) is always the working one. A windowed pane never dims, and its
   /// placeholder leaf does not count as company.
   private var isDimmed: Bool {
-    guard context == .embedded, !isFocused, pane.selectedTab?.content.kind == .terminal else { return false }
+    guard context == .embedded, !isFocused, pane.selectedTab?.content.kind.dimsWhenUnfocused == true else {
+      return false
+    }
     return Set(store.layout.tree.visibleLeaves()).subtracting(windowedPaneIDs).count > 1
   }
 
@@ -397,10 +399,7 @@ struct PaneStripView: View {
                 }
               }
           } else {
-            EmptyTerminalPaneView(
-              message: pane.selectedTab?.content.kind == .browser
-                ? "This page is unavailable." : "This terminal is unavailable."
-            )
+            EmptyTerminalPaneView(message: (pane.selectedTab?.content.kind ?? .terminal).unavailableMessage)
           }
         } else {
           Color.clear

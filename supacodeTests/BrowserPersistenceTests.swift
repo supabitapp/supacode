@@ -73,14 +73,13 @@ struct BrowserPersistenceTests {
     #expect(layout.strippingEphemeralContent() == layout)
   }
 
-  @Test func onlyTerminalsOwnASessionThatOutlivesTheRenderer() {
-    #expect(ContentKind.terminal.hasPersistentSession)
-    #expect(!ContentKind.browser.hasPersistentSession)
-  }
-
-  @Test func browserTabsCarryAGlobeInEveryState() {
+  @Test func aBrowserTabPresentsAsAPageAndATerminalTabAsATerminal() {
     #expect(ContentKind.browser.tabIcon == "globe")
+    #expect(!ContentKind.browser.dimsWhenUnfocused)
+    #expect(ContentKind.browser.unavailableMessage == "This page is unavailable.")
     #expect(ContentKind.terminal.tabIcon == nil)
+    #expect(ContentKind.terminal.dimsWhenUnfocused)
+    #expect(ContentKind.terminal.unavailableMessage == "This terminal is unavailable.")
   }
 
   @Test func aFreshSeedOfABrowserIsABlankBrowser() {

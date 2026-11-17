@@ -89,6 +89,42 @@ struct WorktreeTerminalManagerBrowserTests {
     #expect(harness.layout?.panes.first?.selectedTab?.content.state == .browser(BrowserContentState(url: second)))
   }
 
+  @Test func sessionTerminationTracksTerminalContentOnly() {
+    let paneID = PaneID()
+    let terminal = TabItem(
+      id: TabID(),
+      title: "Terminal",
+      content: ContentSnapshot(id: ContentID(), state: .terminal(TerminalContentState(workingDirectory: nil)))
+    )
+    let browser = TabItem(
+      id: TabID(),
+      title: "Docs",
+      content: ContentSnapshot(
+        id: ContentID(), state: .browser(BrowserContentState(url: URL(string: "https://example.com"))))
+    )
+    let layout = PaneLayout(
+      tree: SplitTree(view: paneID),
+      panes: [Pane(id: paneID, tabs: [terminal, browser], selectedTabID: browser.id)],
+      focusedPaneID: paneID
+    )
+    let host = WorktreeContentHost(
+      worktree: Worktree(
+        id: WorktreeID("/tmp/repo/wt-sessions"),
+        name: "wt-sessions",
+        detail: "detail",
+        workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-sessions"),
+        repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
+      ),
+      runtime: ContentRuntime(),
+      clock: ContinuousClock(),
+      runSetupScript: false
+    )
+    host.layout = { layout }
+
+    #expect(host.sessionSurfaceIDs == [terminal.content.id.rawValue])
+    #expect(Set(host.allSurfaceIDs) == [terminal.content.id.rawValue, browser.content.id.rawValue])
+  }
+
   @Test(.dependencies) func aTerminalWebLinkOpensInABrowserTabWhenLinkRoutingIsOn() throws {
     let harness = makeHarness(opensLinksInBrowserTab: true)
     let host = harness.manager.host(for: harness.worktree)

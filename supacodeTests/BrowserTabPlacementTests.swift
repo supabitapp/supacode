@@ -125,16 +125,6 @@ struct BrowserTabPlacementTests {
     #expect(resolved == .tab(right))
   }
 
-  @Test func focusedPanePlacementIgnoresNeighbors() throws {
-    let left = PaneID()
-    let right = PaneID()
-    let layout = try Self.sideBySide(
-      left: Self.pane(left, .terminal), right: Self.pane(right, .browser), focused: left)
-    let resolved = BrowserTabPlacement.focusedPane.resolve(
-      in: layout, windowedPaneIDs: [], hasRoomForSplit: { _ in true })
-    #expect(resolved == .tab(left))
-  }
-
   @Test func anEmptyLayoutHasNoPlacement() {
     let resolved = BrowserTabPlacement.beside.resolve(
       in: PaneLayout(), windowedPaneIDs: [], hasRoomForSplit: { _ in true })
