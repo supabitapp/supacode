@@ -900,6 +900,7 @@ private struct PaneTabStripAccessories: View {
         canZoom: canZoom,
         isWindowed: isWindowed,
         newTab: requestNewTab,
+        newBrowserTab: requestNewBrowserTab,
         split: requestSplit,
         equalizeSplits: equalizeSplits,
         toggleZoom: toggleZoom,
@@ -925,6 +926,16 @@ private struct PaneTabStripAccessories: View {
   private func requestNewTab() {
     guard let contentID = pane.selectedTab?.content.id else { return }
     store.send(.contentRequestedNewTab(content: contentID))
+  }
+
+  private func requestNewBrowserTab() {
+    let anchor = pane.selectedTab?.content.id
+    store.send(
+      .newTab(
+        inPane: pane.id,
+        spec: .browser(url: nil, geometry: runtime.spawnGeometry(near: anchor, fallback: anchor))
+      )
+    )
   }
 
   private func requestSplit(_ direction: TerminalSplitMenuDirection) {
@@ -953,6 +964,7 @@ private struct PaneTabStripNewTabControl: View {
   let canZoom: Bool
   let isWindowed: Bool
   let newTab: () -> Void
+  let newBrowserTab: () -> Void
   let split: (TerminalSplitMenuDirection) -> Void
   let equalizeSplits: () -> Void
   let toggleZoom: () -> Void
@@ -969,6 +981,9 @@ private struct PaneTabStripNewTabControl: View {
         action: newTab
       )
       Menu {
+        Button("New Browser Tab", systemImage: "globe", action: newBrowserTab)
+          .appKeyboardShortcut(AppShortcuts.newBrowserTab.effective(from: settingsFile.global.shortcutOverrides))
+        Divider()
         ForEach(TerminalSplitMenuDirection.allCases, id: \.self) { direction in
           Button(direction.title, systemImage: direction.systemImage) {
             split(direction)

@@ -321,6 +321,7 @@ struct AppFeature {
     case requestTerminateAllTerminalSessions
     case newTerminal
     case newTerminalInWorktree(Worktree.ID)
+    case newBrowserTab
     case renameSelectedTerminalTab
     case toggleWindowModeForFocusedPane
     case toggleSplitZoom
@@ -1063,6 +1064,17 @@ struct AppFeature {
           await terminalClient.send(.createTab(worktree, runSetupScriptIfNew: shouldRunSetupScript))
         }
 
+      case .newBrowserTab:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        analyticsClient.capture("browser_tab_created", nil)
+        return .run { _ in
+          await terminalClient.send(.openBrowserTab(worktree))
+        }
+
       case .renameSelectedTerminalTab:
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
           !worktree.isMissing,
@@ -1767,6 +1779,8 @@ struct AppFeature {
         switch command {
         case .newTerminalTab:
           return .send(.newTerminal)
+        case .newBrowserTab:
+          return .send(.newBrowserTab)
         case .closeTab:
           return .send(.closeTab)
         case .splitRight:

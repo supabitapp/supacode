@@ -112,6 +112,15 @@ public struct TerminalSettingsView: View {
           )
         }
       }
+      Section {
+        Toggle(isOn: $store.opensLinksInBrowserTab) {
+          HStack(spacing: 6) {
+            Text("Open links in a browser tab")
+            BetaBadge()
+          }
+          Text("Web links clicked in a terminal open beside it instead of in your default browser.")
+        }
+      }
       GhosttyConfigurationSection(
         store: store,
         standardConfigPath: standardConfigPath,

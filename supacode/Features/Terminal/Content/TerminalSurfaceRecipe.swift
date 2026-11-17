@@ -297,16 +297,7 @@ struct TerminalContentBuilder {
   /// Extra environment for a spawning surface (blocking-script markers).
   var environmentExtras: (ContentRequest) -> [String: String]
 
-  func factory() -> LayoutContentFactory {
-    LayoutContentFactory { request in
-      switch request.content {
-      case .terminal(let terminalState):
-        terminalContent(request, terminalState: terminalState)
-      }
-    }
-  }
-
-  private func terminalContent(
+  func terminalContent(
     _ request: ContentRequest,
     terminalState: TerminalContentState
   ) -> any TabContent {

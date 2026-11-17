@@ -32,6 +32,7 @@ final class WorktreeContentHost {
   /// debounce, which pulls the title back at snapshot time.
   @ObservationIgnored var onReportedTitleChanged: (() -> Void)?
   @ObservationIgnored var onNotificationIndicatorChanged: (() -> Void)?
+  @ObservationIgnored var onOpenLink: ((URL) -> Bool)?
   @ObservationIgnored var onFocusChanged: ((UUID) -> Void)?
   @ObservationIgnored var onFocusedSurfaceColorChanged: (() -> Void)?
   @ObservationIgnored var onTaskStatusChanged: ((WorktreeTaskStatus) -> Void)?
@@ -195,7 +196,7 @@ final class WorktreeContentHost {
   var allTabsDormant: Bool {
     guard let layout = layout(), !layout.panes.isEmpty else { return false }
     return layout.panes.allSatisfy { pane in
-      pane.tabs.allSatisfy { liveSurface($0.content.id.rawValue) == nil }
+      pane.tabs.allSatisfy { runtime.renderer(for: $0.content.id) == nil }
     }
   }
 
@@ -729,13 +730,38 @@ final class WorktreeContentHost {
         }
       }
     }
-    // Re-assert AppKit focus only when a terminal already held it.
-    if let focusTarget, let window = focusTarget.window, window.firstResponder is GhosttySurfaceView {
-      window.makeFirstResponder(focusTarget)
-    }
+    reassertKeyboardFocus(terminalTarget: focusTarget, in: layout)
     // Land a latched launch/restore focus now that the surface may be live and
     // keyed; a cheap no-op unless a claim is pending.
     resolvePendingFocus()
+  }
+
+  /// Keyboard focus follows pane focus only when a pane's content already
+  /// held it, so the sidebar and other chrome keep theirs.
+  private func reassertKeyboardFocus(terminalTarget: GhosttySurfaceView?, in layout: PaneLayout) {
+    if let terminalTarget, let window = terminalTarget.window {
+      guard window.firstResponder is GhosttySurfaceView || contentHoldsKeyboardFocus(in: layout, window: window)
+      else { return }
+      window.makeFirstResponder(terminalTarget)
+      return
+    }
+    guard let focusedID = focusedContentID.map(ContentID.init(rawValue:)),
+      let content = runtime.content(for: focusedID),
+      let renderer = content.renderer, !(renderer is GhosttySurfaceView),
+      let window = renderer.window, window.isKeyWindow,
+      !content.holdsKeyboardFocus,
+      window.firstResponder is GhosttySurfaceView || contentHoldsKeyboardFocus(in: layout, window: window)
+    else { return }
+    content.focus()
+  }
+
+  private func contentHoldsKeyboardFocus(in layout: PaneLayout, window: NSWindow) -> Bool {
+    layout.allContentIDs.contains { contentID in
+      guard let content = runtime.content(for: contentID), content.renderer?.window === window else {
+        return false
+      }
+      return content.holdsKeyboardFocus
+    }
   }
 
   func reassertSurfaceActivity() {
@@ -790,16 +816,31 @@ final class WorktreeContentHost {
   }
 
   func focusSelectedTab() {
-    guard let contentID = focusedContentID, let surface = liveSurface(contentID),
-      surface.window?.isKeyWindow == true
-    else {
-      // Surface not live or window not yet key (launch restore of a hibernated
-      // tab): latch the intent. `applySurfaceActivity` claims it when the
-      // window-key or layout event that satisfies it fires; nothing polls.
+    guard let contentID = focusedContentID else {
       pendingFocusClaim = true
       return
     }
-    claimFocus(surface)
+    if let surface = liveSurface(contentID), surface.window?.isKeyWindow == true {
+      claimFocus(surface)
+      return
+    }
+    // Content not live or window not yet key (launch restore of a hibernated
+    // tab): latch the intent. `applySurfaceActivity` claims it when the
+    // window-key or layout event that satisfies it fires; nothing polls.
+    pendingFocusClaim = !claimNonTerminalFocus(contentID)
+  }
+
+  private func claimNonTerminalFocus(_ contentID: UUID) -> Bool {
+    guard let content = runtime.content(for: ContentID(rawValue: contentID)),
+      let renderer = content.renderer, !(renderer is GhosttySurfaceView),
+      let window = renderer.window, window.isKeyWindow
+    else { return false }
+    pendingFocusClaim = false
+    if !content.holdsKeyboardFocus {
+      content.focus()
+    }
+    syncFocus(windowIsKey: window.isKeyWindow, windowIsVisible: window.isVisible)
+    return true
   }
 
   /// Makes the focused surface first responder and reconciles every surface's
@@ -826,13 +867,12 @@ final class WorktreeContentHost {
   /// before either is met lands as soon as both are. A no-op until then.
   @discardableResult
   private func resolvePendingFocus() -> Bool {
-    guard pendingFocusClaim, isWorktreeSelected,
-      let contentID = focusedContentID,
-      let surface = liveSurface(contentID),
-      surface.window?.isKeyWindow == true
-    else { return false }
-    claimFocus(surface)
-    return true
+    guard pendingFocusClaim, isWorktreeSelected, let contentID = focusedContentID else { return false }
+    if let surface = liveSurface(contentID), surface.window?.isKeyWindow == true {
+      claimFocus(surface)
+      return true
+    }
+    return claimNonTerminalFocus(contentID)
   }
 
   func focusAndInsertText(_ text: String) {

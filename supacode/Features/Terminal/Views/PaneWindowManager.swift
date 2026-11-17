@@ -39,6 +39,7 @@ enum PaneWindowShortcut {
   enum Intent: Equatable {
     case exitWindowMode
     case newTab(ContentID)
+    case newBrowserTab(ContentID)
     case closeTab(ContentID)
     case beginRename(TabID)
     case selectTab(TabID)
@@ -65,6 +66,10 @@ enum PaneWindowShortcut {
     if matched(AppShortcuts.newTerminalTab) {
       guard !event.isARepeat, let contentID = pane.selectedTab?.content.id else { return .ignore }
       return .newTab(contentID)
+    }
+    if matched(AppShortcuts.newBrowserTab) {
+      guard !event.isARepeat, let contentID = pane.selectedTab?.content.id else { return .ignore }
+      return .newBrowserTab(contentID)
     }
     if matched(AppShortcuts.closeTab) {
       guard !event.isARepeat, let contentID = pane.selectedTab?.content.id else { return .ignore }
@@ -309,6 +314,8 @@ final class PaneWindowManager {
       terminalManager.sendLayout(worktreeID, .exitWindowMode(paneID: paneID))
     case .newTab(let contentID):
       terminalManager.sendLayout(worktreeID, .contentRequestedNewTab(content: contentID))
+    case .newBrowserTab(let contentID):
+      terminalManager.openBrowserTab(in: worktreeID, url: nil, placement: .tab(near: contentID))
     case .closeTab(let contentID):
       terminalManager.sendLayout(worktreeID, .contentRequestedClose(content: contentID, scope: .tab))
     case .beginRename(let tabID):

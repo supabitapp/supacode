@@ -1,0 +1,117 @@
+import ComposableArchitecture
+import Dependencies
+import DependenciesTestSupport
+import Foundation
+import IdentifiedCollections
+import Sharing
+import SupacodeSettingsFeature
+import SupacodeSettingsShared
+import Testing
+
+@testable import supacode
+
+@MainActor
+struct WorktreeTerminalManagerBrowserTests {
+  private struct Harness {
+    let manager: WorktreeTerminalManager
+    let store: Store<AppFeature.State, AppFeature.Action>
+    let worktree: Worktree
+
+    var layout: PaneLayout? {
+      store.withState { $0.terminals.layouts[id: worktree.id]?.layout }
+    }
+
+    var browserURLs: [URL?] {
+      (layout?.panes ?? []).flatMap(\.tabs).compactMap { tab in
+        guard case .browser(let state) = tab.content.state else { return nil }
+        return .some(state.url)
+      }
+    }
+  }
+
+  private func makeHarness(opensLinksInBrowserTab: Bool = false) -> Harness {
+    let worktree = Worktree(
+      id: WorktreeID("/tmp/repo/wt-browser"),
+      name: "wt-browser",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-browser"),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
+    )
+    let manager = withDependencies {
+      $0.settingsFileStorage = .inMemory()
+      $0.defaultAppStorage = .inMemory
+      $0.zmxClient = .noop
+    } operation: {
+      @Shared(.settingsFile) var settingsFile
+      $settingsFile.withLock { $0.global.opensLinksInBrowserTab = opensLinksInBrowserTab }
+      return WorktreeTerminalManager(runtime: GhosttyRuntime())
+    }
+    let store = Store(
+      initialState: AppFeature.State(
+        repositories: RepositoriesFeature.State(),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.contentRuntime = ContentRuntime()
+      $0[LayoutContentFactory.self] = LayoutContentFactory { request in
+        InertTabContent(id: request.contentID, state: request.content)
+      }
+      $0[ContentSessionKiller.self] = ContentSessionKiller(kill: { _, _ in })
+    }
+    manager.appStore = store
+    return Harness(manager: manager, store: store, worktree: worktree)
+  }
+
+  @Test(.dependencies) func openingABrowserTabBootstrapsAnEmptyLayout() {
+    let harness = makeHarness()
+    let url = URL(string: "http://localhost:3000")
+
+    harness.manager.handleCommand(.openBrowserTab(harness.worktree, url: url, focusing: false))
+
+    #expect(harness.layout?.panes.count == 1)
+    #expect(harness.layout?.isConsistent == true)
+    #expect(harness.browserURLs == [url])
+  }
+
+  @Test(.dependencies) func aSecondBrowserTabJoinsThePaneThatShowsABrowser() {
+    let harness = makeHarness()
+    let first = URL(string: "http://localhost:3000")
+    let second = URL(string: "http://localhost:3000/next")
+
+    harness.manager.handleCommand(.openBrowserTab(harness.worktree, url: first))
+    harness.manager.handleCommand(.openBrowserTab(harness.worktree, url: second))
+
+    #expect(harness.layout?.panes.count == 1)
+    #expect(harness.browserURLs == [first, second])
+    #expect(harness.layout?.panes.first?.selectedTab?.content.state == .browser(BrowserContentState(url: second)))
+  }
+
+  @Test(.dependencies) func aTerminalWebLinkOpensInABrowserTabWhenLinkRoutingIsOn() throws {
+    let harness = makeHarness(opensLinksInBrowserTab: true)
+    let host = harness.manager.host(for: harness.worktree)
+    let url = try #require(URL(string: "http://localhost:8765/second.html"))
+
+    #expect(host.onOpenLink?(url) == true)
+    #expect(harness.browserURLs == [url])
+  }
+
+  @Test(.dependencies) func aTerminalWebLinkStaysWithTheSystemWhenLinkRoutingIsOff() throws {
+    let harness = makeHarness(opensLinksInBrowserTab: false)
+    let host = harness.manager.host(for: harness.worktree)
+    let url = try #require(URL(string: "http://localhost:8765/second.html"))
+
+    #expect(host.onOpenLink?(url) == false)
+    #expect(harness.browserURLs.isEmpty)
+  }
+
+  @Test(.dependencies) func aTerminalFileLinkNeverOpensInABrowserTab() {
+    let harness = makeHarness(opensLinksInBrowserTab: true)
+    let host = harness.manager.host(for: harness.worktree)
+
+    #expect(host.onOpenLink?(URL(fileURLWithPath: "/tmp/output.txt")) == false)
+    #expect(harness.browserURLs.isEmpty)
+  }
+}

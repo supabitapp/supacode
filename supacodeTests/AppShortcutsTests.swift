@@ -199,6 +199,25 @@ struct AppShortcutsTests {
     #expect(AppShortcuts.renameTab.displayName == "Rename Tab")
   }
 
+  @Test func newBrowserTabKeyRoundTrips() {
+    let decoded = AppShortcutID(codingKey: PlainCodingKey("newBrowserTab"))
+    #expect(decoded == .newBrowserTab)
+    #expect(decoded?.codingKey.stringValue == "newBrowserTab")
+    #expect(AppShortcuts.newBrowserTab.displayName == "New Browser Tab")
+  }
+
+  @Test func newBrowserTabShortcutHasNoDefaultConflict() {
+    #expect(AppShortcuts.conflictWarnings(from: [:])[.newBrowserTab] == nil)
+  }
+
+  @Test func newBrowserTabShortcutUnbindsInGhostty() {
+    #expect(AppShortcuts.newBrowserTab.ghosttyUnbindConfigLine == "keybind = shift+super+b=unbind")
+    #expect(
+      AppShortcuts.ghosttyKeybindConfigLines(from: [:])
+        .contains { $0 == AppShortcuts.newBrowserTab.ghosttyUnbindConfigLine }
+    )
+  }
+
   @Test func toggleWindowModeKeyRoundTrips() {
     let decoded = AppShortcutID(codingKey: PlainCodingKey("toggleWindowMode"))
     #expect(decoded == .toggleWindowMode)
@@ -836,6 +855,16 @@ struct PaneWindowShortcutTests {
     #expect(
       PaneWindowShortcut.intent(for: event, pane: pane, overrides: [:], isWorktreeSelected: true)
         == .closeTab(tab.content.id)
+    )
+  }
+
+  @Test func newBrowserTabChordOpensNextToTheSelectedTabsContent() {
+    let tab = Self.tab()
+    let pane = Self.pane(tabs: [tab])
+    let event = Self.keyEvent(keyCode: kVK_ANSI_B, modifiers: [.command, .shift])
+    #expect(
+      PaneWindowShortcut.intent(for: event, pane: pane, overrides: [:], isWorktreeSelected: true)
+        == .newBrowserTab(tab.content.id)
     )
   }
 

@@ -30,6 +30,8 @@ protocol TabContent: AnyObject {
   var toolbar: (any TabContentToolbar)? { get }
   /// The current persistable state, including restoration data.
   func snapshot() -> ContentSnapshot
+  var holdsKeyboardFocus: Bool { get }
+  func focus()
 }
 
 extension TabContent {
@@ -44,6 +46,8 @@ extension TabContent {
   var chrome: (any TabChrome)? { nil }
   // A docked toolbar is opt-in per content kind.
   var toolbar: (any TabContentToolbar)? { nil }
+  var holdsKeyboardFocus: Bool { false }
+  func focus() {}
 }
 
 /// Where in the layout a content is being created; a runtime hint for the

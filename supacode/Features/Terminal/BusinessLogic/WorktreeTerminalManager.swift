@@ -310,6 +310,9 @@ final class WorktreeTerminalManager {
     if handleTabCommand(command) {
       return
     }
+    if handleBrowserCommand(command) {
+      return
+    }
     if handleBindingActionCommand(command) {
       return
     }
@@ -515,7 +518,8 @@ final class WorktreeTerminalManager {
       host(for: worktree).navigateSearchOnFocusedSurface(.next)
     case .navigateSearchPrevious(let worktree):
       host(for: worktree).navigateSearchOnFocusedSurface(.previous)
-    case .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .openFileWithScript, .openBrowserTab, .ensureInitialTab,
+      .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface, .sendInput,
       .splitSurface, .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .removeWorktreeLayout,
@@ -565,7 +569,8 @@ final class WorktreeTerminalManager {
       host(for: worktree).performBindingAction(action, onSurfaceID: surfaceID)
     case .setImagePasteAgents(let surfaceID, let agents):
       setImagePasteAgents(agents, onSurfaceID: surfaceID)
-    case .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .openFileWithScript, .openBrowserTab, .ensureInitialTab,
+      .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .selectTab, .selectTabAtIndex, .selectRelativeTab,
       .focusSurface, .sendInput, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .removeWorktreeLayout,
@@ -615,7 +620,8 @@ final class WorktreeTerminalManager {
       // event fires; refresh here or the window keeps the previous tint.
       refreshFocusedSurfaceBackground()
       terminalLogger.info("Selected worktree \(id?.rawValue ?? "nil")")
-    case .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .openFileWithScript, .openBrowserTab, .ensureInitialTab,
+      .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface, .sendInput,
@@ -809,6 +815,9 @@ final class WorktreeTerminalManager {
     host.onNotificationIndicatorChanged = { [weak self] in
       self?.emitNotificationIndicatorCountIfNeeded()
       self?.emitProjection(for: worktree.id)
+    }
+    host.onOpenLink = { [weak self] url in
+      self?.openLinkInBrowserTab(url, worktreeID: worktree.id) ?? false
     }
     // Only the debounce: the title itself is read back off the chrome when the
     // snapshot is built, so a title storm costs one coalesced write, not one
@@ -1085,6 +1094,58 @@ final class WorktreeTerminalManager {
         // No existing pane (a tab-less layout is valid): bootstrap the first tab; createTabAsync mints one.
         createTabAsync(in: worktree, runSetupScriptIfNew: false, initialInput: input, anchor: nil)
       }
+    }
+  }
+
+  private func handleBrowserCommand(_ command: TerminalClient.Command) -> Bool {
+    guard case .openBrowserTab(let worktree, let url, let placement, let focusing) = command else {
+      return false
+    }
+    _ = host(for: worktree)
+    openBrowserTab(in: worktree.id, url: url, placement: placement, focusing: focusing)
+    return true
+  }
+
+  private func openLinkInBrowserTab(_ url: URL, worktreeID: Worktree.ID) -> Bool {
+    guard settingsFile.global.opensLinksInBrowserTab, BrowserAddress.isWebLink(url) else { return false }
+    openBrowserTab(in: worktreeID, url: url, placement: .beside)
+    return true
+  }
+
+  func openBrowserTab(
+    in worktreeID: Worktree.ID,
+    url: URL?,
+    placement: BrowserTabPlacement,
+    focusing: Bool = true
+  ) {
+    guard let state = layoutState(for: worktreeID) else {
+      terminalLogger.warning("openBrowserTab: no layout for worktree \(worktreeID); dropping open.")
+      return
+    }
+    let layout = state.layout
+    let resolved =
+      placement.resolve(
+        in: layout,
+        windowedPaneIDs: state.windowedPaneIDs,
+        hasRoomForSplit: { paneHasRoomForHorizontalSplit($0, in: layout) }
+      ) ?? .tab(PaneID())
+    let anchor: ContentID? =
+      switch resolved {
+      case .tab(let paneID), .splitRight(let paneID): layout.panes[id: paneID]?.selectedTab?.content.id
+      }
+    let spec = NewTabSpec.browser(
+      url: url,
+      geometry: ContentRuntime.liveValue.spawnGeometry(near: anchor, fallback: anchor),
+      select: focusing
+    )
+    switch resolved {
+    case .tab(let paneID):
+      sendLayout(worktreeID, .newTab(inPane: paneID, spec: spec))
+    case .splitRight(let paneID):
+      sendLayout(worktreeID, .splitPane(id: paneID, direction: .right, spec: spec))
+    }
+    if focusing {
+      hosts[worktreeID]?.focusSelectedTab()
     }
   }
 
