@@ -192,9 +192,6 @@ final class BrowserContent: TabContent, TabContentToolbar {
     }
   }
 
-  // AppKit does not promote a re-attached view to first responder, and an
-  // immediate claim is unreliable while SwiftUI is still mounting, so the
-  // claim runs on the next tick.
   private func claimFocusAfterAttach() {
     pendingFocusClaim?.cancel()
     pendingFocusClaim = Task { [weak self] in

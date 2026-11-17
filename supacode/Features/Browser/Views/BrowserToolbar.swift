@@ -45,8 +45,6 @@ struct BrowserToolbarView: View {
       guard !isAddressFocused else { return }
       addressText = BrowserAddress.display(page.url)
     }
-    // Assigning focus in the update that mounts the field is dropped by
-    // SwiftUI, so the request is honored on the next main-actor turn.
     .task(id: page.addressFocusRequested) {
       guard page.addressFocusRequested else { return }
       await Task.yield()

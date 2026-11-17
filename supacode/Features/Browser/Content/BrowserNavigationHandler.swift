@@ -75,8 +75,6 @@ final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelega
     }
   }
 
-  // WebKit reports a link clicked by page script as a link activation too, so
-  // a click alone never proves intent; leaving for another app always asks.
   private func askBeforeLeaving(for url: URL, from webView: WKWebView) {
     guard !isAskingToLeave, let window = webView.window,
       let application = NSWorkspace.shared.urlForApplication(toOpen: url)
@@ -116,8 +114,6 @@ final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelega
     withError error: any Error
   ) {
     let nsError = error as NSError
-    // WebKit reports a cancelled load (a second navigation, a handed-off
-    // download) and a policy-interrupted frame load as provisional failures.
     let isInterruption =
       (nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled)
       || (nsError.domain == "WebKitErrorDomain" && nsError.code == 102)

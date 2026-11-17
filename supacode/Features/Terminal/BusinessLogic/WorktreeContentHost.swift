@@ -168,7 +168,6 @@ final class WorktreeContentHost {
     layout()?.allContentIDs.map(\.rawValue) ?? []
   }
 
-  /// Content ids whose session outlives the renderer and needs an explicit kill.
   var sessionSurfaceIDs: [UUID] {
     (layout()?.panes ?? []).flatMap(\.tabs)
       .filter { $0.content.kind.hasPersistentSession }
@@ -743,8 +742,6 @@ final class WorktreeContentHost {
     resolvePendingFocus()
   }
 
-  /// Keyboard focus follows pane focus only when a pane's content already
-  /// held it, so the sidebar and other chrome keep theirs.
   private func reassertKeyboardFocus(terminalTarget: GhosttySurfaceView?, in layout: PaneLayout) {
     if let terminalTarget, let window = terminalTarget.window {
       guard window.firstResponder is GhosttySurfaceView || contentHoldsKeyboardFocus(in: layout, window: window)
@@ -897,8 +894,6 @@ final class WorktreeContentHost {
     focusedContentID == surfaceID
   }
 
-  /// Whether a content attaching to `window` may take keyboard focus: it is
-  /// the focused content, and focus has no owner or sits in a pane's content.
   func mayClaimFocus(_ contentID: UUID, in window: NSWindow) -> Bool {
     guard shouldClaimFocus(contentID), let layout = layout() else { return false }
     let responder = window.firstResponder

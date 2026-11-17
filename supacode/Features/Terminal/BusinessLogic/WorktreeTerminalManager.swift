@@ -1097,7 +1097,6 @@ final class WorktreeTerminalManager {
     }
   }
 
-  /// A terminal tab in a pane, whatever its selected tab hosts.
   func createTerminalTab(inPane paneID: PaneID, of worktreeID: Worktree.ID) {
     guard let worktree = appStore?.withState({ $0.repositories.worktree(for: worktreeID) }) else {
       terminalLogger.warning("createTerminalTab: no worktree \(worktreeID); dropping the request.")
