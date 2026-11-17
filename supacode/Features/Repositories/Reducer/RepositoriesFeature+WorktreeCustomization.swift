@@ -3,65 +3,37 @@ import Foundation
 import OrderedCollections
 import SupacodeSettingsShared
 
-extension RepositoriesFeature {
-  /// Where "Customize Appearance" lands for a sidebar selection. The command
-  /// palette and the Worktrees menu shortcut both resolve through
-  /// `State.customizeAppearanceRowTarget` / `customizeAppearanceRepositoryTarget`
-  /// so there is one rule set for which selection customizes what.
-  enum CustomizeAppearanceTarget: Equatable, Hashable, Sendable {
-    /// The row's own bucket: a folder row, or a non-main git worktree.
-    case worktree(Worktree.ID, Repository.ID)
-    /// The repository section header (git repos only).
-    case repository(Repository.ID)
-  }
-}
-
 extension RepositoriesFeature.State {
-  /// The selected row's own appearance target: a folder row (checked first,
-  /// since a folder row is also its repository's root) or a non-main git
-  /// worktree. `nil` for a git main worktree, which is repository-level, and
-  /// for a pending row, which has no stable target yet (mirroring the
-  /// sidebar's `!lifecycle.isPending` gate).
-  var customizeAppearanceRowTarget: RepositoriesFeature.CustomizeAppearanceTarget? {
+  struct CustomizeAppearanceSelection {
+    let row: SidebarItemFeature.State
+    let repositoryID: Repository.ID
+    let customizesRow: Bool
+    let customizesRepository: Bool
+  }
+
+  var customizeAppearanceSelection: CustomizeAppearanceSelection? {
     guard let selectedWorktreeID,
-      let selectedRow = sidebarItems[id: selectedWorktreeID],
-      let repositoryID = self.repositoryID(containing: selectedWorktreeID)
+      let row = sidebarItems[id: selectedWorktreeID],
+      let repositoryID = repositoryID(containing: selectedWorktreeID)
     else {
       return nil
     }
-    if selectedRow.isFolder {
-      return .worktree(selectedWorktreeID, repositoryID)
-    }
-    guard !selectedRow.isMainWorktree, !selectedRow.lifecycle.isPending else { return nil }
-    return .worktree(selectedWorktreeID, repositoryID)
+    return CustomizeAppearanceSelection(
+      row: row,
+      repositoryID: repositoryID,
+      customizesRow: row.isFolder || (!row.isMainWorktree && !row.lifecycle.isPending),
+      customizesRepository: repositories[id: repositoryID]?.isGitRepository == true
+        && removingRepositoryIDs[repositoryID] == nil
+    )
   }
 
-  /// The repository-level appearance target for the selection: git repos only
-  /// (folder repos have no section header to tint), and hidden mid-removal to
-  /// match the disabled sidebar entry.
-  var customizeAppearanceRepositoryTarget: RepositoriesFeature.CustomizeAppearanceTarget? {
-    guard let selectedWorktreeID,
-      sidebarItems[id: selectedWorktreeID] != nil,
-      let repositoryID = self.repositoryID(containing: selectedWorktreeID),
-      repositories[id: repositoryID]?.isGitRepository == true,
-      removingRepositoryIDs[repositoryID] == nil
-    else {
-      return nil
+  var customizeSelectedAppearanceRequest: RepositoriesFeature.Action? {
+    guard let selection = customizeAppearanceSelection else { return nil }
+    if selection.customizesRow {
+      return .requestCustomizeWorktree(selection.row.id, selection.repositoryID)
     }
-    return .repository(repositoryID)
-  }
-
-  /// The single target the Customize Appearance shortcut opens: the row's own
-  /// when it has one, else the repository's for a git main worktree. Pending
-  /// rows, archived / failed selections, and no selection resolve to `nil`.
-  var customizeAppearanceShortcutTarget: RepositoriesFeature.CustomizeAppearanceTarget? {
-    if let rowTarget = customizeAppearanceRowTarget {
-      return rowTarget
-    }
-    guard let selectedWorktreeID, sidebarItems[id: selectedWorktreeID]?.isMainWorktree == true else {
-      return nil
-    }
-    return customizeAppearanceRepositoryTarget
+    guard selection.row.isMainWorktree, selection.customizesRepository else { return nil }
+    return .requestCustomizeRepository(selection.repositoryID)
   }
 }
 
@@ -72,17 +44,12 @@ extension RepositoriesFeature {
     Reduce { state, action in
       switch action {
       case .requestCustomizeSelectedAppearance:
-        // Resolved at fire time rather than baked into the menu item so a
-        // selection that went pending or archived since the menu was built
-        // is dropped here instead of opening a stale sheet.
-        switch state.customizeAppearanceShortcutTarget {
-        case .worktree(let worktreeID, let repositoryID):
-          return .send(.requestCustomizeWorktree(worktreeID, repositoryID))
-        case .repository(let repositoryID):
-          return .send(.requestCustomizeRepository(repositoryID))
-        case nil:
+        guard state.worktreeCustomization == nil, state.repositoryCustomization == nil,
+          let request = state.customizeSelectedAppearanceRequest
+        else {
           return .none
         }
+        return .send(request)
 
       case .requestCustomizeWorktree(let worktreeID, let repositoryID):
         guard let repository = state.repositories[id: repositoryID],

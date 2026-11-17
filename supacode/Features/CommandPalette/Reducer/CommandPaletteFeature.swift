@@ -357,17 +357,15 @@ struct CommandPaletteFeature {
   /// The "Customize Appearance" actions for the current selection. A folder or
   /// non-main worktree customizes its own row; a git selection also offers
   /// repository-level appearance (the sidebar exposes it on the section header,
-  /// so from any worktree the palette is the way to reach it). Which targets
-  /// apply is decided by `RepositoriesFeature.State.customizeAppearanceRowTarget`
-  /// and `customizeAppearanceRepositoryTarget`, shared with the menu-bar
-  /// shortcut; this only renders them. Subtitles echo the sidebar's custom
-  /// title and tint for each target.
+  /// so from any worktree the palette is the way to reach it). Subtitles echo
+  /// the sidebar's custom title and tint for each target.
   static func customizeAppearanceItems(from repositories: RepositoriesFeature.State) -> [CommandPaletteItem] {
+    guard let selection = repositories.customizeAppearanceSelection else { return [] }
+    let selectedRow = selection.row
+    let section = repositories.sidebar.sections[selection.repositoryID]
+
     var items: [CommandPaletteItem] = []
-    if case .worktree(let worktreeID, let repositoryID) = repositories.customizeAppearanceRowTarget,
-      let selectedRow = repositories.sidebarItems[id: worktreeID]
-    {
-      let section = repositories.sidebar.sections[repositoryID]
+    if selection.customizesRow {
       let subtitle: String
       let subtitleTint: RepositoryColor?
       if selectedRow.isFolder {
@@ -387,23 +385,22 @@ struct CommandPaletteFeature {
       }
       items.append(
         CommandPaletteItem(
-          id: CommandPaletteItemID.customizeWorktreeAppearance(worktreeID),
+          id: CommandPaletteItemID.customizeWorktreeAppearance(selectedRow.id),
           title: "Customize Appearance",
           subtitle: subtitle,
-          kind: .customizeWorktreeAppearance(worktreeID, repositoryID),
+          kind: .customizeWorktreeAppearance(selectedRow.id, selection.repositoryID),
           subtitleTint: subtitleTint
         )
       )
     }
-    if case .repository(let repositoryID) = repositories.customizeAppearanceRepositoryTarget {
-      let repositoryName = repositories.repositoryName(for: repositoryID) ?? "Repository"
+    if selection.customizesRepository {
       items.append(
         CommandPaletteItem(
-          id: CommandPaletteItemID.customizeRepositoryAppearance(repositoryID),
+          id: CommandPaletteItemID.customizeRepositoryAppearance(selection.repositoryID),
           title: "Customize Repository Appearance",
-          subtitle: repositoryName,
-          kind: .customizeRepositoryAppearance(repositoryID),
-          subtitleTint: repositories.sidebar.sections[repositoryID]?.color
+          subtitle: repositories.repositoryName(for: selection.repositoryID) ?? "Repository",
+          kind: .customizeRepositoryAppearance(selection.repositoryID),
+          subtitleTint: section?.color
         )
       )
     }

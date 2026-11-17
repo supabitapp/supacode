@@ -609,8 +609,6 @@ struct RepositoriesFeature {
     case openRepositorySettings(Repository.ID)
     case requestCustomizeRepository(Repository.ID)
     case requestCustomizeWorktree(Worktree.ID, Repository.ID)
-    /// Menu-bar shortcut: customizes the sidebar selection, resolving the row
-    /// vs. repository target through `State.customizeAppearanceShortcutTarget`.
     case requestCustomizeSelectedAppearance
     /// Deeplink / CLI appearance update: overwrites the row's sidebar title and tint.
     /// `nil` clears the field; omit-vs-clear was already resolved upstream in `AppFeature`.

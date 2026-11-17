@@ -19,8 +19,6 @@ struct WorktreeMenuSnapshot: Equatable {
   var selectedPullRequestURL: URL?
   /// A git worktree (not a folder) is selected, so Open Pull Request can act.
   var hasSelectedGitWorktree: Bool = false
-  /// The selection resolves to a Customize Appearance target (its own row, or
-  /// the repository for a git main worktree), so the menu shortcut can act.
   var canCustomizeSelectedAppearance: Bool = false
   var notificationIndicatorCount: Int = 0
 }
@@ -41,7 +39,7 @@ extension AppFeature.State {
       isInitialLoadComplete: repositories.isInitialLoadComplete,
       selectedPullRequestURL: pullRequestURL,
       hasSelectedGitWorktree: repositories.selectedWorktreeSlice.map { !$0.isFolder } ?? false,
-      canCustomizeSelectedAppearance: repositories.customizeAppearanceShortcutTarget != nil,
+      canCustomizeSelectedAppearance: repositories.customizeSelectedAppearanceRequest != nil,
       notificationIndicatorCount: notificationIndicatorCount
     )
   }

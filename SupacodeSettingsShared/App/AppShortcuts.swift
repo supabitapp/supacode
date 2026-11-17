@@ -519,9 +519,6 @@ public enum AppShortcuts {
     id: .confirmWorktreeAction,
     keyEquivalent: .return, ghosttyKeyName: "enter", modifiers: .command
   )
-  // Opens the Customize Appearance sheet for the sidebar selection so a worktree
-  // can be renamed from the keyboard. Ships off: the chord is a suggestion the
-  // user opts into from Settings, not a default claimed from the terminal.
   public static let customizeAppearance = AppShortcut(
     id: .customizeAppearance, key: "r", modifiers: [.command, .control], isEnabledByDefault: false
   )
