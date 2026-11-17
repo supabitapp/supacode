@@ -39,6 +39,7 @@ struct AppFeatureTerminalSetupScriptTests {
       $0.repositories.applyPostReduceCacheRecomputes(
         [.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice]
       )
+      $0.worktreeMenuSnapshot.canCustomizeSelectedAppearance = true
     }
     await store.finish()
     #expect(sent.value == [.createTab(worktree, runSetupScriptIfNew: true, id: nil)])
@@ -124,6 +125,7 @@ struct AppFeatureTerminalSetupScriptTests {
       $0.repositories.applyPostReduceCacheRecomputes(
         [.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice]
       )
+      $0.worktreeMenuSnapshot.canCustomizeSelectedAppearance = true
     }
     await store.finish()
   }
@@ -153,6 +155,7 @@ struct AppFeatureTerminalSetupScriptTests {
       $0.repositories.applyPostReduceCacheRecomputes(
         [.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice]
       )
+      $0.worktreeMenuSnapshot.canCustomizeSelectedAppearance = true
     }
     // The later readiness signal re-fires but the row is already idle: the
     // guard makes it inert (no follow-up `sidebarItems` mutation).
@@ -212,6 +215,7 @@ struct AppFeatureTerminalSetupScriptTests {
       $0.repositories.applyPostReduceCacheRecomputes(
         [.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice]
       )
+      $0.worktreeMenuSnapshot.canCustomizeSelectedAppearance = true
     }
     await store.finish()
   }
@@ -346,6 +350,7 @@ struct AppFeatureTerminalSetupScriptTests {
       $0.repositories.applyPostReduceCacheRecomputes(
         [.sidebarStructure, .selectedWorktreeSlice, .sidebarSelectionSlice]
       )
+      $0.worktreeMenuSnapshot.canCustomizeSelectedAppearance = true
     }
     await store.finish()
   }

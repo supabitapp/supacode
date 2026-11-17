@@ -3,12 +3,54 @@ import Foundation
 import OrderedCollections
 import SupacodeSettingsShared
 
+extension RepositoriesFeature.State {
+  struct CustomizeAppearanceSelection {
+    let row: SidebarItemFeature.State
+    let repositoryID: Repository.ID
+    let customizesRow: Bool
+    let customizesRepository: Bool
+  }
+
+  var customizeAppearanceSelection: CustomizeAppearanceSelection? {
+    guard let selectedWorktreeID,
+      let row = sidebarItems[id: selectedWorktreeID],
+      let repositoryID = repositoryID(containing: selectedWorktreeID)
+    else {
+      return nil
+    }
+    return CustomizeAppearanceSelection(
+      row: row,
+      repositoryID: repositoryID,
+      customizesRow: row.isFolder || (!row.isMainWorktree && !row.lifecycle.isPending),
+      customizesRepository: repositories[id: repositoryID]?.isGitRepository == true
+        && removingRepositoryIDs[repositoryID] == nil
+    )
+  }
+
+  var customizeSelectedAppearanceRequest: RepositoriesFeature.Action? {
+    guard let selection = customizeAppearanceSelection else { return nil }
+    if selection.customizesRow {
+      return .requestCustomizeWorktree(selection.row.id, selection.repositoryID)
+    }
+    guard selection.row.isMainWorktree, selection.customizesRepository else { return nil }
+    return .requestCustomizeRepository(selection.repositoryID)
+  }
+}
+
 extension RepositoriesFeature {
   /// Dedicated reducer for the per-worktree customization flow. Lives in its own file so the main
   /// `body` switch stays under the Swift type-checker's complexity limit.
   static var worktreeCustomizationReducer: some Reducer<State, Action> {
     Reduce { state, action in
       switch action {
+      case .requestCustomizeSelectedAppearance:
+        guard state.worktreeCustomization == nil, state.repositoryCustomization == nil,
+          let request = state.customizeSelectedAppearanceRequest
+        else {
+          return .none
+        }
+        return .send(request)
+
       case .requestCustomizeWorktree(let worktreeID, let repositoryID):
         guard let repository = state.repositories[id: repositoryID],
           let worktree = repository.worktrees.first(where: { $0.id == worktreeID })

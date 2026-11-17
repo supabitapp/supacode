@@ -124,6 +124,173 @@ struct WorktreeCustomizationParentTests {
     #expect(store.state.worktreeCustomization == nil)
   }
 
+  // MARK: - Customize Appearance shortcut (`requestCustomizeSelectedAppearance`).
+
+  private let folderURL = URL(fileURLWithPath: "/tmp/customize-folder")
+  private var folderRepoID: RepositoryID { RepositoryID(folderURL.path(percentEncoded: false)) }
+  private var folderRowID: WorktreeID { Repository.folderWorktreeID(for: folderURL) }
+
+  private func makeFolderState() -> RepositoriesFeature.State {
+    let folderRepo = Repository(
+      id: folderRepoID,
+      rootURL: folderURL,
+      name: "customize-folder",
+      worktrees: IdentifiedArray(uniqueElements: [
+        Worktree(
+          id: folderRowID,
+          name: "customize-folder",
+          detail: "",
+          workingDirectory: folderURL,
+          repositoryRootURL: folderURL
+        )
+      ]),
+      isGitRepository: false
+    )
+    var state = RepositoriesFeature.State(reconciledRepositories: [folderRepo])
+    state.selection = .worktree(folderRowID)
+    state.applyPostReduceCacheRecomputes()
+    return state
+  }
+
+  @Test func shortcutCustomizesSelectedNonMainWorktreeRow() async {
+    var initial = makeInitialState()
+    initial.selection = .worktree(worktreeID)
+    initial.applyPostReduceCacheRecomputes()
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.requestCustomizeSelectedAppearance)
+    await store.receive(\.requestCustomizeWorktree) {
+      $0.worktreeCustomization = WorktreeCustomizationFeature.State(
+        worktreeID: self.worktreeID,
+        repositoryID: self.repoID,
+        defaultName: "feature/x",
+        title: "",
+        color: nil,
+      )
+    }
+  }
+
+  @Test func shortcutOnMainWorktreeCustomizesRepository() async {
+    // The main worktree has no per-row appearance; the shortcut lands on the
+    // repository sheet, matching the palette's repository-only entry.
+    let mainID = WorktreeID("\(repoID)/main")
+    var initial = makeInitialState(seedSidebarBucket: false)
+    initial.selection = .worktree(mainID)
+    initial.applyPostReduceCacheRecomputes()
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.requestCustomizeSelectedAppearance)
+    await store.receive(\.requestCustomizeRepository) {
+      $0.repositoryCustomization = RepositoryCustomizationFeature.State(
+        repositoryID: self.repoID,
+        defaultName: "customize-wt-repo",
+        title: "",
+        color: nil,
+      )
+    }
+  }
+
+  @Test func shortcutOnFolderRowCustomizesTheRow() async {
+    let initial = makeFolderState()
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.requestCustomizeSelectedAppearance)
+    await store.receive(\.requestCustomizeWorktree) {
+      $0.worktreeCustomization = WorktreeCustomizationFeature.State(
+        worktreeID: self.folderRowID,
+        repositoryID: self.folderRepoID,
+        defaultName: "customize-folder",
+        title: "",
+        color: nil,
+      )
+    }
+  }
+
+  @Test func shortcutNoOpsWithoutASelection() async {
+    let initial = makeInitialState()
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.requestCustomizeSelectedAppearance)
+  }
+
+  @Test func shortcutNoOpsForArchivedListSelection() async {
+    var initial = makeInitialState()
+    initial.selection = .archivedWorktrees
+    initial.applyPostReduceCacheRecomputes()
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.requestCustomizeSelectedAppearance)
+  }
+
+  @Test func shortcutNoOpsForPendingWorktreeRow() async {
+    var initial = makeInitialState()
+    initial.selection = .worktree(worktreeID)
+    initial.sidebarItems[id: worktreeID]?.lifecycle = .pending
+    initial.applyPostReduceCacheRecomputes()
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.requestCustomizeSelectedAppearance)
+  }
+
+  @Test func shortcutNoOpsForMainWorktreeOfRepositoryMidRemoval() async {
+    var initial = makeInitialState(seedSidebarBucket: false)
+    initial.selection = .worktree(WorktreeID("\(repoID)/main"))
+    initial.seedRemovalBatch(pending: [repoID: .gitRepositoryUnlink])
+    initial.applyPostReduceCacheRecomputes()
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.requestCustomizeSelectedAppearance)
+  }
+
+  @Test func shortcutKeepsAnOpenWorktreeCustomizationDraft() async {
+    var initial = makeInitialState()
+    initial.selection = .worktree(worktreeID)
+    initial.applyPostReduceCacheRecomputes()
+    initial.worktreeCustomization = WorktreeCustomizationFeature.State(
+      worktreeID: worktreeID,
+      repositoryID: repoID,
+      defaultName: "feature/x",
+      title: "Unsaved draft",
+      color: .blue,
+    )
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.requestCustomizeSelectedAppearance)
+  }
+
+  @Test func shortcutKeepsAnOpenRepositoryCustomizationDraft() async {
+    var initial = makeInitialState(seedSidebarBucket: false)
+    initial.selection = .worktree(WorktreeID("\(repoID)/main"))
+    initial.applyPostReduceCacheRecomputes()
+    initial.repositoryCustomization = RepositoryCustomizationFeature.State(
+      repositoryID: repoID,
+      defaultName: "customize-wt-repo",
+      title: "Unsaved draft",
+      color: .blue,
+    )
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.requestCustomizeSelectedAppearance)
+  }
+
   @Test func mainWorktreeAppearanceSurvivesSidebarReconcile() {
     let mainID = WorktreeID("\(repoID)/main")
     var state = makeInitialState(seedSidebarBucket: false)

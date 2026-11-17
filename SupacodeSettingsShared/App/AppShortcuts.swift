@@ -10,7 +10,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case toggleLeftSidebar, revealInSidebar
   case expandAllSidebarGroups, collapseAllSidebarGroups
   case newWorktree, refreshWorktrees, archivedWorktrees, archiveWorktree
-  case deleteWorktree, confirmWorktreeAction
+  case deleteWorktree, confirmWorktreeAction, customizeAppearance
   case selectNextWorktree, selectPreviousWorktree
   case worktreeHistoryBack, worktreeHistoryForward
   case selectWorktree(Int)
@@ -33,7 +33,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
       false
     case .commandPalette, .worktreeSwitcher, .openSettings, .checkForUpdates, .showMainWindow,
       .toggleLeftSidebar, .revealInSidebar, .expandAllSidebarGroups, .collapseAllSidebarGroups,
-      .newWorktree, .refreshWorktrees, .archivedWorktrees, .confirmWorktreeAction,
+      .newWorktree, .refreshWorktrees, .archivedWorktrees, .confirmWorktreeAction, .customizeAppearance,
       .selectNextWorktree, .selectPreviousWorktree, .worktreeHistoryBack, .worktreeHistoryForward,
       .selectWorktree, .selectTab, .selectNextTab, .selectPreviousTab,
       .openWorktree, .revealInFinder, .openRepository, .addRemoteRepository, .cloneRepository,
@@ -81,6 +81,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .archiveWorktree: "archiveWorktree"
     case .deleteWorktree: "deleteWorktree"
     case .confirmWorktreeAction: "confirmWorktreeAction"
+    case .customizeAppearance: "customizeAppearance"
     case .selectNextWorktree: "selectNextWorktree"
     case .selectPreviousWorktree: "selectPreviousWorktree"
     case .worktreeHistoryBack: "worktreeHistoryBack"
@@ -139,6 +140,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "archiveWorktree": .archiveWorktree,
     "deleteWorktree": .deleteWorktree,
     "confirmWorktreeAction": .confirmWorktreeAction,
+    "customizeAppearance": .customizeAppearance,
     "selectNextWorktree": .selectNextWorktree,
     "selectPreviousWorktree": .selectPreviousWorktree,
     "worktreeHistoryBack": .worktreeHistoryBack,
@@ -214,6 +216,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .archiveWorktree: "Archive Worktree"
     case .deleteWorktree: "Delete Worktree"
     case .confirmWorktreeAction: "Confirm Worktree Action"
+    case .customizeAppearance: "Customize Appearance"
     case .selectNextWorktree: "Select Next Worktree"
     case .selectPreviousWorktree: "Select Previous Worktree"
     case .worktreeHistoryBack: "Back in Worktree History"
@@ -516,6 +519,9 @@ public enum AppShortcuts {
     id: .confirmWorktreeAction,
     keyEquivalent: .return, ghosttyKeyName: "enter", modifiers: .command
   )
+  public static let customizeAppearance = AppShortcut(
+    id: .customizeAppearance, key: "r", modifiers: [.command, .control], isEnabledByDefault: false
+  )
   public static let selectNextWorktree = AppShortcut(
     id: .selectNextWorktree,
     keyEquivalent: .downArrow, ghosttyKeyName: "arrow_down", modifiers: [.command, .control]
@@ -682,7 +688,8 @@ public enum AppShortcuts {
       category: .worktrees,
       shortcuts: [
         newWorktree, refreshWorktrees, archivedWorktrees, archiveWorktree,
-        deleteWorktree, confirmWorktreeAction, selectNextWorktree, selectPreviousWorktree,
+        deleteWorktree, confirmWorktreeAction, customizeAppearance,
+        selectNextWorktree, selectPreviousWorktree,
         worktreeHistoryBack, worktreeHistoryForward,
       ]
     ),

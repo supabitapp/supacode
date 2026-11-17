@@ -19,6 +19,7 @@ struct WorktreeMenuSnapshot: Equatable {
   var selectedPullRequestURL: URL?
   /// A git worktree (not a folder) is selected, so Open Pull Request can act.
   var hasSelectedGitWorktree: Bool = false
+  var canCustomizeSelectedAppearance: Bool = false
   var notificationIndicatorCount: Int = 0
 }
 
@@ -38,6 +39,7 @@ extension AppFeature.State {
       isInitialLoadComplete: repositories.isInitialLoadComplete,
       selectedPullRequestURL: pullRequestURL,
       hasSelectedGitWorktree: repositories.selectedWorktreeSlice.map { !$0.isFolder } ?? false,
+      canCustomizeSelectedAppearance: repositories.customizeSelectedAppearanceRequest != nil,
       notificationIndicatorCount: notificationIndicatorCount
     )
   }
@@ -74,6 +76,9 @@ extension AppFeature.State {
       }
       if old.hasSelectedGitWorktree != new.hasSelectedGitWorktree {
         diffs.append("hasSelectedGitWorktree")
+      }
+      if old.canCustomizeSelectedAppearance != new.canCustomizeSelectedAppearance {
+        diffs.append("canCustomizeSelectedAppearance")
       }
       if old.notificationIndicatorCount != new.notificationIndicatorCount {
         diffs.append("notificationIndicatorCount")
