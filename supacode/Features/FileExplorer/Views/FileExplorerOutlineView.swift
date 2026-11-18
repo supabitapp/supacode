@@ -1518,7 +1518,7 @@ private final class FileExplorerEntryCellView: NSTableCellView {
     shimmerLayer?.frame = label.bounds
   }
 
-  /// Matches `ShimmerModifier`'s look (0.6 dim floor, full-strength band); here
+  /// Matches `View.shimmer(isActive:)`'s look (0.6 dim floor, full-strength band); here
   /// the band sweeps by animating the gradient mask's locations.
   private func setShimmering(_ active: Bool) {
     guard active else {
