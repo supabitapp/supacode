@@ -1103,6 +1103,7 @@ private struct DetailPlaceholderView: View {
         .appFont(.title3)
         .foregroundStyle(.secondary)
         .contentTransition(.numericText())
+        .animation(.easeInOut(duration: 0.25), value: messageIndex)
         .shimmer(isActive: true)
     }
     .multilineTextAlignment(.center)

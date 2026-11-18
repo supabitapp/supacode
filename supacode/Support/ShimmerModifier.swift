@@ -34,14 +34,12 @@ private struct ShimmerHost<Label: View>: NSViewRepresentable {
   }
 
   func updateNSView(_ nsView: NSViewType, context: Context) {
-    nsView.hosting.rootView = EnvironmentForwarded(label: label, environment: context.environment)
+    nsView.update(rootView: EnvironmentForwarded(label: label, environment: context.environment))
     nsView.isRightToLeft = context.environment.layoutDirection == .rightToLeft
   }
 
   func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSViewType, context: Context) -> CGSize? {
-    nsView.hosting.sizeThatFits(
-      in: CGSize(width: proposal.width ?? .infinity, height: proposal.height ?? .infinity)
-    )
+    nsView.sizeThatFits(proposal)
   }
 }
 
@@ -55,7 +53,7 @@ private struct EnvironmentForwarded<Label: View>: View {
 }
 
 private final class ShimmerHostView<Content: View>: NSView {
-  let hosting: NSHostingController<Content>
+  private let hosting: NSHostingController<Content>
   var isRightToLeft = false {
     didSet {
       guard oldValue != isRightToLeft else { return }
@@ -79,8 +77,6 @@ private final class ShimmerHostView<Content: View>: NSView {
     let dim = NSColor.black.withAlphaComponent(0.6).cgColor
     band.colors = [dim, dim, NSColor.black.cgColor, dim, dim]
     band.locations = [0, 0.5 - half, 0.5, 0.5 + half, 1].map { NSNumber(value: Double($0)) }
-    band.startPoint = .zero
-    band.endPoint = CGPoint(x: 1, y: 1)
     let mask = CALayer()
     mask.addSublayer(band)
     layer?.mask = mask
@@ -94,6 +90,14 @@ private final class ShimmerHostView<Content: View>: NSView {
   nonisolated deinit {}
 
   override var isFlipped: Bool { true }
+
+  func update(rootView: Content) {
+    hosting.rootView = rootView
+  }
+
+  func sizeThatFits(_ proposal: ProposedViewSize) -> CGSize {
+    hosting.sizeThatFits(in: CGSize(width: proposal.width ?? .infinity, height: proposal.height ?? .infinity))
+  }
 
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
@@ -109,6 +113,8 @@ private final class ShimmerHostView<Content: View>: NSView {
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     layer?.mask?.frame = bounds
+    band.startPoint = CGPoint(x: isRightToLeft ? 1 : 0, y: 0)
+    band.endPoint = CGPoint(x: isRightToLeft ? 0 : 1, y: 1)
     band.bounds = CGRect(
       origin: .zero, size: CGSize(width: bounds.width * trackScale, height: bounds.height * trackScale))
     band.position = CGPoint(x: bounds.midX, y: bounds.midY)
@@ -121,6 +127,8 @@ private final class ShimmerHostView<Content: View>: NSView {
     sweep.keyTimes = [0, NSNumber(value: sweepDelay / (sweepDelay + sweepDuration)), 1]
     sweep.duration = sweepDelay + sweepDuration
     sweep.repeatCount = .infinity
+    let now = band.convertTime(CACurrentMediaTime(), from: nil)
+    sweep.beginTime = now - now.truncatingRemainder(dividingBy: sweep.duration)
     sweep.preferredFrameRateRange = CAFrameRateRange(minimum: 15, maximum: 30, preferred: 30)
     band.add(sweep, forKey: "shimmer")
   }
