@@ -13,6 +13,22 @@ nonisolated struct BrowserAutomationTarget: Equatable, Sendable {
     var contentID: ContentID
     var customTitle: String?
     var storedTitle: String
+    var storedURL: URL?
+  }
+
+  static let listLimit = 20
+
+  static func candidates(in layout: PaneLayout) -> [Candidate] {
+    layout.panes.flatMap(\.tabs).compactMap { tab in
+      guard case .browser(let state) = tab.content.state else { return nil }
+      return Candidate(
+        tabID: tab.id,
+        contentID: tab.content.id,
+        customTitle: tab.customTitle,
+        storedTitle: tab.title,
+        storedURL: state.url
+      )
+    }
   }
 
   static let openHint = "Open one with `supacode browser open <url>`."
@@ -35,19 +51,16 @@ nonisolated struct BrowserAutomationTarget: Equatable, Sendable {
     guard let layout = layouts.first(where: { $0.worktreeID == worktreeID })?.layout else {
       return .refused("No browser tab in this worktree. \(openHint)")
     }
-    let browserTabs = layout.panes.flatMap(\.tabs).filter { $0.content.kind == .browser }
+    let browserTabs = candidates(in: layout)
     let focusedTab = layout.focusedPaneID.flatMap { layout.panes[id: $0]?.selectedTab }
-    let chosen = browserTabs.count == 1 ? browserTabs.first : browserTabs.first { $0.id == focusedTab?.id }
+    let chosen = browserTabs.count == 1 ? browserTabs.first : browserTabs.first { $0.tabID == focusedTab?.id }
     if let chosen {
-      return .tab(BrowserAutomationTarget(worktreeID: worktreeID, tabID: chosen.id, contentID: chosen.content.id))
+      return .tab(BrowserAutomationTarget(worktreeID: worktreeID, tabID: chosen.tabID, contentID: chosen.contentID))
     }
     guard !browserTabs.isEmpty else {
       return .refused("No browser tab in this worktree. \(openHint)")
     }
-    return .ambiguous(
-      browserTabs.prefix(8).map {
-        Candidate(tabID: $0.id, contentID: $0.content.id, customTitle: $0.customTitle, storedTitle: $0.title)
-      })
+    return .ambiguous(Array(browserTabs.prefix(listLimit)))
   }
 
   private static func resolve(

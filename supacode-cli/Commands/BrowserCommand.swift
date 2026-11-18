@@ -8,6 +8,8 @@ struct BrowserCommand: ParsableCommand {
     discussion: "Run `supacode browser guide` for the workflow.",
     subcommands: [
       Open.self,
+      Tabs.self,
+      Close.self,
       Navigate.self,
       Snapshot.self,
       Click.self,
@@ -15,6 +17,10 @@ struct BrowserCommand: ParsableCommand {
       Select.self,
       Press.self,
       Wait.self,
+      Eval.self,
+      Screenshot.self,
+      Console.self,
+      Dialog.self,
       Batch.self,
       Guide.self,
     ]
@@ -34,7 +40,7 @@ struct BrowserTargetOptions: ParsableArguments {
   var quiet = false
 
   var target: BrowserRequest.Target {
-    BrowserRequest.Target(tab: tab, worktree: worktree, quiet: quiet)
+    BrowserRequest.Target(tab: tab, worktree: worktree)
   }
 }
 
@@ -50,18 +56,25 @@ nonisolated enum BrowserRequest {
   struct Target {
     var tab: String?
     var worktree: String?
-    var quiet = false
+  }
+
+  static func run(steps: [[String: Any]], target: Target, quiet: Bool) throws {
+    let stepBudgets = steps.map { $0["timeout"] as? Double ?? stepTimeoutSeconds }
+    try send(
+      ["operation": "run", "steps": steps, "quiet": quiet],
+      target: target,
+      timeoutSeconds: stepBudgets.reduce(baseTimeoutSeconds, +)
+    )
   }
 
   @discardableResult
   static func send(
-    steps: [[String: Any]],
+    _ operation: [String: Any],
     target: Target,
-    newTab: [String: Any]? = nil
+    timeoutSeconds: Double = baseTimeoutSeconds + stepTimeoutSeconds
   ) throws -> String? {
-    var request: [String: Any] = ["steps": steps, "quiet": target.quiet]
+    var request = operation
     request["tabID"] = target.tab
-    request["newTab"] = newTab
     let data = try JSONSerialization.data(withJSONObject: request)
     var params = ["request": String(bytes: data, encoding: .utf8) ?? "{}"]
     params["worktreeID"] = target.worktree
@@ -69,7 +82,7 @@ nonisolated enum BrowserRequest {
       try QueryDispatcher.query(
         resource: "browser",
         params: params,
-        timeoutSeconds: timeoutSeconds(steps: steps, opensTab: newTab != nil)
+        timeoutSeconds: Int(timeoutSeconds.rounded(.up))
       ).first ?? [:]
     if let output = reply["output"] {
       print(output)
@@ -78,12 +91,6 @@ nonisolated enum BrowserRequest {
       throw SocketClient.Error.responseError(error)
     }
     return reply["id"]
-  }
-
-  static func timeoutSeconds(steps: [[String: Any]], opensTab: Bool) -> Int {
-    let stepBudgets = steps.map { $0["timeout"] as? Double ?? stepTimeoutSeconds }
-    let total = stepBudgets.reduce(baseTimeoutSeconds + (opensTab ? stepTimeoutSeconds : 0), +)
-    return Int(total.rounded(.up))
   }
 }
 
@@ -101,13 +108,40 @@ extension BrowserCommand {
     @OptionGroup var backgroundOption: BackgroundOption
 
     func run() throws {
-      var newTab: [String: Any] = ["background": backgroundOption.background]
-      newTab["url"] = url
-      let target = BrowserRequest.Target(worktree: worktree)
-      guard let tabID = try BrowserRequest.send(steps: [], target: target, newTab: newTab) else {
+      var operation: [String: Any] = ["operation": "open", "background": backgroundOption.background]
+      operation["url"] = url
+      guard let tabID = try BrowserRequest.send(operation, target: BrowserRequest.Target(worktree: worktree)) else {
         throw SocketClient.Error.responseError("Supacode did not report the new tab.")
       }
       print(tabID)
+    }
+  }
+
+  struct Tabs: ParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "List the worktree's browser tabs: ID, title, and address.")
+
+    @Option(name: [.short, .long], help: "Worktree ID. Defaults to the focused worktree.")
+    var worktree: String?
+
+    func run() throws {
+      try BrowserRequest.send(["operation": "tabs"], target: BrowserRequest.Target(worktree: worktree))
+    }
+  }
+
+  struct Close: ParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Close a browser tab.")
+
+    @Option(
+      name: [.short, .long],
+      help: "Browser tab ID. Defaults to the worktree's only browser tab.")
+    var tab: String?
+
+    @Option(name: [.short, .long], help: "Worktree ID, used when no tab is given. Defaults to the focused worktree.")
+    var worktree: String?
+
+    func run() throws {
+      try BrowserRequest.send(["operation": "close"], target: BrowserRequest.Target(tab: tab, worktree: worktree))
     }
   }
 
@@ -124,7 +158,7 @@ extension BrowserCommand {
     }
 
     func run() throws {
-      try BrowserRequest.send(steps: [step()], target: browser.target)
+      try BrowserRequest.run(steps: [step()], target: browser.target, quiet: browser.quiet)
     }
   }
 
@@ -147,7 +181,7 @@ extension BrowserCommand {
     }
 
     func run() throws {
-      try BrowserRequest.send(steps: [step()], target: browser.target)
+      try BrowserRequest.run(steps: [step()], target: browser.target, quiet: browser.quiet)
     }
   }
 
@@ -164,7 +198,7 @@ extension BrowserCommand {
     }
 
     func run() throws {
-      try BrowserRequest.send(steps: [step()], target: browser.target)
+      try BrowserRequest.run(steps: [step()], target: browser.target, quiet: browser.quiet)
     }
   }
 
@@ -184,7 +218,7 @@ extension BrowserCommand {
     }
 
     func run() throws {
-      try BrowserRequest.send(steps: [step()], target: browser.target)
+      try BrowserRequest.run(steps: [step()], target: browser.target, quiet: browser.quiet)
     }
   }
 
@@ -204,7 +238,7 @@ extension BrowserCommand {
     }
 
     func run() throws {
-      try BrowserRequest.send(steps: [step()], target: browser.target)
+      try BrowserRequest.run(steps: [step()], target: browser.target, quiet: browser.quiet)
     }
   }
 
@@ -227,7 +261,7 @@ extension BrowserCommand {
     }
 
     func run() throws {
-      try BrowserRequest.send(steps: [step()], target: browser.target)
+      try BrowserRequest.run(steps: [step()], target: browser.target, quiet: browser.quiet)
     }
   }
 
@@ -273,7 +307,93 @@ extension BrowserCommand {
     }
 
     func run() throws {
-      try BrowserRequest.send(steps: [step()], target: browser.target)
+      try BrowserRequest.run(steps: [step()], target: browser.target, quiet: browser.quiet)
+    }
+  }
+
+  struct Eval: ParsableCommand, BrowserStepCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "Run JavaScript in the page and print the result as JSON.",
+      discussion: "Pass an expression such as 'document.title', or statements that end in a return.")
+
+    @Argument(help: "JavaScript to run. `await` is allowed.")
+    var source: String
+
+    @OptionGroup var browser: BrowserTargetOptions
+
+    func step() -> [String: Any] {
+      ["verb": "eval", "source": source]
+    }
+
+    func run() throws {
+      try BrowserRequest.run(steps: [step()], target: browser.target, quiet: browser.quiet)
+    }
+  }
+
+  struct Screenshot: ParsableCommand, BrowserStepCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "Save a PNG of the visible page and print its path.")
+
+    @Argument(help: "Where to save the PNG. Defaults to a new file in the temporary directory.")
+    var path: String?
+
+    @OptionGroup var browser: BrowserTargetOptions
+
+    func step() -> [String: Any] {
+      var step: [String: Any] = ["verb": "screenshot"]
+      step["path"] = path.map { URL(fileURLWithPath: $0).standardizedFileURL.path(percentEncoded: false) }
+      return step
+    }
+
+    func run() throws {
+      try BrowserRequest.run(steps: [step()], target: browser.target, quiet: browser.quiet)
+    }
+  }
+
+  struct Console: ParsableCommand, BrowserStepCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "Print the page's console messages and uncaught errors.",
+      discussion: "Messages are kept from the first browser command sent to the tab.")
+
+    @Flag(name: .long, help: "Forget the messages after printing them.")
+    var clear = false
+
+    @OptionGroup var browser: BrowserTargetOptions
+
+    func step() -> [String: Any] {
+      ["verb": "console", "clear": clear]
+    }
+
+    func run() throws {
+      try BrowserRequest.run(steps: [step()], target: browser.target, quiet: browser.quiet)
+    }
+  }
+
+  struct Dialog: ParsableCommand, BrowserStepCommand {
+    enum Answer: String, ExpressibleByArgument, CaseIterable {
+      case accept
+      case dismiss
+    }
+
+    static let configuration = CommandConfiguration(
+      abstract: "Answer the alert, confirm, or prompt the page is showing.")
+
+    @Argument(help: "accept or dismiss.")
+    var answer: Answer
+
+    @Option(name: .long, help: "Text to enter in a prompt before accepting it.")
+    var text: String?
+
+    @OptionGroup var browser: BrowserTargetOptions
+
+    func step() -> [String: Any] {
+      var step: [String: Any] = ["verb": "dialog", "accept": answer == .accept]
+      step["text"] = text
+      return step
+    }
+
+    func run() throws {
+      try BrowserRequest.run(steps: [step()], target: browser.target, quiet: browser.quiet)
     }
   }
 
@@ -313,7 +433,7 @@ extension BrowserCommand {
       guard !steps.isEmpty else {
         throw ValidationError("No steps on stdin.")
       }
-      try BrowserRequest.send(steps: steps, target: browser.target)
+      try BrowserRequest.run(steps: steps, target: browser.target, quiet: browser.quiet)
     }
   }
 

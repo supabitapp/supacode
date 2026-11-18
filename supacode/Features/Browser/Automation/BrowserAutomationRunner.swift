@@ -1,34 +1,21 @@
 import Foundation
 
-nonisolated struct BrowserSnapshotBaseline: Equatable, Sendable {
-  var text: String
-  var url: String
-}
-
-protocol BrowserAutomationPage: AnyObject {
-  var isLoadingPage: Bool { get }
-  var documentGeneration: Int { get }
-  var snapshotBaseline: BrowserSnapshotBaseline? { get set }
-  func loadPage(_ url: URL)
-  func waitUntilLoaded(timeout: Duration) async -> Bool
-  func drive(
-    _ command: String,
-    _ arguments: [String: Any],
-    timeout: Duration
-  ) async throws(BrowserAutomationError) -> BrowserDriverReply
-}
-
 struct BrowserAutomationRunner {
   static let snapshotByteLimit = 20_000
   static let navigationByteLimit = 4_000
   static let deltaLineLimit = 30
-  static let actionTimeout = Duration.seconds(10)
   static let loadTimeout = Duration.seconds(30)
-  static let defaultWaitTimeout = Duration.seconds(10)
+  static let dialogHint = "Answer it with `dialog accept` or `dialog dismiss`."
 
   private struct ReportBase {
     var generation: Int
-    var baseline: BrowserSnapshotBaseline
+    var snapshot: BrowserPageSnapshot
+  }
+
+  private struct Progress {
+    var result = BrowserAutomationResult()
+    var reportBase: ReportBase?
+    var isLastStep = false
   }
 
   let page: any BrowserAutomationPage
@@ -36,125 +23,145 @@ struct BrowserAutomationRunner {
   var isCallerGone: () -> Bool = { false }
 
   func run(_ steps: [BrowserAutomationStep]) async -> BrowserAutomationResult {
-    var result = BrowserAutomationResult()
-    var reportBase: ReportBase?
+    var progress = Progress()
     for (index, step) in steps.enumerated() {
+      progress.isLastStep = index == steps.count - 1
+      let label = steps.count > 1 ? "step \(index + 1) (\(step.verb)): " : ""
       guard !isCallerGone() else {
-        result.failure = "Stopped before step \(index + 1): the caller disconnected."
-        return result
+        progress.result.failure = "Stopped before step \(index + 1): the caller disconnected."
+        return progress.result
+      }
+      if let dialog = page.pendingDialog, !step.worksWhileADialogIsOpen {
+        progress.result.failure = "\(label)A page dialog is open: \(dialog.summary). \(Self.dialogHint)"
+        return progress.result
       }
       do {
-        if step.verb == .snapshot {
-          result.lines += try await snapshot(step)
-          reportBase = nil
-          continue
+        try await run(step, &progress)
+      } catch .dialogOpened(let dialog) {
+        progress.result.lines += Self.dialogLines(dialog)
+        if !progress.isLastStep {
+          progress.result.failure = "Stopped before step \(index + 2): a page dialog is open."
         }
-        if reportBase == nil, reportsChanges {
-          reportBase = try await captureBase()
-        }
-        result.lines.append(try await perform(step))
-        if reportsChanges || index < steps.count - 1 {
-          await settle()
-        }
+        return progress.result
       } catch {
-        let message = Self.message(for: error, verb: step.verb)
-        result.failure = steps.count > 1 ? "step \(index + 1) (\(step.verb.rawValue)): \(message)" : message
-        return result
+        progress.result.failure = label + Self.message(for: error, step: step)
+        return progress.result
       }
     }
-    guard let reportBase else { return result }
+    guard let reportBase = progress.reportBase else { return progress.result }
     do {
-      result.lines += try await report(since: reportBase)
+      progress.result.lines += try await report(since: reportBase)
     } catch {
-      result.failure = "The action ran, but the page could not be read: \(Self.message(for: error, verb: .snapshot))"
+      progress.result.failure = "The action ran, but the page could not be read: \(Self.message(for: error, step: nil))"
     }
-    return result
+    return progress.result
   }
 
-  private func snapshot(_ step: BrowserAutomationStep) async throws(BrowserAutomationError) -> [String] {
+  private func run(_ step: BrowserAutomationStep, _ progress: inout Progress) async throws(BrowserAutomationError) {
+    switch step {
+    case .snapshot(let full, let scope):
+      progress.result.lines += try await snapshotLines(full: full, scope: scope)
+      progress.reportBase = nil
+    case .screenshot(let path):
+      progress.result.lines.append("saved \(try await page.saveScreenshot(to: path))")
+    case .console(let clear):
+      progress.result.lines.append(Self.consoleText(page.consoleMessages(clearing: clear)))
+    case .evaluate(let source):
+      let value = try await page.evaluate(source)
+      progress.result.lines.append(
+        BrowserSnapshotText.capped(value, maxBytes: Self.snapshotByteLimit, hint: "Return less from the script."))
+      if !progress.isLastStep {
+        await settle()
+      }
+    case .navigate(let url, let timeout):
+      try await change(&progress) { () async throws(BrowserAutomationError) in
+        page.loadPage(url)
+        let finished = await page.waitUntilLoaded(timeout: timeout ?? Self.loadTimeout)
+        return "opened \(url.absoluteString)" + (finished ? "" : " (still loading)")
+      }
+    case .click(let target):
+      try await change(&progress) { () async throws(BrowserAutomationError) in
+        try await page.perform(.click(target: target))
+      }
+    case .fill(let target, let text):
+      try await change(&progress) { () async throws(BrowserAutomationError) in
+        try await page.perform(.fill(target: target, text: text))
+      }
+    case .select(let target, let option):
+      try await change(&progress) { () async throws(BrowserAutomationError) in
+        try await page.perform(.select(target: target, option: option))
+      }
+    case .press(let key, let target):
+      try await change(&progress) { () async throws(BrowserAutomationError) in
+        try await page.perform(.press(key: key, target: target))
+      }
+    case .wait(let condition, let timeout):
+      try await change(&progress) { () async throws(BrowserAutomationError) in
+        try await wait(for: condition, timeout: timeout)
+      }
+    case .dialog(let answer):
+      try await change(&progress) { () throws(BrowserAutomationError) in
+        guard let dialog = page.answerDialog(answer) else {
+          throw .rejected("No page dialog is open.")
+        }
+        return (answer == .dismiss ? "dismissed " : "accepted ") + dialog.summary
+      }
+    }
+  }
+
+  private func change(
+    _ progress: inout Progress,
+    _ act: () async throws(BrowserAutomationError) -> String
+  ) async throws(BrowserAutomationError) {
+    if progress.reportBase == nil, reportsChanges {
+      progress.reportBase = try await captureBase()
+    }
+    progress.result.lines.append(try await act())
+    if reportsChanges || !progress.isLastStep {
+      await settle()
+    }
+  }
+
+  private func snapshotLines(full: Bool, scope: String?) async throws(BrowserAutomationError) -> [String] {
     await waitForLoad()
-    let reply = try await page.drive("snapshot", [:], timeout: Self.actionTimeout)
-    let full = reply.text ?? ""
-    page.snapshotBaseline = BrowserSnapshotBaseline(text: full, url: reply.url ?? "")
-    var text = full
-    if let scope = step.scope {
-      guard let scoped = BrowserSnapshotText.scoped(full, to: scope) else {
+    let snapshot = try await readPage()
+    var text = snapshot.text
+    if let scope {
+      guard let scoped = BrowserSnapshotText.scoped(text, to: scope) else {
         throw .rejected("Ref \(scope) is not on the page now. Run `snapshot` for current refs.")
       }
       text = scoped
     }
-    if step.full != true {
+    if !full {
       text = BrowserSnapshotText.interactive(text)
     }
-    return ["page: \(Self.header(reply))", Self.shown(text, maxBytes: Self.snapshotByteLimit)]
+    return ["page: \(snapshot.header)", Self.shown(text, maxBytes: Self.snapshotByteLimit)]
   }
 
-  private func captureBase() async throws(BrowserAutomationError) -> ReportBase {
+  private func readPage() async throws(BrowserAutomationError) -> BrowserPageSnapshot {
+    let snapshot = try await page.snapshot()
+    page.lastSnapshot = snapshot
+    return snapshot
+  }
+
+  private func captureBase() async throws(BrowserAutomationError) -> ReportBase? {
+    guard page.pendingDialog == nil else {
+      return page.lastSnapshot.map { ReportBase(generation: page.documentGeneration, snapshot: $0) }
+    }
     await waitForLoad()
-    if let baseline = page.snapshotBaseline {
-      return ReportBase(generation: page.documentGeneration, baseline: baseline)
+    if let known = page.lastSnapshot {
+      return ReportBase(generation: page.documentGeneration, snapshot: known)
     }
-    let reply = try await page.drive("snapshot", [:], timeout: Self.actionTimeout)
-    let baseline = BrowserSnapshotBaseline(text: reply.text ?? "", url: reply.url ?? "")
-    page.snapshotBaseline = baseline
-    return ReportBase(generation: page.documentGeneration, baseline: baseline)
+    let snapshot = try await readPage()
+    return ReportBase(generation: page.documentGeneration, snapshot: snapshot)
   }
 
-  private func perform(_ step: BrowserAutomationStep) async throws(BrowserAutomationError) -> String {
-    switch step.verb {
-    case .navigate:
-      guard let url = step.url.flatMap(BrowserAddress.resolve) else {
-        throw .rejected("navigate needs a URL.")
-      }
-      page.loadPage(url)
-      let finished = await page.waitUntilLoaded(timeout: step.boundedTimeout ?? Self.loadTimeout)
-      return "opened \(url.absoluteString)" + (finished ? "" : " (still loading)")
-    case .click:
-      return try await act("click", ["target": try Self.required(step.target, "a target")])
-    case .fill:
-      return try await act(
-        "fill",
-        ["target": try Self.required(step.target, "a target"), "text": try Self.present(step.text, "text")]
-      )
-    case .select:
-      return try await act(
-        "select",
-        ["target": try Self.required(step.target, "a target"), "option": try Self.present(step.option, "an option")]
-      )
-    case .press:
-      var arguments: [String: Any] = ["key": try Self.required(step.key, "a key")]
-      arguments["target"] = step.target
-      return try await act("press", arguments)
-    case .wait:
-      return try await wait(step)
-    case .snapshot:
-      return ""
-    }
-  }
-
-  private func act(_ command: String, _ arguments: [String: Any]) async throws(BrowserAutomationError) -> String {
-    try await page.drive(command, arguments, timeout: Self.actionTimeout).ack ?? command
-  }
-
-  private func wait(_ step: BrowserAutomationStep) async throws(BrowserAutomationError) -> String {
-    var arguments: [String: Any] = [:]
-    arguments["text"] = step.text
-    arguments["url"] = step.url
-    arguments["target"] = step.target
-    guard !arguments.isEmpty else {
-      throw .rejected("wait needs --text, --url, or a target.")
-    }
-    if step.hidden == true {
-      arguments["state"] = "hidden"
-    }
-    let total = step.boundedTimeout ?? Self.defaultWaitTimeout
+  private func wait(for condition: BrowserPageWait, timeout: Duration) async throws(BrowserAutomationError) -> String {
     let started = ContinuousClock.now
     while true {
-      let remaining = total - (ContinuousClock.now - started)
-      let budget = max(remaining, .milliseconds(1))
-      arguments["timeoutMs"] = Double(budget.components.seconds) * 1000 + Double(budget.components.attoseconds) / 1e15
+      let remaining = timeout - (ContinuousClock.now - started)
       do {
-        return try await page.drive("wait", arguments, timeout: budget + .seconds(2)).ack ?? "wait finished"
+        return try await page.perform(.wait(condition, timeout: max(remaining, .milliseconds(1))))
       } catch .contextLost where remaining > .zero {
         _ = await page.waitUntilLoaded(timeout: remaining)
       }
@@ -162,7 +169,7 @@ struct BrowserAutomationRunner {
   }
 
   private func settle() async {
-    _ = try? await page.drive("settle", [:], timeout: .seconds(3))
+    await page.settle()
     await waitForLoad()
   }
 
@@ -172,27 +179,41 @@ struct BrowserAutomationRunner {
   }
 
   private func report(since base: ReportBase) async throws(BrowserAutomationError) -> [String] {
-    let reply = try await page.drive("snapshot", [:], timeout: Self.actionTimeout)
-    let text = reply.text ?? ""
-    page.snapshotBaseline = BrowserSnapshotBaseline(text: text, url: reply.url ?? "")
+    if let dialog = page.pendingDialog {
+      return Self.dialogLines(dialog)
+    }
+    let snapshot = try await readPage()
     guard page.documentGeneration == base.generation else {
       return [
-        "navigated: \(Self.header(reply))",
-        Self.shown(BrowserSnapshotText.interactive(text), maxBytes: Self.navigationByteLimit),
+        "navigated: \(snapshot.header)",
+        Self.shown(BrowserSnapshotText.interactive(snapshot.text), maxBytes: Self.navigationByteLimit),
       ]
     }
     var lines: [String] = []
-    if let url = reply.url, url != base.baseline.url {
-      lines.append("url: \(url)")
+    if snapshot.url != base.snapshot.url {
+      lines.append("url: \(snapshot.url)")
     }
-    lines.append(BrowserSnapshotDelta(from: base.baseline.text, to: text).rendered(maxLines: Self.deltaLineLimit))
+    lines.append(
+      BrowserSnapshotDelta(from: base.snapshot.text, to: snapshot.text).rendered(maxLines: Self.deltaLineLimit))
     return lines
   }
 
-  private static func header(_ reply: BrowserDriverReply) -> String {
-    let url = "<\(reply.url ?? "")>"
-    guard let title = reply.title, !title.isEmpty else { return url }
-    return "\(title) \(url)"
+  private static func dialogLines(_ dialog: BrowserPageDialog) -> [String] {
+    ["a page dialog opened: \(dialog.summary)", dialogHint]
+  }
+
+  private static func consoleText(_ messages: [String]) -> String {
+    guard !messages.isEmpty else { return "(no console messages)" }
+    var kept: [String] = []
+    var bytes = 0
+    for message in messages.reversed() {
+      bytes += message.utf8.count + 1
+      guard bytes <= snapshotByteLimit else { break }
+      kept.append(message)
+    }
+    let dropped = messages.count - kept.count
+    let notice = dropped > 0 ? ["... \(dropped) earlier messages not shown."] : []
+    return (notice + kept.reversed()).joined(separator: "\n")
   }
 
   private static func shown(_ text: String, maxBytes: Int) -> String {
@@ -204,18 +225,7 @@ struct BrowserAutomationRunner {
     )
   }
 
-  private static func present(_ value: String?, _ name: String) throws(BrowserAutomationError) -> String {
-    guard let value else { throw .rejected("Missing \(name).") }
-    return value
-  }
-
-  private static func required(_ value: String?, _ name: String) throws(BrowserAutomationError) -> String {
-    let value = try present(value, name)
-    guard !value.isEmpty else { throw .rejected("Missing \(name).") }
-    return value
-  }
-
-  private static func message(for error: BrowserAutomationError, verb: BrowserAutomationStep.Verb) -> String {
+  private static func message(for error: BrowserAutomationError, step: BrowserAutomationStep?) -> String {
     switch error {
     case .rejected(let message), .internalFailure(let message):
       message
@@ -223,10 +233,28 @@ struct BrowserAutomationRunner {
       "The browser tab has no live page."
     case .contextLost:
       "The page navigated away before the command finished."
-    case .timedOut where [.click, .fill, .select, .press].contains(verb):
-      "Timed out. The action may have happened. A page dialog may be blocking the page."
+    case .dialogOpened(let dialog):
+      "A page dialog is open: \(dialog.summary). \(dialogHint)"
+    case .timedOut where step?.actsOnThePage == true:
+      "Timed out. The action may have happened."
     case .timedOut:
       "Timed out."
+    }
+  }
+}
+
+extension BrowserAutomationStep {
+  fileprivate var worksWhileADialogIsOpen: Bool {
+    switch self {
+    case .dialog, .screenshot, .console: true
+    case .navigate, .snapshot, .click, .fill, .select, .press, .wait, .evaluate: false
+    }
+  }
+
+  fileprivate var actsOnThePage: Bool {
+    switch self {
+    case .click, .fill, .select, .press, .evaluate: true
+    case .navigate, .snapshot, .wait, .screenshot, .console, .dialog: false
     }
   }
 }

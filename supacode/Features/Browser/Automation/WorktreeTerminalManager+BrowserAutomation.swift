@@ -10,66 +10,103 @@ extension WorktreeTerminalManager {
     let worktreeID =
       rawWorktreeID.map { WorktreeID($0.removingPercentEncoding ?? $0) }
       ?? appStore?.withState { $0.repositories.selectedWorktreeID }
-    let content: BrowserContent
-    var createdTabID: String?
-    if let newTab = request.newTab {
-      guard let opened = openAutomationTab(newTab, in: worktreeID) else {
-        return BrowserAutomationResult(refusal: "Could not open a browser tab. Pass -w <worktree>.")
+    switch request.operation {
+    case .open(let url, let background):
+      return await openAutomationTab(url: url, background: background, in: worktreeID)
+    case .listTabs:
+      return listBrowserTabs(in: worktreeID)
+    case .close:
+      let resolution = resolve(request.tabID, in: worktreeID)
+      guard case .tab(let target) = resolution else {
+        return Self.refusal(resolution)
       }
-      content = opened.content
-      createdTabID = opened.tabID.rawValue.uuidString
-    } else {
-      let layouts = appStore?.withState { $0.terminals.layouts.map { (worktreeID: $0.id, layout: $0.layout) } } ?? []
-      switch BrowserAutomationTarget.resolve(tabID: request.tabID, worktreeID: worktreeID, layouts: layouts) {
-      case .refused(let message):
-        return BrowserAutomationResult(refusal: message)
-      case .ambiguous(let candidates):
-        return BrowserAutomationResult(
-          lines: candidates.map(Self.listing),
-          refusal: "Several browser tabs are open. Pass -t <tab> with an ID from the page output."
-        )
-      case .tab(let target):
-        guard let live = liveBrowserContent(target) else {
-          return BrowserAutomationResult(refusal: "The browser tab could not be started.")
-        }
-        content = live
+      sendLayout(target.worktreeID, .closeTab(id: target.tabID))
+      return BrowserAutomationResult(lines: ["closed \(target.tabID.rawValue.uuidString)"])
+    case .run(let steps, let quiet):
+      let resolution = resolve(request.tabID, in: worktreeID)
+      guard case .tab(let target) = resolution else {
+        return Self.refusal(resolution)
+      }
+      guard let content = liveBrowserContent(target) else {
+        return BrowserAutomationResult(refusal: "The browser tab could not be started.")
+      }
+      return await content.automation.serialized {
+        await BrowserAutomationRunner(page: content, reportsChanges: !quiet, isCallerGone: isCallerGone).run(steps)
       }
     }
-    var result = await content.automation.serialized {
-      if request.newTab?.url != nil {
-        _ = await content.waitUntilLoaded(timeout: BrowserAutomationRunner.loadTimeout)
-      }
-      return await BrowserAutomationRunner(page: content, reportsChanges: !request.quiet, isCallerGone: isCallerGone)
-        .run(request.steps)
+  }
+
+  private var browserLayouts: [(worktreeID: Worktree.ID, layout: PaneLayout)] {
+    appStore?.withState { $0.terminals.layouts.map { (worktreeID: $0.id, layout: $0.layout) } } ?? []
+  }
+
+  private func resolve(_ tabID: String?, in worktreeID: Worktree.ID?) -> BrowserAutomationTarget.Resolution {
+    BrowserAutomationTarget.resolve(tabID: tabID, worktreeID: worktreeID, layouts: browserLayouts)
+  }
+
+  private static func refusal(_ resolution: BrowserAutomationTarget.Resolution) -> BrowserAutomationResult {
+    switch resolution {
+    case .refused(let message):
+      BrowserAutomationResult(refusal: message)
+    case .ambiguous(let candidates):
+      BrowserAutomationResult(
+        lines: candidates.map(listing),
+        refusal: "Several browser tabs are open. Pass -t <tab> with an ID from the page output."
+      )
+    case .tab:
+      BrowserAutomationResult()
     }
-    result.createdTabID = createdTabID
-    return result
+  }
+
+  private func listBrowserTabs(in worktreeID: Worktree.ID?) -> BrowserAutomationResult {
+    guard let worktreeID else {
+      return BrowserAutomationResult(refusal: "No worktree is focused. Pass -w <worktree>.")
+    }
+    let layout = browserLayouts.first { $0.worktreeID == worktreeID }?.layout
+    let candidates = layout.map(BrowserAutomationTarget.candidates) ?? []
+    guard !candidates.isEmpty else {
+      return BrowserAutomationResult(lines: ["(no browser tabs)"])
+    }
+    return BrowserAutomationResult(lines: candidates.prefix(BrowserAutomationTarget.listLimit).map(Self.listing))
   }
 
   private static func listing(_ candidate: BrowserAutomationTarget.Candidate) -> String {
     let content = ContentRuntime.liveValue.content(for: candidate.contentID) as? BrowserContent
     let title = candidate.customTitle ?? content?.page.reportedTitle ?? candidate.storedTitle
-    return "\(candidate.tabID.rawValue.uuidString)  \(content?.automation.redacted(title) ?? title)"
+    let url = (content?.page.url ?? candidate.storedURL)?.absoluteString ?? ""
+    let line = "\(candidate.tabID.rawValue.uuidString)  \(title)  \(url)"
+    return content?.automation.redacted(line) ?? line
   }
 
   private func openAutomationTab(
-    _ newTab: BrowserAutomationRequest.NewTab,
+    url: URL?,
+    background: Bool,
     in worktreeID: Worktree.ID?
-  ) -> (tabID: TabID, content: BrowserContent)? {
-    guard let worktree = appStore?.withState({ $0.repositories.worktree(for: worktreeID) }) else { return nil }
+  ) async -> BrowserAutomationResult {
+    guard let worktree = appStore?.withState({ $0.repositories.worktree(for: worktreeID) }) else {
+      return BrowserAutomationResult(refusal: "Could not open a browser tab. Pass -w <worktree>.")
+    }
     _ = host(for: worktree)
     let tabID = TabID()
     let contentID = ContentID()
     openBrowserTab(
       in: worktree.id,
-      url: newTab.url.flatMap(BrowserAddress.resolve),
+      url: url,
       placement: .beside,
-      focusing: newTab.background != true,
+      focusing: !background,
       tabID: tabID,
       contentID: contentID
     )
-    guard let content = ContentRuntime.liveValue.content(for: contentID) as? BrowserContent else { return nil }
-    return (tabID, content)
+    guard let content = ContentRuntime.liveValue.content(for: contentID) as? BrowserContent else {
+      return BrowserAutomationResult(refusal: "Could not open a browser tab. Pass -w <worktree>.")
+    }
+    content.captureConsole()
+    if url != nil {
+      await content.automation.serialized {
+        _ = await content.waitUntilLoaded(timeout: BrowserAutomationRunner.loadTimeout)
+      }
+    }
+    return BrowserAutomationResult(createdTabID: tabID.rawValue.uuidString)
   }
 
   private func liveBrowserContent(_ target: BrowserAutomationTarget) -> BrowserContent? {

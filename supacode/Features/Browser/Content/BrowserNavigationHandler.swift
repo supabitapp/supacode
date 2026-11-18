@@ -12,8 +12,15 @@ final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelega
 
   private static let logger = SupaLogger("Browser")
 
+  private struct PendingDialog {
+    var dialog: BrowserPageDialog
+    var resolve: (BrowserDialogAnswer) -> Void
+  }
+
   var failedURL: URL?
   var documentChanged: (() -> Void)?
+  var dialogChanged: ((BrowserPageDialog?) -> Void)?
+  private var pendingDialog: PendingDialog?
   private var isLoadingErrorPage = false
   private var isAskingToLeave = false
   private let openInNewTab: (URL) -> Void
@@ -160,9 +167,7 @@ final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelega
     runJavaScriptAlertPanelWithMessage message: String,
     initiatedByFrame frame: WKFrameInfo
   ) async {
-    let alert = Self.makeAlert(for: frame, message: message)
-    alert.addButton(withTitle: "OK")
-    _ = await Self.present(alert, over: webView)
+    _ = await ask(BrowserPageDialog(kind: .alert, message: message))
   }
 
   func webView(
@@ -170,10 +175,7 @@ final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelega
     runJavaScriptConfirmPanelWithMessage message: String,
     initiatedByFrame frame: WKFrameInfo
   ) async -> Bool {
-    let alert = Self.makeAlert(for: frame, message: message)
-    alert.addButton(withTitle: "OK")
-    alert.addButton(withTitle: "Cancel")
-    return await Self.present(alert, over: webView) == .alertFirstButtonReturn
+    await ask(BrowserPageDialog(kind: .confirm, message: message)) != .dismiss
   }
 
   func webView(
@@ -182,14 +184,27 @@ final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelega
     defaultText: String?,
     initiatedByFrame frame: WKFrameInfo
   ) async -> String? {
-    let alert = Self.makeAlert(for: frame, message: prompt)
-    let field = NSTextField(string: defaultText ?? "")
-    field.frame = NSRect(x: 0, y: 0, width: 280, height: 22)
-    alert.accessoryView = field
-    alert.window.initialFirstResponder = field
-    alert.addButton(withTitle: "OK")
-    alert.addButton(withTitle: "Cancel")
-    return await Self.present(alert, over: webView) == .alertFirstButtonReturn ? field.stringValue : nil
+    let dialog = BrowserPageDialog(kind: .prompt, message: prompt, defaultText: defaultText)
+    switch await ask(dialog) {
+    case .accept(let text): return text ?? defaultText ?? ""
+    case .dismiss: return nil
+    }
+  }
+
+  private func ask(_ dialog: BrowserPageDialog) async -> BrowserDialogAnswer {
+    await withCheckedContinuation { continuation in
+      pendingDialog = PendingDialog(dialog: dialog) { continuation.resume(returning: $0) }
+      dialogChanged?(dialog)
+    }
+  }
+
+  @discardableResult
+  func answerDialog(_ answer: BrowserDialogAnswer) -> BrowserPageDialog? {
+    guard let pending = pendingDialog else { return nil }
+    pendingDialog = nil
+    dialogChanged?(nil)
+    pending.resolve(answer)
+    return pending.dialog
   }
 
   func webView(
@@ -207,18 +222,6 @@ final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelega
     return await panel.beginSheetModal(for: window) == .OK ? panel.urls : nil
   }
 
-  private static func makeAlert(for frame: WKFrameInfo, message: String) -> NSAlert {
-    let alert = NSAlert()
-    let host = frame.securityOrigin.host
-    alert.messageText = host.isEmpty ? "This page says" : "\(host) says"
-    alert.informativeText = message
-    return alert
-  }
-
-  private static func present(_ alert: NSAlert, over webView: WKWebView) async -> NSApplication.ModalResponse {
-    guard let window = webView.window else { return alert.runModal() }
-    return await alert.beginSheetModal(for: window)
-  }
 }
 
 nonisolated enum BrowserErrorPage {

@@ -31,6 +31,9 @@ struct WorktreeTerminalManagerBrowserTests {
     }
   }
 
+  private static let readThePage = BrowserAutomationRequest.Operation.run(
+    steps: [.snapshot(full: false, scope: nil)], quiet: false)
+
   private func makeHarness(opensLinksInBrowserTab: Bool = false, usesLiveBrowserContent: Bool = false) -> Harness {
     let worktree = Worktree(
       id: WorktreeID("/tmp/repo/wt-browser"),
@@ -171,7 +174,7 @@ struct WorktreeTerminalManagerBrowserTests {
   @Test(.dependencies) func automationRefusesATabThatDoesNotExist() async {
     let harness = makeHarness()
     let unknown = UUID().uuidString
-    let request = BrowserAutomationRequest(tabID: unknown, steps: [BrowserAutomationStep(verb: .snapshot)])
+    let request = BrowserAutomationRequest(tabID: unknown, operation: Self.readThePage)
 
     let result = await harness.manager.runBrowserAutomation(request, worktreeID: nil)
 
@@ -182,7 +185,7 @@ struct WorktreeTerminalManagerBrowserTests {
     let harness = makeHarness()
     harness.manager.handleCommand(
       .openBrowserTab(harness.worktree, url: URL(string: "http://localhost:3000"), focusing: false))
-    let request = BrowserAutomationRequest(steps: [BrowserAutomationStep(verb: .snapshot)])
+    let request = BrowserAutomationRequest(operation: Self.readThePage)
 
     let found = await harness.manager.runBrowserAutomation(request, worktreeID: "%2Ftmp%2Frepo%2Fwt-browser")
     let elsewhere = await harness.manager.runBrowserAutomation(request, worktreeID: "/tmp/repo/other")
@@ -207,8 +210,7 @@ struct WorktreeTerminalManagerBrowserTests {
     let content = try #require(ContentRuntime.liveValue.content(for: tab.content.id) as? BrowserContent)
     content.hibernate()
     #expect(content.renderer == nil)
-    let request = BrowserAutomationRequest(
-      tabID: tab.id.rawValue.uuidString, steps: [BrowserAutomationStep(verb: .snapshot)])
+    let request = BrowserAutomationRequest(tabID: tab.id.rawValue.uuidString, operation: Self.readThePage)
 
     let result = await harness.manager.runBrowserAutomation(request, worktreeID: nil)
 
@@ -217,5 +219,32 @@ struct WorktreeTerminalManagerBrowserTests {
     #expect(content.renderer != nil)
     #expect(result.lines.first?.hasPrefix("page: Fixture <data:text/html,") == true)
     #expect(result.lines.last?.hasPrefix("- button \"Go\" [ref=e") == true)
+  }
+
+  @Test(.dependencies) func automationListsAndClosesBrowserTabs() async throws {
+    let harness = makeHarness()
+    let worktreeID = harness.worktree.id.rawValue
+    harness.manager.handleCommand(
+      .openBrowserTab(harness.worktree, url: URL(string: "http://localhost:3000/a"), focusing: false))
+    harness.manager.handleCommand(
+      .openBrowserTab(harness.worktree, url: URL(string: "http://localhost:3000/b"), focusing: false))
+    let layout = try #require(harness.layout)
+    let ids = layout.panes.flatMap(\.tabs).map(\.id.rawValue.uuidString)
+
+    let listed = await harness.manager.runBrowserAutomation(
+      BrowserAutomationRequest(operation: .listTabs), worktreeID: worktreeID)
+    #expect(
+      listed.lines == [
+        "\(ids[0])  New Tab  http://localhost:3000/a", "\(ids[1])  New Tab  http://localhost:3000/b",
+      ])
+
+    let closed = await harness.manager.runBrowserAutomation(
+      BrowserAutomationRequest(tabID: ids[0], operation: .close), worktreeID: nil)
+    #expect(closed.lines == ["closed \(ids[0])"])
+    #expect(harness.browserURLs == [URL(string: "http://localhost:3000/b")])
+
+    let empty = await harness.manager.runBrowserAutomation(
+      BrowserAutomationRequest(operation: .listTabs), worktreeID: "/tmp/repo/other")
+    #expect(empty.lines == ["(no browser tabs)"])
   }
 }

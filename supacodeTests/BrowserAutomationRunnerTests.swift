@@ -6,15 +6,27 @@ import Testing
 @MainActor
 struct BrowserAutomationRunnerTests {
   private final class FakePage: BrowserAutomationPage {
+    enum Call: Equatable {
+      case snapshot
+      case perform(BrowserPageAction)
+      case settle
+      case evaluate(String)
+      case screenshot(String?)
+      case answer(BrowserDialogAnswer)
+    }
+
     var isLoadingPage = false
     var documentGeneration = 1
-    var snapshotBaseline: BrowserSnapshotBaseline?
-    var commands: [String] = []
+    var lastSnapshot: BrowserPageSnapshot?
+    var pendingDialog: BrowserPageDialog?
+    var calls: [Call] = []
     var loadedURLs: [URL] = []
     var snapshots: [String]
     var url = "http://localhost/form"
     var title = "Form"
-    var onCommand: (String, [String: Any]) throws(BrowserAutomationError) -> BrowserDriverReply? = { _, _ in nil }
+    var console: [String] = []
+    var onPerform: (BrowserPageAction) throws(BrowserAutomationError) -> String? = { _ in nil }
+    var onSettle: () -> Void = {}
 
     init(snapshots: [String]) {
       self.snapshots = snapshots
@@ -32,25 +44,50 @@ struct BrowserAutomationRunnerTests {
       return true
     }
 
-    func drive(
-      _ command: String,
-      _ arguments: [String: Any],
-      timeout: Duration
-    ) async throws(BrowserAutomationError) -> BrowserDriverReply {
+    func snapshot() async throws(BrowserAutomationError) -> BrowserPageSnapshot {
       await Task.yield()
-      commands.append(command)
-      if let reply = try onCommand(command, arguments) {
-        return reply
+      calls.append(.snapshot)
+      let text = snapshots.count > 1 ? snapshots.removeFirst() : snapshots[0]
+      return BrowserPageSnapshot(text: text, url: url, title: title)
+    }
+
+    func perform(_ action: BrowserPageAction) async throws(BrowserAutomationError) -> String {
+      await Task.yield()
+      calls.append(.perform(action))
+      return try onPerform(action) ?? "done"
+    }
+
+    func settle() async {
+      await Task.yield()
+      calls.append(.settle)
+      onSettle()
+    }
+
+    func evaluate(_ source: String) async throws(BrowserAutomationError) -> String {
+      await Task.yield()
+      calls.append(.evaluate(source))
+      return "\"\(source)\""
+    }
+
+    func saveScreenshot(to path: String?) async throws(BrowserAutomationError) -> String {
+      await Task.yield()
+      calls.append(.screenshot(path))
+      return path ?? "/tmp/shot.png"
+    }
+
+    func consoleMessages(clearing: Bool) -> [String] {
+      defer {
+        if clearing {
+          console = []
+        }
       }
-      switch command {
-      case "snapshot":
-        let text = snapshots.count > 1 ? snapshots.removeFirst() : snapshots[0]
-        return BrowserDriverReply(text: text, url: url, title: title)
-      case "settle":
-        return BrowserDriverReply()
-      default:
-        return BrowserDriverReply(ack: "\(command) done")
-      }
+      return console
+    }
+
+    func answerDialog(_ answer: BrowserDialogAnswer) -> BrowserPageDialog? {
+      calls.append(.answer(answer))
+      defer { pendingDialog = nil }
+      return pendingDialog
     }
   }
 
@@ -62,230 +99,212 @@ struct BrowserAutomationRunnerTests {
     - button "Save" [ref=e1]
     - status [ref=e2]: saved
     """
-
-  private static func step(_ verb: BrowserAutomationStep.Verb, target: String? = "e1") -> BrowserAutomationStep {
-    BrowserAutomationStep(verb: verb, target: target)
-  }
+  private static let click = BrowserAutomationStep.click(target: "e1")
+  private static let clicked = FakePage.Call.perform(.click(target: "e1"))
+  private static let confirm = BrowserPageDialog(kind: .confirm, message: "Delete it?")
 
   @Test func anActionPrintsItsAcknowledgementAndWhatChanged() async {
     let page = FakePage(snapshots: [Self.before, Self.after])
-    let result = await BrowserAutomationRunner(page: page).run([Self.step(.click)])
-    #expect(page.commands == ["snapshot", "click", "settle", "snapshot"])
-    #expect(result == BrowserAutomationResult(lines: ["click done", "changed:\n- status [ref=e2]: saved"]))
-    #expect(page.snapshotBaseline == BrowserSnapshotBaseline(text: Self.after, url: page.url))
+    let result = await BrowserAutomationRunner(page: page).run([Self.click])
+    #expect(page.calls == [.snapshot, Self.clicked, .settle, .snapshot])
+    #expect(result == BrowserAutomationResult(lines: ["done", "changed:\n- status [ref=e2]: saved"]))
+    #expect(page.lastSnapshot == BrowserPageSnapshot(text: Self.after, url: page.url, title: page.title))
   }
 
   @Test func aQuietActionDoesNotReadThePage() async {
     let page = FakePage(snapshots: [Self.before])
-    let result = await BrowserAutomationRunner(page: page, reportsChanges: false).run([Self.step(.click)])
-    #expect(page.commands == ["click"])
-    #expect(result.lines == ["click done"])
+    let result = await BrowserAutomationRunner(page: page, reportsChanges: false).run([Self.click])
+    #expect(page.calls == [Self.clicked])
+    #expect(result.lines == ["done"])
   }
 
   @Test func anUnchangedPageSaysSo() async {
     let page = FakePage(snapshots: [Self.before])
-    let result = await BrowserAutomationRunner(page: page).run([Self.step(.click)])
-    #expect(result.lines == ["click done", "no visible change"])
+    let result = await BrowserAutomationRunner(page: page).run([Self.click])
+    #expect(result.lines == ["done", "no visible change"])
   }
 
-  @Test func aKnownBaselineIsNotReadAgain() async {
+  @Test func aPageThatWasAlreadyReadIsNotReadAgain() async {
     let page = FakePage(snapshots: [Self.after])
-    page.snapshotBaseline = BrowserSnapshotBaseline(text: Self.before, url: page.url)
-    let result = await BrowserAutomationRunner(page: page).run([Self.step(.click)])
-    #expect(page.commands == ["click", "settle", "snapshot"])
-    #expect(result.lines == ["click done", "changed:\n- status [ref=e2]: saved"])
+    page.lastSnapshot = BrowserPageSnapshot(text: Self.before, url: page.url, title: page.title)
+    let result = await BrowserAutomationRunner(page: page).run([Self.click])
+    #expect(page.calls == [Self.clicked, .settle, .snapshot])
+    #expect(result.lines == ["done", "changed:\n- status [ref=e2]: saved"])
   }
 
   @Test func aBatchSettlesBetweenStepsAndReportsOnce() async {
     let page = FakePage(snapshots: [Self.before, Self.after])
-    var fill = Self.step(.fill)
-    fill.text = "ada"
-    let result = await BrowserAutomationRunner(page: page).run([fill, Self.step(.click)])
-    #expect(page.commands == ["snapshot", "fill", "settle", "click", "settle", "snapshot"])
-    #expect(result.lines == ["fill done", "click done", "changed:\n- status [ref=e2]: saved"])
+    let fill = BrowserAutomationStep.fill(target: "e1", text: "")
+    let result = await BrowserAutomationRunner(page: page).run([fill, Self.click])
+    #expect(
+      page.calls == [.snapshot, .perform(.fill(target: "e1", text: "")), .settle, Self.clicked, .settle, .snapshot])
+    #expect(result.lines == ["done", "done", "changed:\n- status [ref=e2]: saved"])
   }
 
   @Test func aQuietBatchSettlesOnlyBetweenSteps() async {
     let page = FakePage(snapshots: [Self.before])
-    let result = await BrowserAutomationRunner(page: page, reportsChanges: false).run([
-      Self.step(.click), Self.step(.click),
-    ])
-    #expect(page.commands == ["click", "settle", "click"])
-    #expect(result.lines == ["click done", "click done"])
+    let result = await BrowserAutomationRunner(page: page, reportsChanges: false).run([Self.click, Self.click])
+    #expect(page.calls == [Self.clicked, .settle, Self.clicked])
+    #expect(result.lines == ["done", "done"])
   }
 
   @Test func aNavigationPrintsTheNewPage() async {
     let page = FakePage(snapshots: [Self.before, "- heading \"Done\" [ref=p2e1]\n- link \"Home\" [ref=p2e2]"])
-    page.onCommand = { command, _ in
-      if command == "settle" {
-        page.documentGeneration = 2
-        page.url = "http://localhost/done"
-        page.title = "Done"
-      }
-      return nil
+    page.onSettle = {
+      page.documentGeneration = 2
+      page.url = "http://localhost/done"
+      page.title = "Done"
     }
-    let result = await BrowserAutomationRunner(page: page).run([Self.step(.click)])
-    #expect(
-      result.lines == ["click done", "navigated: Done <http://localhost/done>", "- link \"Home\" [ref=p2e2]"])
+    let result = await BrowserAutomationRunner(page: page).run([Self.click])
+    #expect(result.lines == ["done", "navigated: Done <http://localhost/done>", "- link \"Home\" [ref=p2e2]"])
   }
 
   @Test func aNewURLInTheSameDocumentIsReported() async {
     let page = FakePage(snapshots: [Self.before, Self.after])
-    page.onCommand = { command, _ in
-      if command == "settle" {
-        page.url = "http://localhost/form#saved"
-      }
-      return nil
-    }
-    let result = await BrowserAutomationRunner(page: page).run([Self.step(.click)])
-    #expect(
-      result.lines == ["click done", "url: http://localhost/form#saved", "changed:\n- status [ref=e2]: saved"])
+    page.onSettle = { page.url = "http://localhost/form#saved" }
+    let result = await BrowserAutomationRunner(page: page).run([Self.click])
+    #expect(result.lines == ["done", "url: http://localhost/form#saved", "changed:\n- status [ref=e2]: saved"])
   }
 
   @Test func aFailingStepStopsTheBatchAndIsNamed() async {
     let page = FakePage(snapshots: [Self.before])
-    page.onCommand = { (command, _) throws(BrowserAutomationError) -> BrowserDriverReply? in
-      if command == "click" {
+    page.onPerform = { (action) throws(BrowserAutomationError) -> String? in
+      if case .click = action {
         throw .rejected("button \"Save\" is disabled.")
       }
       return nil
     }
-    var fill = Self.step(.fill)
-    fill.text = "ada"
-    let result = await BrowserAutomationRunner(page: page).run([fill, Self.step(.click), Self.step(.press)])
-    #expect(page.commands == ["snapshot", "fill", "settle", "click"])
-    #expect(result.lines == ["fill done"])
+    let fill = BrowserAutomationStep.fill(target: "e1", text: "ada")
+    let result = await BrowserAutomationRunner(page: page).run([fill, Self.click, .press(key: "Enter", target: nil)])
+    #expect(page.calls == [.snapshot, .perform(.fill(target: "e1", text: "ada")), .settle, Self.clicked])
+    #expect(result.lines == ["done"])
     #expect(result.failure == "step 2 (click): button \"Save\" is disabled.")
-  }
-
-  @Test func anEmptyFillReachesThePageAndAMissingOneDoesNot() async {
-    let page = FakePage(snapshots: [Self.before])
-    var sentText: String?
-    page.onCommand = { command, arguments in
-      if command == "fill" {
-        sentText = arguments["text"] as? String
-      }
-      return nil
-    }
-    var clear = Self.step(.fill)
-    clear.text = ""
-    let cleared = await BrowserAutomationRunner(page: page, reportsChanges: false).run([clear])
-    #expect(cleared.failure == nil)
-    #expect(sentText == "")
-
-    let missing = await BrowserAutomationRunner(page: page, reportsChanges: false).run([Self.step(.fill)])
-    #expect(missing.failure == "Missing text.")
-    #expect(page.commands == ["fill"])
-  }
-
-  @Test func aSingleFailingStepReportsOnlyTheReason() async {
-    let page = FakePage(snapshots: [Self.before])
-    let result = await BrowserAutomationRunner(page: page).run([Self.step(.click, target: nil)])
-    #expect(result.failure == "Missing a target.")
-    #expect(page.commands == ["snapshot"])
   }
 
   @Test func aTimedOutActionSaysItMayHaveHappened() async {
     let page = FakePage(snapshots: [Self.before])
-    page.onCommand = { (command, _) throws(BrowserAutomationError) -> BrowserDriverReply? in
-      if command == "click" {
-        throw .timedOut
-      }
-      return nil
-    }
-    let result = await BrowserAutomationRunner(page: page, reportsChanges: false).run([Self.step(.click)])
-    #expect(result.failure == "Timed out. The action may have happened. A page dialog may be blocking the page.")
+    page.onPerform = { (_) throws(BrowserAutomationError) -> String? in throw .timedOut }
+    let result = await BrowserAutomationRunner(page: page, reportsChanges: false).run([Self.click])
+    #expect(result.failure == "Timed out. The action may have happened.")
   }
 
   @Test func aWaitStartsOverWhenTheDocumentChanges() async {
     let page = FakePage(snapshots: [Self.before])
     var attempts = 0
-    page.onCommand = { (command, arguments) throws(BrowserAutomationError) -> BrowserDriverReply? in
-      guard command == "wait" else { return nil }
+    page.onPerform = { (action) throws(BrowserAutomationError) -> String? in
+      guard case .wait(.text("Welcome"), _) = action else { return nil }
       attempts += 1
-      #expect(arguments["text"] as? String == "Welcome")
       if attempts == 1 {
         throw .contextLost
       }
-      return BrowserDriverReply(ack: "found text \"Welcome\"")
+      return "found text \"Welcome\""
     }
-    var wait = Self.step(.wait, target: nil)
-    wait.text = "Welcome"
+    let wait = BrowserAutomationStep.wait(.text("Welcome"), timeout: .seconds(5))
     let result = await BrowserAutomationRunner(page: page, reportsChanges: false).run([wait])
     #expect(attempts == 2)
     #expect(result.lines == ["found text \"Welcome\""])
   }
 
-  @Test func anOversizedTimeoutIsBoundedInsteadOfTrapping() async {
-    let page = FakePage(snapshots: [Self.before])
-    var sentTimeout: Double?
-    page.onCommand = { command, arguments in
-      guard command == "wait" else { return nil }
-      sentTimeout = arguments["timeoutMs"] as? Double
-      return BrowserDriverReply(ack: "found")
-    }
-    var wait = Self.step(.wait, target: nil)
-    wait.text = "Welcome"
-    wait.timeout = 1e100
-    let result = await BrowserAutomationRunner(page: page, reportsChanges: false).run([wait])
-    #expect(result.lines == ["found"])
-    #expect((sentTimeout ?? .infinity) <= BrowserAutomationStep.maximumTimeoutSeconds * 1000)
-    #expect(BrowserAutomationStep(verb: .wait, timeout: -5).boundedTimeout == .zero)
-  }
-
   @Test func aBatchStopsWhenItsCallerHasGone() async {
     let page = FakePage(snapshots: [Self.before])
     var callerIsGone = false
-    page.onCommand = { command, _ in
-      if command == "click" {
-        callerIsGone = true
-      }
+    page.onPerform = { _ in
+      callerIsGone = true
       return nil
     }
     let runner = BrowserAutomationRunner(page: page, reportsChanges: false, isCallerGone: { callerIsGone })
-    let result = await runner.run([Self.step(.click), Self.step(.click), Self.step(.click)])
-    #expect(page.commands == ["click", "settle"])
-    #expect(result.lines == ["click done"])
+    let result = await runner.run([Self.click, Self.click, Self.click])
+    #expect(page.calls == [Self.clicked, .settle])
+    #expect(result.lines == ["done"])
     #expect(result.failure == "Stopped before step 2: the caller disconnected.")
   }
 
-  @Test func navigateLoadsTheResolvedAddress() async {
+  @Test func navigateLoadsTheAddress() async throws {
     let page = FakePage(snapshots: [Self.before])
-    var navigate = Self.step(.navigate, target: nil)
-    navigate.url = "localhost:3000/login"
-    let result = await BrowserAutomationRunner(page: page, reportsChanges: false).run([navigate])
-    #expect(page.loadedURLs == [URL(string: "http://localhost:3000/login")!])
+    let url = try #require(URL(string: "http://localhost:3000/login"))
+    let result = await BrowserAutomationRunner(page: page, reportsChanges: false).run([
+      .navigate(url: url, timeout: nil)
+    ])
+    #expect(page.loadedURLs == [url])
     #expect(result.lines == ["opened http://localhost:3000/login"])
   }
 
   @Test func snapshotPrintsInteractiveElementsUnderAPageLine() async {
     let page = FakePage(snapshots: ["- generic [ref=e1]:\n  - heading \"Title\" [ref=e2]\n  - button \"Save\" [ref=e3]"]
     )
-    let result = await BrowserAutomationRunner(page: page).run([Self.step(.snapshot, target: nil)])
+    let result = await BrowserAutomationRunner(page: page).run([.snapshot(full: false, scope: nil)])
     #expect(result.lines == ["page: Form <http://localhost/form>", "- button \"Save\" [ref=e3]"])
 
-    var full = Self.step(.snapshot, target: nil)
-    full.full = true
-    full.scope = "e2"
-    let scoped = await BrowserAutomationRunner(page: page).run([full])
+    let scoped = await BrowserAutomationRunner(page: page).run([.snapshot(full: true, scope: "e2")])
     #expect(scoped.lines == ["page: Form <http://localhost/form>", "- heading \"Title\" [ref=e2]"])
 
-    var missing = Self.step(.snapshot, target: nil)
-    missing.scope = "e9"
-    let failed = await BrowserAutomationRunner(page: page).run([missing])
+    let failed = await BrowserAutomationRunner(page: page).run([.snapshot(full: false, scope: "e9")])
     #expect(failed.failure == "Ref e9 is not on the page now. Run `snapshot` for current refs.")
   }
 
   @Test func aSnapshotAfterAnActionReplacesTheChangeReport() async {
     let page = FakePage(snapshots: [Self.before, Self.after])
-    let result = await BrowserAutomationRunner(page: page).run([Self.step(.click), Self.step(.snapshot, target: nil)])
-    #expect(page.commands == ["snapshot", "click", "settle", "snapshot"])
-    #expect(result.lines == ["click done", "page: Form <http://localhost/form>", "- button \"Save\" [ref=e1]"])
+    let result = await BrowserAutomationRunner(page: page).run([Self.click, .snapshot(full: false, scope: nil)])
+    #expect(page.calls == [.snapshot, Self.clicked, .settle, .snapshot])
+    #expect(result.lines == ["done", "page: Form <http://localhost/form>", "- button \"Save\" [ref=e1]"])
   }
 
   @Test func aPageWithoutControlsSaysHowToReadIt() async {
     let page = FakePage(snapshots: ["- paragraph [ref=e1]: hello"])
-    let result = await BrowserAutomationRunner(page: page).run([Self.step(.snapshot, target: nil)])
+    let result = await BrowserAutomationRunner(page: page).run([.snapshot(full: false, scope: nil)])
     #expect(result.lines.last == "(no interactive elements. Use `snapshot --full` for the page content.)")
+  }
+
+  @Test func readingStepsPrintTheirResultWithoutAChangeReport() async {
+    let page = FakePage(snapshots: [Self.before])
+    page.console = ["error: boom", "log: ready"]
+    let result = await BrowserAutomationRunner(page: page).run([
+      .evaluate(source: "document.title"),
+      .console(clear: true),
+      .screenshot(path: "/tmp/page.png"),
+      .console(clear: false),
+    ])
+    #expect(page.calls == [.evaluate("document.title"), .settle, .screenshot("/tmp/page.png")])
+    #expect(
+      result.lines == [
+        "\"document.title\"", "error: boom\nlog: ready", "saved /tmp/page.png", "(no console messages)",
+      ])
+    #expect(result.failure == nil)
+  }
+
+  @Test func anActionThatOpensADialogSaysSoAndStopsTheBatch() async {
+    let page = FakePage(snapshots: [Self.before])
+    page.onPerform = { (_) throws(BrowserAutomationError) -> String? in
+      page.pendingDialog = Self.confirm
+      throw .dialogOpened(Self.confirm)
+    }
+    let single = await BrowserAutomationRunner(page: page).run([Self.click])
+    #expect(
+      single.lines == [
+        "a page dialog opened: confirm \"Delete it?\"", "Answer it with `dialog accept` or `dialog dismiss`.",
+      ])
+    #expect(single.failure == nil)
+
+    page.pendingDialog = nil
+    let batch = await BrowserAutomationRunner(page: page).run([Self.click, Self.click])
+    #expect(batch.failure == "Stopped before step 2: a page dialog is open.")
+  }
+
+  @Test func anOpenDialogBlocksPageStepsUntilItIsAnswered() async {
+    let page = FakePage(snapshots: [Self.after])
+    page.lastSnapshot = BrowserPageSnapshot(text: Self.before, url: page.url, title: page.title)
+    page.pendingDialog = Self.confirm
+    let blocked = await BrowserAutomationRunner(page: page).run([Self.click])
+    #expect(
+      blocked.failure
+        == "A page dialog is open: confirm \"Delete it?\". Answer it with `dialog accept` or `dialog dismiss`.")
+    #expect(page.calls.isEmpty)
+
+    let answered = await BrowserAutomationRunner(page: page).run([.dialog(.accept(text: nil))])
+    #expect(page.calls == [.answer(.accept(text: nil)), .settle, .snapshot])
+    #expect(answered.lines == ["accepted confirm \"Delete it?\"", "changed:\n- status [ref=e2]: saved"])
+
+    let none = await BrowserAutomationRunner(page: page, reportsChanges: false).run([.dialog(.dismiss)])
+    #expect(none.failure == "No page dialog is open.")
   }
 }

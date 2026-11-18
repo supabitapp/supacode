@@ -10,7 +10,7 @@ nonisolated enum BrowserGuide {
 
       `open` prints the new tab's ID. A shell variable does not survive into your next shell call,
       so reuse the printed ID there. Opening again makes a second tab and loses the page's state.
-      -t may be left out while the worktree has one browser tab.
+      -t may be left out while the worktree has one browser tab. `tabs` lists them, `close` closes one.
       Without --background, `open` moves keyboard focus to the new tab.
 
     TARGETS
@@ -38,7 +38,7 @@ nonisolated enum BrowserGuide {
       STEPS
 
       A batch stops at the first failing step and prints one change list at the end.
-      Steps: navigate, snapshot, click, fill, select, press, wait.
+      Steps: navigate, snapshot, click, fill, select, press, wait, eval, console, screenshot, dialog.
 
     WAITING
       supacode browser wait --text "Saved"        # text appears
@@ -46,11 +46,20 @@ nonisolated enum BrowserGuide {
       supacode browser wait e12 --hidden          # the element disappears
       The default is 10 seconds. Change it with --timeout.
 
+    LOOKING CLOSER
+      supacode browser eval 'document.title'      # run JavaScript in the page, print the result as JSON
+      supacode browser console                    # console messages and uncaught errors since the first command
+      supacode browser screenshot /tmp/page.png   # PNG of the visible page
+
+    DIALOGS
+      An alert, confirm, or prompt stops the page. The action that opened it says so.
+      supacode browser dialog accept [--text "answer"]
+      supacode browser dialog dismiss
+
     LIMITS
       Clicks and keys are dispatched inside the page. CSS :hover menus, file pickers, and native
       select popups do not open. Use `select <ref> <option>` for a select.
       Content inside an iframe is not reachable.
-      A page dialog (alert, confirm) blocks the page until someone answers it in the app.
       An action that times out may still have happened. Check with `snapshot` before repeating it.
     """#
 }

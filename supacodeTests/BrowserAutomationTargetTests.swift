@@ -72,7 +72,7 @@ struct BrowserAutomationTargetTests {
     let plain = Self.tab(.browser, title: "App")
     let expected = [renamed, plain].map {
       BrowserAutomationTarget.Candidate(
-        tabID: $0.id, contentID: $0.content.id, customTitle: $0.customTitle, storedTitle: $0.title)
+        tabID: $0.id, contentID: $0.content.id, customTitle: $0.customTitle, storedTitle: $0.title, storedURL: nil)
     }
     #expect(Self.resolve(Self.layout([terminal, renamed, plain], selected: terminal)) == .ambiguous(expected))
   }

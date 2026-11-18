@@ -11,6 +11,7 @@ final class BrowserPageState: TabChrome {
   var loadProgress: Double = 0
   var canGoBack = false
   var canGoForward = false
+  var dialog: BrowserPageDialog?
   var addressFocusRequested = false
   @ObservationIgnored var isAddressFocused = false
 
@@ -82,6 +83,7 @@ final class BrowserContent: TabContent, TabContentToolbar {
       closeRequested: callbacks.closeRequested
     )
     navigation.documentChanged = { [weak self] in self?.automation.documentChanged() }
+    navigation.dialogChanged = { [weak self] in self?.dialogChanged($0) }
     webView.navigationDelegate = navigation
     webView.uiDelegate = navigation
     webView.onFocus = callbacks.focused
@@ -199,6 +201,13 @@ final class BrowserContent: TabContent, TabContentToolbar {
     }
   }
 
+  private func dialogChanged(_ dialog: BrowserPageDialog?) {
+    page.dialog = dialog
+    if let dialog {
+      automation.dialogOpened(dialog)
+    }
+  }
+
   private func claimFocusAfterAttach() {
     pendingFocusClaim?.cancel()
     pendingFocusClaim = Task { [weak self] in
@@ -211,6 +220,7 @@ final class BrowserContent: TabContent, TabContentToolbar {
   }
 
   private func releaseWebView() {
+    navigation?.answerDialog(.dismiss)
     automation.documentChanged()
     pendingFocusClaim?.cancel()
     pendingFocusClaim = nil
@@ -279,10 +289,16 @@ final class BrowserContent: TabContent, TabContentToolbar {
 extension BrowserContent: BrowserAutomationPage {
   var isLoadingPage: Bool { webView?.isLoading ?? false }
   var documentGeneration: Int { automation.generation }
+  var pendingDialog: BrowserPageDialog? { page.dialog }
 
-  var snapshotBaseline: BrowserSnapshotBaseline? {
-    get { automation.baseline }
-    set { automation.baseline = newValue }
+  var lastSnapshot: BrowserPageSnapshot? {
+    get { automation.lastSnapshot }
+    set { automation.lastSnapshot = newValue }
+  }
+
+  func captureConsole() {
+    guard let webView else { return }
+    automation.console.install(in: webView)
   }
 
   func loadPage(_ url: URL) {
@@ -294,12 +310,38 @@ extension BrowserContent: BrowserAutomationPage {
     return await automation.waitUntilLoaded(webView, timeout: timeout)
   }
 
-  func drive(
-    _ command: String,
-    _ arguments: [String: Any],
-    timeout: Duration
-  ) async throws(BrowserAutomationError) -> BrowserDriverReply {
+  func snapshot() async throws(BrowserAutomationError) -> BrowserPageSnapshot {
+    try await automation.snapshot(in: try liveWebView())
+  }
+
+  func perform(_ action: BrowserPageAction) async throws(BrowserAutomationError) -> String {
+    try await automation.perform(action, in: try liveWebView())
+  }
+
+  func settle() async {
+    guard let webView else { return }
+    await automation.settle(in: webView)
+  }
+
+  func evaluate(_ source: String) async throws(BrowserAutomationError) -> String {
+    try await automation.evaluate(source, in: try liveWebView())
+  }
+
+  func saveScreenshot(to path: String?) async throws(BrowserAutomationError) -> String {
+    try await BrowserScreenshot.save(try liveWebView(), to: path)
+  }
+
+  func consoleMessages(clearing: Bool) -> [String] {
+    automation.console.drain(clearing: clearing).map(automation.redacted)
+  }
+
+  @discardableResult
+  func answerDialog(_ answer: BrowserDialogAnswer) -> BrowserPageDialog? {
+    navigation?.answerDialog(answer)
+  }
+
+  private func liveWebView() throws(BrowserAutomationError) -> BrowserWebView {
     guard let webView else { throw .unavailable }
-    return try await automation.run(command, arguments, in: webView, timeout: timeout)
+    return webView
   }
 }

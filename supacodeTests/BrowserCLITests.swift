@@ -21,10 +21,10 @@ struct BrowserCLITests {
       let run = try await cli(["browser", "click", "e12", "-t", "TAB-1", "--quiet"], nil)
       #expect(run.exitCode == 0, "CLI failed: \(run.standardError)")
       #expect(run.standardOutput == Self.pageOutput + "\n")
-      let request = try #require(requests.value.first)
-      #expect(request.tabID == "TAB-1")
-      #expect(request.quiet)
-      #expect(request.steps == [BrowserAutomationStep(verb: .click, target: "e12")])
+      #expect(
+        requests.value == [
+          BrowserAutomationRequest(tabID: "TAB-1", operation: .run(steps: [.click(target: "e12")], quiet: true))
+        ])
     }
   }
 
@@ -41,15 +41,14 @@ struct BrowserCLITests {
     try await withFixture(reply: ["output": Self.pageOutput]) { cli, requests in
       let run = try await cli(["browser", "batch", "-t", "TAB-1"], script)
       #expect(run.exitCode == 0, "CLI failed: \(run.standardError)")
-      let request = try #require(requests.value.first)
-      #expect(!request.quiet)
+      let steps: [BrowserAutomationStep] = [
+        .fill(target: "role=textbox[name=\"Email\"]", text: "ada@example.com"),
+        .press(key: "Enter", target: nil),
+        .wait(.text("Welcome back"), timeout: .seconds(3)),
+        .snapshot(full: true, scope: nil),
+      ]
       #expect(
-        request.steps == [
-          BrowserAutomationStep(verb: .fill, target: "role=textbox[name=\"Email\"]", text: "ada@example.com"),
-          BrowserAutomationStep(verb: .press, key: "Enter"),
-          BrowserAutomationStep(verb: .wait, text: "Welcome back", hidden: false, timeout: 3),
-          BrowserAutomationStep(verb: .snapshot, full: true),
-        ])
+        requests.value == [BrowserAutomationRequest(tabID: "TAB-1", operation: .run(steps: steps, quiet: false))])
     }
   }
 
@@ -85,9 +84,42 @@ struct BrowserCLITests {
       let run = try await cli(["browser", "open", "localhost:3000", "--background"], nil)
       #expect(run.exitCode == 0, "CLI failed: \(run.standardError)")
       #expect(run.standardOutput == "NEW-TAB\n")
-      let request = try #require(requests.value.first)
-      #expect(request.newTab == .init(url: "localhost:3000", background: true))
-      #expect(request.steps.isEmpty)
+      #expect(
+        requests.value == [
+          BrowserAutomationRequest(operation: .open(url: URL(string: "http://localhost:3000"), background: true))
+        ])
+    }
+  }
+
+  @Test(.timeLimit(.minutes(3)))
+  func theOtherCommandsSendTheirOperation() async throws {
+    try await withFixture(reply: ["output": Self.pageOutput]) { cli, requests in
+      let commands: [[String]] = [
+        ["browser", "eval", "document.title", "-t", "T"],
+        ["browser", "dialog", "accept", "--text", "yes", "-t", "T"],
+        ["browser", "dialog", "dismiss", "-t", "T"],
+        ["browser", "console", "--clear", "-t", "T"],
+        ["browser", "screenshot", "/tmp/page.png", "-t", "T"],
+        ["browser", "tabs"],
+        ["browser", "close", "-t", "T"],
+      ]
+      for command in commands {
+        let run = try await cli(command, nil)
+        #expect(run.exitCode == 0, "\(command) failed: \(run.standardError)")
+      }
+      let single = { (step: BrowserAutomationStep) in
+        BrowserAutomationRequest(tabID: "T", operation: .run(steps: [step], quiet: false))
+      }
+      #expect(
+        requests.value == [
+          single(.evaluate(source: "document.title")),
+          single(.dialog(.accept(text: "yes"))),
+          single(.dialog(.dismiss)),
+          single(.console(clear: true)),
+          single(.screenshot(path: "/tmp/page.png")),
+          BrowserAutomationRequest(operation: .listTabs),
+          BrowserAutomationRequest(tabID: "T", operation: .close),
+        ])
     }
   }
 

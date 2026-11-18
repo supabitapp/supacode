@@ -525,8 +525,11 @@ struct SupacodeApp: App {
     clientFD: Int32,
     terminalManager: WorktreeTerminalManager
   ) {
-    guard let request = params["request"].flatMap({ try? BrowserAutomationRequest(json: $0) }) else {
-      AgentHookSocketServer.sendCommandResponse(clientFD: clientFD, ok: false, error: "Malformed browser request.")
+    let request: BrowserAutomationRequest
+    do {
+      request = try BrowserAutomationRequest(json: params["request"] ?? "")
+    } catch {
+      AgentHookSocketServer.sendCommandResponse(clientFD: clientFD, ok: false, error: error.message)
       return
     }
     Task {
