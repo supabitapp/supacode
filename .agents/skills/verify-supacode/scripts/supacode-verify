@@ -47,6 +47,11 @@ require_alive() {
   [ -S "$SOCKET" ] || die "run $RUN_ID: socket $SOCKET missing"
 }
 
+app_cli() {
+  local socket="$1"; shift
+  SUPACODE_SOCKET_PATH="$socket" "$CLI_BIN" "$@"
+}
+
 other_instances() {
   pgrep -f '/supacode\.app/Contents/MacOS/supacode' || true
 }
@@ -120,16 +125,16 @@ EOF
   local i
   for i in $(seq 1 120); do
     kill -0 "$pid" 2>/dev/null || die "app exited during launch; see $evidence/app.log"
-    if [ -S "$socket" ] && SUPACODE_SOCKET_PATH="$socket" "$CLI_BIN" repo list >/dev/null 2>&1; then
+    if [ -S "$socket" ] && app_cli "$socket" repo list >/dev/null 2>&1; then
       break
     fi
     sleep 0.5
   done
-  SUPACODE_SOCKET_PATH="$socket" "$CLI_BIN" repo list >/dev/null 2>&1 || die "socket never answered; see $evidence/app.log"
+  app_cli "$socket" repo list >/dev/null 2>&1 || die "socket never answered; see $evidence/app.log"
 
   local opened=0
   for i in $(seq 1 120); do
-    if SUPACODE_SOCKET_PATH="$socket" "$CLI_BIN" repo open "$seed" >"$evidence/launch-repo-open.txt" 2>&1; then
+    if app_cli "$socket" repo open "$seed" >"$evidence/launch-repo-open.txt" 2>&1; then
       opened=1; break
     fi
     grep -q "still loading" "$evidence/launch-repo-open.txt" || break
@@ -137,7 +142,7 @@ EOF
   done
   [ "$opened" = 1 ] || die "repo open failed; see $evidence/launch-repo-open.txt"
   for i in $(seq 1 60); do
-    if SUPACODE_SOCKET_PATH="$socket" "$CLI_BIN" worktree list 2>/dev/null | grep -q "seed-repo"; then
+    if app_cli "$socket" worktree list 2>/dev/null | grep -q "seed-repo"; then
       echo "RUN_ID=$run"
       echo "EVIDENCE=$evidence"
       return 0
@@ -154,9 +159,9 @@ cmd_doctor() {
   check "pid $PID alive" 'alive'
   check "pid $PID is this checkout's binary" '[ "$(ps -p "$PID" -o comm= 2>/dev/null)" = "$APP_BIN" ]'
   check "socket $SOCKET present" '[ -S "$SOCKET" ]'
-  check "socket answers repo list" 'SUPACODE_SOCKET_PATH="$SOCKET" "$CLI_BIN" repo list >/dev/null 2>&1'
+  check "socket answers repo list" 'app_cli "$SOCKET" repo list >/dev/null 2>&1'
   check "config isolated at $XDG" '[ -f "$XDG/supacode/config.json" ]'
-  check "seed repo listed" 'SUPACODE_SOCKET_PATH="$SOCKET" "$CLI_BIN" worktree list 2>/dev/null | grep -q seed-repo'
+  check "seed repo listed" 'app_cli "$SOCKET" worktree list 2>/dev/null | grep -q seed-repo'
   check "window visible" '[ -n "$(window_id)" ]'
   check "only this Supacode running" '[ "$(other_instances | grep -vx "$PID" || true)" = "" ]'
   echo "build: $(stat -f '%Sm' "$APP_BIN")  head: $(git -C "$REPO" rev-parse --short HEAD)"
@@ -168,6 +173,13 @@ window_id() {
     | jq -r --argjson pid "$PID" '[.data[] | select(.pid == $pid)] | (map(select(.title != "")) + .) | .[0].id // empty'
 }
 
+require_window() {
+  local wid
+  wid="$(window_id)"
+  [ -n "$wid" ] || die "no window for pid $PID"
+  echo "$wid"
+}
+
 cmd_window() { load "$1"; require_alive; window_id; }
 
 cmd_cli() {
@@ -177,7 +189,7 @@ cmd_cli() {
   local log="$EVIDENCE/cli.log" out err code
   out="$(mktemp)"; err="$(mktemp)"
   set +e
-  SUPACODE_SOCKET_PATH="$SOCKET" "$CLI_BIN" "$@" >"$out" 2>"$err"
+  app_cli "$SOCKET" "$@" >"$out" 2>"$err"
   code=$?
   set -e
   {
@@ -195,7 +207,7 @@ cmd_cli() {
 cmd_shot() {
   load "$1"; require_alive
   local name="${2:?name required}" wid
-  wid="$(window_id)"; [ -n "$wid" ] || die "no window for pid $PID"
+  wid="$(require_window)"
   agent-desktop screenshot --window-id "$wid" "$EVIDENCE/$name.png" >/dev/null
   echo "$EVIDENCE/$name.png"
 }
@@ -203,7 +215,7 @@ cmd_shot() {
 cmd_ax() {
   load "$1"; require_alive
   local name="${2:?name required}" wid
-  wid="$(window_id)"; [ -n "$wid" ] || die "no window for pid $PID"
+  wid="$(require_window)"
   agent-desktop snapshot --window-id "$wid" -i --compact >"$EVIDENCE/$name.ax.json"
   echo "$EVIDENCE/$name.ax.json"
 }
@@ -219,9 +231,8 @@ cmd_teardown() {
     alive && kill -KILL "$PID" 2>/dev/null || true
   fi
   if [ -x "$ZMX_BIN" ] && [ -d "$ZMX" ]; then
-    local sessions s
+    local sessions ids s
     sessions="$(ZMX_DIR="$ZMX" "$ZMX_BIN" list --short 2>/dev/null || true)"
-    local ids
     ids="$(printf '%s\n' "$sessions" | grep -oE 'supa-[0-9A-Fa-f-]{36}' | sort -u || true)"
     for s in $ids; do
       ZMX_DIR="$ZMX" "$ZMX_BIN" kill "$s" >/dev/null 2>&1 || true
@@ -233,11 +244,10 @@ cmd_teardown() {
     done
   fi
   rm -f "$SOCKET"
-  if [ "$(cat "$EVIDENCE/defaults-before.status" 2>/dev/null)" = present ]; then
-    defaults import "$DOMAIN" "$EVIDENCE/defaults-before.plist"
-  elif [ "$(cat "$EVIDENCE/defaults-before.status" 2>/dev/null)" = absent ]; then
-    defaults delete "$DOMAIN" >/dev/null 2>&1 || true
-  fi
+  case "$(cat "$EVIDENCE/defaults-before.status" 2>/dev/null)" in
+    present) defaults import "$DOMAIN" "$EVIDENCE/defaults-before.plist" ;;
+    absent) defaults delete "$DOMAIN" >/dev/null 2>&1 || true ;;
+  esac
   git -C "$SEED_REPO" worktree list --porcelain 2>/dev/null >"$EVIDENCE/worktrees-at-teardown.txt" || true
   rm -rf "$STATE"
   echo "torn down run $RUN_ID; evidence kept at $EVIDENCE"
