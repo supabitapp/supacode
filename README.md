@@ -148,10 +148,16 @@ existing `supacode` Pages project. Set the repository variable
 repository. Set `SUPACODE_PAGES_PRODUCTION_ENABLED` to `true` to enable production
 deploys. With that variable enabled, website changes on `main` deploy
 automatically and dispatching the workflow from `main` deploys manually.
+Pages deploy tokens have account-wide Pages access. Enable PR previews only
+when everyone with write access to this repository is trusted to deploy the site.
 
 On a preview deployment, request `/download/latest/appcast.xml` on the preview
 host to exercise its Worker. The homepage's Download button points to
 `supacode.sh`, and purchase links use the production license service.
+
+If a production deployment fails its checks, disable
+`SUPACODE_PAGES_PRODUCTION_ENABLED` and select the previous production
+deployment in the [Cloudflare Pages deployment history](https://developers.cloudflare.com/pages/configuration/rollbacks/).
 
 ## Technical stack
 

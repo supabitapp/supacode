@@ -86,10 +86,16 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: '4.164.0'
           command: pages deploy out --project-name=supacode --branch=${{ env.PAGES_BRANCH }} --commit-hash=${{ github.sha }}
-      - name: Verify the homepage and download worker
+      - name: Verify the Pages environment and public routes
         env:
+          DEPLOYMENT_ENVIRONMENT: ${{ steps.pages.outputs.pages-environment }}
+          EXPECTED_ENVIRONMENT: ${{ github.event_name == 'pull_request' && 'preview' || 'production' }}
           DEPLOYMENT_URL: ${{ steps.pages.outputs.deployment-url }}
         run: |
+          if [[ "$DEPLOYMENT_ENVIRONMENT" != "$EXPECTED_ENVIRONMENT" ]]; then
+            printf 'Expected a %s deployment, but Cloudflare reported %s.\n' "$EXPECTED_ENVIRONMENT" "$DEPLOYMENT_ENVIRONMENT" >&2
+            exit 1
+          fi
           test -n "$DEPLOYMENT_URL"
           curl -fsS --retry 3 --retry-all-errors --max-time 20 -o /dev/null "${DEPLOYMENT_URL%/}/"
           curl -fsS --retry 3 --retry-all-errors --max-time 20 --dump-header "$RUNNER_TEMP/appcast.headers" \
