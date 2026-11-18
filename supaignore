@@ -1,0 +1,4 @@
+/apps/supacode.sh/node_modules/
+/apps/supacode.sh/.wrangler/
+/apps/supacode.sh/.next/
+/apps/supacode.sh/out/

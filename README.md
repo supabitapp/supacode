@@ -115,6 +115,10 @@ make test    # run the tests
 make format  # swift-format only
 ```
 
+## Website
+
+The landing page and download Worker live in [apps/supacode.sh](apps/supacode.sh/README.md).
+
 ## Technical stack
 
 - [The Composable Architecture](https://github.com/pointfreeco/swift-composable-architecture)

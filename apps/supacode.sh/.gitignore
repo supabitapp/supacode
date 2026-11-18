@@ -1,0 +1,9 @@
+/node_modules/
+/.next/
+/out/
+/.wrangler/
+/coverage/
+/.env*
+/.dev.vars*
+*.tsbuildinfo
+next-env.d.ts

@@ -3,6 +3,9 @@ name: main
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - apps/supacode.sh/**
+      - .github/workflows/website.yml
 
   workflow_dispatch: {}
 
