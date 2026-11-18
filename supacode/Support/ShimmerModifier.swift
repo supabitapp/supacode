@@ -14,7 +14,7 @@ private struct Shimmer<Label: View>: View {
 
   var body: some View {
     if isActive, !reduceMotion {
-      ShimmerHost(label: label)
+      ShimmerHost(label: label).accessibilityRepresentation { label }
     } else {
       label
     }
@@ -100,6 +100,12 @@ private final class ShimmerHostView<Content: View>: NSView {
   }
 
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    guard window != nil, band.animation(forKey: "shimmer") == nil else { return }
+    restartSweep()
+  }
 
   override func layout() {
     super.layout()
