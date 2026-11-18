@@ -119,6 +119,12 @@ struct BrowserAutomationPageTests {
     #expect(!text.contains("hunter2"))
     #expect(text.contains("- button \"Sign in\" [ref=e"))
     #expect(await page.pageValue("return document.getElementById('password').value") == "hunter2")
+
+    let cleared = await BrowserAutomationRunner(page: page, reportsChanges: false).run([
+      Self.step(.fill, "role=textbox[name=\"Password\"]", text: "")
+    ])
+    #expect(cleared.failure == nil)
+    #expect(await page.pageValue("return document.getElementById('password').value") == "")
   }
 
   @Test(.timeLimit(.minutes(1)))
@@ -195,6 +201,15 @@ struct BrowserAutomationPageTests {
       Self.step(.fill, "role=combobox[name=\"Plan\"]", text: "Pro")
     ])
     #expect(wrongKind.failure?.hasSuffix("is a select. Use `select` with an option label or value.") == true)
+    var hiddenButAmbiguous = Self.step(.wait, "role=textbox")
+    hiddenButAmbiguous.hidden = true
+    hiddenButAmbiguous.timeout = 0.3
+    let stillVisible = await BrowserAutomationRunner(page: page, reportsChanges: false).run([hiddenButAmbiguous])
+    #expect(stillVisible.failure?.hasPrefix("3 elements match \"role=textbox\".") == true)
+    var hiddenAndGone = Self.step(.wait, "text=Nope")
+    hiddenAndGone.hidden = true
+    let gone = await BrowserAutomationRunner(page: page, reportsChanges: false).run([hiddenAndGone])
+    #expect(gone.lines == ["found text=Nope to be hidden"])
     var wait = Self.step(.wait)
     wait.text = "Never shown"
     wait.timeout = 0.3
@@ -218,7 +233,10 @@ struct BrowserAutomationPageTests {
     defer { content.tearDown() }
     #expect(content.isHibernatable)
     #expect(await content.waitUntilLoaded(timeout: .seconds(20)))
-    let result = await BrowserAutomationRunner(page: content).run([Self.step(.snapshot)])
+    let result = await content.automation.serialized {
+      #expect(!content.isHibernatable)
+      return await BrowserAutomationRunner(page: content).run([Self.step(.snapshot)])
+    }
     #expect(result.lines.first?.hasPrefix("page: Fixture <data:text/html,") == true)
     #expect(result.lines.last?.hasPrefix("- button \"Go\" [ref=e") == true)
     #expect(!content.isHibernatable)

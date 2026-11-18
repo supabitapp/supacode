@@ -20,7 +20,8 @@ nonisolated enum BrowserGuide {
       A locator that matches several elements fails and lists them. Narrow it, or use a ref.
 
     OUTPUT
-      An action prints an acknowledgement, then what changed on the page: changed, added, and removed lines.
+      An action prints an acknowledgement, then what changed on the page: changed, added, removed,
+      and rearranged elements. Rearranged names a parent whose children moved or changed order.
       After a navigation it prints the new page's interactive elements instead.
       So an action rarely needs a `snapshot` after it. Run one when the change list is cut short.
       `snapshot` prints interactive elements. `--full` adds text content. `--scope <ref>` prints one part.

@@ -1,3 +1,4 @@
+import Clocks
 import ComposableArchitecture
 import Dependencies
 import DependenciesTestSupport
@@ -7,6 +8,7 @@ import Sharing
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
 import Testing
+import WebKit
 
 @testable import supacode
 
@@ -29,7 +31,7 @@ struct WorktreeTerminalManagerBrowserTests {
     }
   }
 
-  private func makeHarness(opensLinksInBrowserTab: Bool = false) -> Harness {
+  private func makeHarness(opensLinksInBrowserTab: Bool = false, usesLiveBrowserContent: Bool = false) -> Harness {
     let worktree = Worktree(
       id: WorktreeID("/tmp/repo/wt-browser"),
       name: "wt-browser",
@@ -55,9 +57,24 @@ struct WorktreeTerminalManagerBrowserTests {
       AppFeature()
     } withDependencies: {
       $0.uuid = .incrementing
-      $0.contentRuntime = ContentRuntime()
+      $0.contentRuntime = usesLiveBrowserContent ? ContentRuntime.liveValue : ContentRuntime()
+      if usesLiveBrowserContent {
+        $0.continuousClock = TestClock()
+      }
       $0[LayoutContentFactory.self] = LayoutContentFactory { request in
-        InertTabContent(id: request.contentID, state: request.content)
+        guard usesLiveBrowserContent, case .browser(let state) = request.content else {
+          return InertTabContent(id: request.contentID, state: request.content)
+        }
+        return BrowserContent(
+          id: request.contentID,
+          initialState: state,
+          callbacks: BrowserContentCallbacks(),
+          makeWebView: {
+            let configuration = WKWebViewConfiguration()
+            configuration.websiteDataStore = .nonPersistent()
+            return BrowserWebView(frame: .zero, configuration: configuration)
+          }
+        )
       }
       $0[ContentSessionKiller.self] = ContentSessionKiller(kill: { _, _ in })
     }
@@ -174,5 +191,31 @@ struct WorktreeTerminalManagerBrowserTests {
     #expect(found.refusal == "The browser tab could not be started.")
     #expect(elsewhere.refusal == "No browser tab in this worktree. Open one with `supacode browser open <url>`.")
     #expect(unfocused.refusal == "No worktree is focused. Pass -t <tab>.")
+  }
+
+  @Test(.dependencies, .timeLimit(.minutes(1)))
+  func automationWakesAHibernatedTabAndReadsItsPage() async throws {
+    let harness = makeHarness(usesLiveBrowserContent: true)
+    harness.manager.handleCommand(
+      .openBrowserTab(
+        harness.worktree,
+        url: URL(string: "data:text/html,<title>Fixture</title><button>Go</button>"),
+        focusing: false
+      ))
+    let tab = try #require(harness.layout?.panes.flatMap(\.tabs).first)
+    defer { ContentRuntime.liveValue.remove(tab.content.id, tombstone: false) }
+    let content = try #require(ContentRuntime.liveValue.content(for: tab.content.id) as? BrowserContent)
+    content.hibernate()
+    #expect(content.renderer == nil)
+    let request = BrowserAutomationRequest(
+      tabID: tab.id.rawValue.uuidString, steps: [BrowserAutomationStep(verb: .snapshot)])
+
+    let result = await harness.manager.runBrowserAutomation(request, worktreeID: nil)
+
+    #expect(result.refusal == nil)
+    #expect(result.failure == nil)
+    #expect(content.renderer != nil)
+    #expect(result.lines.first?.hasPrefix("page: Fixture <data:text/html,") == true)
+    #expect(result.lines.last?.hasPrefix("- button \"Go\" [ref=e") == true)
   }
 }

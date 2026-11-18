@@ -109,12 +109,12 @@ struct BrowserAutomationRunner {
     case .fill:
       return try await act(
         "fill",
-        ["target": try Self.required(step.target, "a target"), "text": try Self.required(step.text, "text")]
+        ["target": try Self.required(step.target, "a target"), "text": try Self.present(step.text, "text")]
       )
     case .select:
       return try await act(
         "select",
-        ["target": try Self.required(step.target, "a target"), "option": try Self.required(step.option, "an option")]
+        ["target": try Self.required(step.target, "a target"), "option": try Self.present(step.option, "an option")]
       )
     case .press:
       var arguments: [String: Any] = ["key": try Self.required(step.key, "a key")]
@@ -199,8 +199,14 @@ struct BrowserAutomationRunner {
     )
   }
 
+  private static func present(_ value: String?, _ name: String) throws(BrowserAutomationError) -> String {
+    guard let value else { throw .rejected("Missing \(name).") }
+    return value
+  }
+
   private static func required(_ value: String?, _ name: String) throws(BrowserAutomationError) -> String {
-    guard let value, !value.isEmpty else { throw .rejected("Missing \(name).") }
+    let value = try present(value, name)
+    guard !value.isEmpty else { throw .rejected("Missing \(name).") }
     return value
   }
 

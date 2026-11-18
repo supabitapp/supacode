@@ -64,6 +64,7 @@ final class BrowserAutomationSession {
   private var pending: [UUID: PendingCall] = [:]
   private var queueTail: Task<Void, Never>?
   private var lastActivity: ContinuousClock.Instant?
+  private var requestsInFlight = 0
   private(set) var generation = 0
   var baseline: BrowserSnapshotBaseline?
 
@@ -74,7 +75,7 @@ final class BrowserAutomationSession {
   nonisolated deinit {}
 
   func wasActive(within window: Duration) -> Bool {
-    lastActivity.map { ContinuousClock.now - $0 < window } ?? false
+    requestsInFlight > 0 || lastActivity.map { ContinuousClock.now - $0 < window } ?? false
   }
 
   func documentChanged() {
@@ -85,8 +86,13 @@ final class BrowserAutomationSession {
 
   func serialized<Value: Sendable>(_ work: @escaping @MainActor () async -> Value) async -> Value {
     let previous = queueTail
+    requestsInFlight += 1
     let task = Task {
       await previous?.value
+      defer {
+        requestsInFlight -= 1
+        lastActivity = .now
+      }
       return await work()
     }
     queueTail = Task { _ = await task.value }
@@ -99,7 +105,6 @@ final class BrowserAutomationSession {
     in webView: WKWebView,
     timeout: Duration
   ) async throws(BrowserAutomationError) -> BrowserDriverReply {
-    lastActivity = .now
     let callArguments: [String: Any] = ["command": command, "args": arguments]
     var raw = try await call(Self.runBody, callArguments, in: webView, timeout: timeout)
     if raw.needsBootstrap {

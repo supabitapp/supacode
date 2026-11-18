@@ -143,6 +143,45 @@ struct BrowserSnapshotTextTests {
         """)
   }
 
+  @Test func deltaNamesAParentWhoseChildrenMovedOrChangedOrder() {
+    let before = """
+      - list "Letters" [ref=e1]:
+        - listitem "A" [ref=e2]
+        - listitem "B" [ref=e3]
+      - list "Other" [ref=e4]:
+        - listitem "C" [ref=e5]
+      """
+    let reordered = """
+      - list "Letters" [ref=e1]:
+        - listitem "B" [ref=e3]
+        - listitem "A" [ref=e2]
+      - list "Other" [ref=e4]:
+        - listitem "C" [ref=e5]
+      """
+    #expect(
+      BrowserSnapshotDelta(from: before, to: reordered).rendered(maxLines: 30) == """
+        rearranged:
+        - list "Letters" [ref=e1]
+        """)
+
+    let moved = """
+      - list "Letters" [ref=e1]:
+        - listitem "A" [ref=e2]
+      - list "Other" [ref=e4]:
+        - listitem "C" [ref=e5]
+        - listitem "B" [ref=e3]
+      """
+    #expect(
+      BrowserSnapshotDelta(from: before, to: moved).rendered(maxLines: 30) == """
+        rearranged:
+        - list "Letters" [ref=e1]
+        - list "Other" [ref=e4]
+        """)
+
+    let grown = before + "\n  - listitem \"D\" [ref=e6]"
+    #expect(BrowserSnapshotDelta(from: before, to: grown).rearranged.isEmpty)
+  }
+
   @Test func deltaOfIdenticalSnapshotsIsEmpty() {
     let delta = BrowserSnapshotDelta(from: Self.form, to: Self.form)
     #expect(delta.isEmpty)

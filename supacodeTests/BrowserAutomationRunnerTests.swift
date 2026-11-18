@@ -158,6 +158,26 @@ struct BrowserAutomationRunnerTests {
     #expect(result.failure == "step 2 (click): button \"Save\" is disabled.")
   }
 
+  @Test func anEmptyFillReachesThePageAndAMissingOneDoesNot() async {
+    let page = FakePage(snapshots: [Self.before])
+    var sentText: String?
+    page.onCommand = { command, arguments in
+      if command == "fill" {
+        sentText = arguments["text"] as? String
+      }
+      return nil
+    }
+    var clear = Self.step(.fill)
+    clear.text = ""
+    let cleared = await BrowserAutomationRunner(page: page, reportsChanges: false).run([clear])
+    #expect(cleared.failure == nil)
+    #expect(sentText == "")
+
+    let missing = await BrowserAutomationRunner(page: page, reportsChanges: false).run([Self.step(.fill)])
+    #expect(missing.failure == "Missing text.")
+    #expect(page.commands == ["fill"])
+  }
+
   @Test func aSingleFailingStepReportsOnlyTheReason() async {
     let page = FakePage(snapshots: [Self.before])
     let result = await BrowserAutomationRunner(page: page).run([Self.step(.click, target: nil)])

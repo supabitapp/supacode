@@ -4,10 +4,19 @@ function supacodeCreateDriver(engine, config) {
   const snapshotOptions = { mode: 'ai', refPrefix, doNotRenderActive: true };
   const maskedValue = '[masked]';
 
-  class DriverError extends Error {}
+  class DriverError extends Error {
+    constructor(message, isMissingElement) {
+      super(message);
+      this.isMissingElement = Boolean(isMissingElement);
+    }
+  }
 
   const fail = (message) => {
-    throw new DriverError(message);
+    throw new DriverError(message, false);
+  };
+
+  const failMissing = (message) => {
+    throw new DriverError(message, true);
   };
 
   const snapshotRoot = () => document.body || document.documentElement;
@@ -48,7 +57,7 @@ function supacodeCreateDriver(engine, config) {
     if (!engine._lastAriaSnapshotForQuery) snapshot();
     const matches = engine.querySelectorAll(engine.parseSelector('aria-ref=' + ref), document);
     if (!matches.length) {
-      fail('Ref ' + ref + ' is not on the page now. Run `snapshot` for current refs.');
+      failMissing('Ref ' + ref + ' is not on the page now. Run `snapshot` for current refs.');
     }
     return matches[0];
   };
@@ -61,7 +70,7 @@ function supacodeCreateDriver(engine, config) {
       fail('Cannot parse locator ' + JSON.stringify(locator) + ': ' + error.message);
     }
     const matches = engine.querySelectorAll(parsed, document);
-    if (!matches.length) fail('No element matches ' + JSON.stringify(locator) + '.');
+    if (!matches.length) failMissing('No element matches ' + JSON.stringify(locator) + '.');
     if (matches.length > 1) {
       const shown = matches.slice(0, 3).map((match) => '  ' + describe(match)).join('\n');
       fail(
@@ -401,7 +410,7 @@ function supacodeCreateDriver(engine, config) {
             if (refPattern.test(target)) snapshot();
             element = resolve(target);
           } catch (error) {
-            if (error instanceof DriverError) return wanted === 'hidden';
+            if (error instanceof DriverError && error.isMissingElement) return wanted === 'hidden';
             throw error;
           }
           return engine.elementState(element, wanted).matches;

@@ -161,8 +161,9 @@ nonisolated struct BrowserSnapshotDelta: Equatable, Sendable {
   var changed: [[String]] = []
   var added: [[String]] = []
   var removed: [[String]] = []
+  var rearranged: [[String]] = []
 
-  var isEmpty: Bool { changed.isEmpty && added.isEmpty && removed.isEmpty }
+  var isEmpty: Bool { changed.isEmpty && added.isEmpty && removed.isEmpty && rearranged.isEmpty }
 
   init(from previous: String, to current: String) {
     let before = Units(BrowserSnapshotText.parse(previous))
@@ -186,6 +187,13 @@ nonisolated struct BrowserSnapshotDelta: Equatable, Sendable {
       guard let unit = before.units[ref], unit.parent.map({ after.units[$0] != nil }) ?? true else { continue }
       removed.append([unit.signature[0]])
     }
+    let isInBoth = { (ref: String) in before.units[ref] != nil && after.units[ref] != nil }
+    for ref in after.order {
+      guard let unit = after.units[ref], let earlier = before.units[ref] else { continue }
+      if earlier.children.filter(isInBoth) != unit.children.filter(isInBoth) {
+        rearranged.append([unit.signature[0]])
+      }
+    }
   }
 
   private static func entry(_ signature: [String]) -> [String] {
@@ -198,7 +206,8 @@ nonisolated struct BrowserSnapshotDelta: Equatable, Sendable {
     var lines: [String] = []
     var remaining = maxLines
     var hidden = 0
-    for (title, entries) in [("changed:", changed), ("added:", added), ("removed:", removed)] {
+    let sections = [("changed:", changed), ("added:", added), ("removed:", removed), ("rearranged:", rearranged)]
+    for (title, entries) in sections {
       let entryLines = entries.flatMap(\.self)
       let shown = entryLines.prefix(max(remaining, 0))
       hidden += entryLines.count - shown.count
@@ -218,6 +227,7 @@ nonisolated struct BrowserSnapshotDelta: Equatable, Sendable {
     var end: Int
     var parent: String?
     var signature: [String]
+    var children: [String] = []
   }
 
   private struct Units {
@@ -240,6 +250,9 @@ nonisolated struct BrowserSnapshotDelta: Equatable, Sendable {
           let key = "- " + BrowserSnapshotText.closingKey(line.content)
           units[ref] = Unit(start: index, end: lines.count, parent: owner, signature: [key])
           order.append(ref)
+          if let owner {
+            units[owner]?.children.append(ref)
+          }
         } else if let owner, let ownerStart = units[owner]?.start {
           let relative = String(repeating: " ", count: line.indent - lines[ownerStart].indent)
           units[owner]?.signature.append(relative + "- " + line.content)

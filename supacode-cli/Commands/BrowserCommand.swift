@@ -44,6 +44,9 @@ nonisolated protocol BrowserStepCommand {
 }
 
 nonisolated enum BrowserRequest {
+  static let baseTimeoutSeconds = 60.0
+  static let stepTimeoutSeconds = 45.0
+
   struct Target {
     var tab: String?
     var worktree: String?
@@ -63,8 +66,11 @@ nonisolated enum BrowserRequest {
     var params = ["request": String(bytes: data, encoding: .utf8) ?? "{}"]
     params["worktreeID"] = target.worktree
     let reply =
-      try QueryDispatcher.query(resource: "browser", params: params, timeoutSeconds: CommandTimeout.defaultSeconds)
-      .first ?? [:]
+      try QueryDispatcher.query(
+        resource: "browser",
+        params: params,
+        timeoutSeconds: timeoutSeconds(steps: steps, opensTab: newTab != nil)
+      ).first ?? [:]
     if let output = reply["output"] {
       print(output)
     }
@@ -72,6 +78,12 @@ nonisolated enum BrowserRequest {
       throw SocketClient.Error.responseError(error)
     }
     return reply["id"]
+  }
+
+  static func timeoutSeconds(steps: [[String: Any]], opensTab: Bool) -> Int {
+    let stepBudgets = steps.map { $0["timeout"] as? Double ?? stepTimeoutSeconds }
+    let total = stepBudgets.reduce(baseTimeoutSeconds + (opensTab ? stepTimeoutSeconds : 0), +)
+    return Int(total.rounded(.up))
   }
 }
 
