@@ -1,85 +1,141 @@
+import AppKit
 import SwiftUI
-
-struct ShimmerModifier: ViewModifier {
-  let isActive: Bool
-  @Environment(\.layoutDirection) private var layoutDirection
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @State private var size: CGSize = .zero
-
-  func body(content: Content) -> some View {
-    // Measure continuously, even while inactive, so a size change before the shimmer
-    // reactivates cannot leave the mask sized to stale dimensions.
-    let measured = content.onGeometryChange(for: CGSize.self) {
-      $0.size
-    } action: {
-      size = $0
-    }
-    if isActive, !reduceMotion {
-      // The mask is a single translated gradient, so CoreAnimation composites the sweep on
-      // the GPU instead of re-rasterizing the gradient and masked text every frame, as
-      // animating the endpoints did.
-      measured.mask(ShimmerMask(size: size, layoutDirection: layoutDirection))
-    } else {
-      measured
-    }
-  }
-}
-
-/// A shimmer mask whose highlight band moves by translation only. The 0.6 tails keep
-/// the whole content visible while the full-opacity band sweeps across, so the mask's
-/// alpha stays `0.6 + 0.4 * band` (floor 0.6, peak 1.0), unchanged from the previous mask.
-private struct ShimmerMask: View {
-  let size: CGSize
-  let layoutDirection: LayoutDirection
-
-  // Bright band width as a fraction of the content size.
-  private let bandSize: CGFloat = 0.3
-  // Track size in content-lengths; the 0.6 tails must cover the content across the whole sweep.
-  private let trackScale: CGFloat = 3
-
-  private var gradient: Gradient {
-    let half = bandSize / (2 * trackScale)
-    return Gradient(stops: [
-      .init(color: .black.opacity(0.6), location: 0),
-      .init(color: .black.opacity(0.6), location: 0.5 - half),
-      .init(color: .black, location: 0.5),
-      .init(color: .black.opacity(0.6), location: 0.5 + half),
-      .init(color: .black.opacity(0.6), location: 1),
-    ])
-  }
-
-  var body: some View {
-    if size.width <= 0 || size.height <= 0 {
-      // Keep the content fully visible before the first geometry read, rather than
-      // clipping it to a zero-size mask for a frame.
-      Color.black
-    } else {
-      // The band starts fully off the leading corner and ends fully off the trailing corner.
-      let travelX = size.width * (1 + bandSize) / 2
-      let travelY = size.height * (1 + bandSize) / 2
-      // The gradient is symmetric, so a diagonal axis reproduces the previous corner-to-corner sweep.
-      LinearGradient(gradient: gradient, startPoint: .topLeading, endPoint: .bottomTrailing)
-        .frame(width: size.width * trackScale, height: size.height * trackScale)
-        // `phaseAnimator` pauses the timeline when the view is occluded, which
-        // `.repeatForever` did not.
-        .phaseAnimator([false, true]) { band, sweeping in
-          band.offset(x: offsetX(sweeping: sweeping, travel: travelX), y: sweeping ? travelY : -travelY)
-        } animation: { sweeping in
-          sweeping ? .linear(duration: 1.5).delay(0.25) : .linear(duration: 0.001)
-        }
-    }
-  }
-
-  private func offsetX(sweeping: Bool, travel: CGFloat) -> CGFloat {
-    if layoutDirection == .rightToLeft {
-      return sweeping ? -travel : travel
-    }
-    return sweeping ? travel : -travel
-  }
-}
 
 extension View {
   func shimmer(isActive: Bool) -> some View {
-    modifier(ShimmerModifier(isActive: isActive))
+    Shimmer(isActive: isActive, label: self)
+  }
+}
+
+private struct Shimmer<Label: View>: View {
+  let isActive: Bool
+  let label: Label
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  var body: some View {
+    if isActive, !reduceMotion {
+      ShimmerHost(label: label).accessibilityRepresentation { label }
+    } else {
+      label
+    }
+  }
+}
+
+/// SwiftUI interpolates its own animations on the main thread every frame, and renders an
+/// AppKit view inside `.mask` from its model layer, so a sweep only stays off the main thread
+/// as a Core Animation mask on a layer that owns the label (#951).
+private struct ShimmerHost<Label: View>: NSViewRepresentable {
+  typealias NSViewType = ShimmerHostView<EnvironmentForwarded<Label>>
+
+  let label: Label
+
+  func makeNSView(context: Context) -> NSViewType {
+    ShimmerHostView(rootView: EnvironmentForwarded(label: label, environment: context.environment))
+  }
+
+  func updateNSView(_ nsView: NSViewType, context: Context) {
+    nsView.update(rootView: EnvironmentForwarded(label: label, environment: context.environment))
+    nsView.isRightToLeft = context.environment.layoutDirection == .rightToLeft
+  }
+
+  func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSViewType, context: Context) -> CGSize? {
+    nsView.sizeThatFits(proposal)
+  }
+}
+
+private struct EnvironmentForwarded<Label: View>: View {
+  let label: Label
+  let environment: EnvironmentValues
+
+  var body: some View {
+    label.environment(\.self, environment)
+  }
+}
+
+private final class ShimmerHostView<Content: View>: NSView {
+  private let hosting: NSHostingController<Content>
+  var isRightToLeft = false {
+    didSet {
+      guard oldValue != isRightToLeft else { return }
+      restartSweep()
+    }
+  }
+  private let band = CAGradientLayer()
+  private let bandSize: CGFloat = 0.3
+  private let trackScale: CGFloat = 3
+  private let sweepDelay: CFTimeInterval = 0.25
+  private let sweepDuration: CFTimeInterval = 1.5
+  private var sweptSize: CGSize = .zero
+
+  init(rootView: Content) {
+    hosting = NSHostingController(rootView: rootView)
+    hosting.sizingOptions = []
+    super.init(frame: .zero)
+    wantsLayer = true
+    addSubview(hosting.view)
+    let half = bandSize / (2 * trackScale)
+    let dim = NSColor.black.withAlphaComponent(0.6).cgColor
+    band.colors = [dim, dim, NSColor.black.cgColor, dim, dim]
+    band.locations = [0, 0.5 - half, 0.5, 0.5 + half, 1].map { NSNumber(value: Double($0)) }
+    let mask = CALayer()
+    mask.addSublayer(band)
+    layer?.mask = mask
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  nonisolated deinit {}
+
+  override var isFlipped: Bool { true }
+
+  func update(rootView: Content) {
+    hosting.rootView = rootView
+  }
+
+  func sizeThatFits(_ proposal: ProposedViewSize) -> CGSize {
+    hosting.sizeThatFits(in: CGSize(width: proposal.width ?? .infinity, height: proposal.height ?? .infinity))
+  }
+
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    guard window != nil, band.animation(forKey: "shimmer") == nil else { return }
+    restartSweep()
+  }
+
+  override func layout() {
+    super.layout()
+    hosting.view.frame = bounds
+    guard bounds.size != sweptSize else { return }
+    sweptSize = bounds.size
+    restartSweep()
+  }
+
+  private func restartSweep() {
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    layer?.mask?.frame = bounds
+    band.startPoint = CGPoint(x: isRightToLeft ? 1 : 0, y: 0)
+    band.endPoint = CGPoint(x: isRightToLeft ? 0 : 1, y: 1)
+    band.bounds = CGRect(
+      origin: .zero, size: CGSize(width: bounds.width * trackScale, height: bounds.height * trackScale))
+    band.position = CGPoint(x: bounds.midX, y: bounds.midY)
+    CATransaction.commit()
+    let travelX = bounds.width * (1 + bandSize) / 2 * (isRightToLeft ? -1 : 1)
+    let travelY = bounds.height * (1 + bandSize) / 2
+    let start = NSValue(size: CGSize(width: -travelX, height: -travelY))
+    let sweep = CAKeyframeAnimation(keyPath: "transform.translation")
+    sweep.values = [start, start, NSValue(size: CGSize(width: travelX, height: travelY))]
+    sweep.keyTimes = [0, NSNumber(value: sweepDelay / (sweepDelay + sweepDuration)), 1]
+    sweep.duration = sweepDelay + sweepDuration
+    sweep.repeatCount = .infinity
+    let now = band.convertTime(CACurrentMediaTime(), from: nil)
+    sweep.beginTime = now - now.truncatingRemainder(dividingBy: sweep.duration)
+    sweep.preferredFrameRateRange = CAFrameRateRange(minimum: 15, maximum: 30, preferred: 30)
+    band.add(sweep, forKey: "shimmer")
   }
 }
