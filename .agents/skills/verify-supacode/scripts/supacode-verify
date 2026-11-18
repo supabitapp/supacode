@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+APP="$REPO/.build/DerivedData/Build/Products/Debug/supacode.app"
+APP_BIN="$APP/Contents/MacOS/supacode"
+CLI_BIN="$APP/Contents/Resources/bin/supacode"
+ZMX_BIN="$APP/Contents/Resources/zmx/zmx"
+DOMAIN="app.supabit.supacode"
+EVIDENCE_ROOT="$REPO/.build/verify-supacode"
+LEGACY_FILES=(settings.json sidebar.json layouts.json ghostty.config)
+
+die() { echo "supacode-verify: $*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+usage: supacode-verify <command> [args]
+
+  launch                     start an isolated Debug instance, print RUN_ID
+  doctor   <run>             read-only health check of a run
+  cli      <run> -- <args>   run the bundled supacode CLI against this run's socket
+  shot     <run> <name>      screenshot this run's window to evidence/<name>.png
+  ax       <run> <name>      accessibility snapshot to evidence/<name>.ax.json
+  window   <run>             print this run's agent-desktop window id
+  env      <run>             print the run's state as shell assignments
+  teardown <run>             quit the instance, kill its zmx sessions, restore defaults
+EOF
+}
+
+state_dir() { echo "/tmp/sv-$1"; }
+evidence_dir() { echo "$EVIDENCE_ROOT/$1"; }
+
+load() {
+  local run="${1:-}"
+  [ -n "$run" ] || die "missing run id"
+  local file
+  file="$(state_dir "$run")/state.env"
+  [ -f "$file" ] || die "no state for run $run at $file"
+  # shellcheck disable=SC1090
+  source "$file"
+}
+
+alive() { kill -0 "$PID" 2>/dev/null; }
+
+require_alive() {
+  alive || die "run $RUN_ID: app pid $PID is not running"
+  [ -S "$SOCKET" ] || die "run $RUN_ID: socket $SOCKET missing"
+}
+
+other_instances() {
+  pgrep -f '/supacode\.app/Contents/MacOS/supacode' || true
+}
+
+cmd_launch() {
+  [ -x "$APP_BIN" ] || die "no Debug build at $APP. Run: make build-app"
+  [ -x "$CLI_BIN" ] || die "bundled CLI missing at $CLI_BIN"
+  local others
+  others="$(other_instances)"
+  [ -z "$others" ] || die "another Supacode is running (pids: $(echo "$others" | tr '\n' ' ')). It shares the $DOMAIN defaults domain; quit it or tear down its run first"
+  for f in "${LEGACY_FILES[@]}"; do
+    [ ! -e "$HOME/.supacode/$f" ] || die "legacy $HOME/.supacode/$f exists; a fresh config dir would migrate and retire it"
+  done
+
+  local run state evidence
+  run="$(openssl rand -hex 3)"
+  state="$(state_dir "$run")"
+  evidence="$(evidence_dir "$run")"
+  mkdir -p "$state/xdg/supacode" "$state/zmx" "$state/worktrees" "$state/tmp" "$evidence"
+
+  if defaults export "$DOMAIN" "$evidence/defaults-before.plist" 2>/dev/null; then
+    echo present >"$evidence/defaults-before.status"
+  else
+    rm -f "$evidence/defaults-before.plist"
+    echo absent >"$evidence/defaults-before.status"
+  fi
+
+  local seed="$state/seed-repo"
+  mkdir -p "$seed"
+  git -C "$seed" init -q -b main
+  echo "# verify seed" >"$seed/README.md"
+  git -C "$seed" add README.md
+  git -C "$seed" -c user.name=verify -c user.email=verify@localhost commit -q -m "seed"
+
+  cat >"$state/xdg/supacode/config.json" <<EOF
+{
+  "appearanceMode": "system",
+  "updatesAutomaticallyCheckForUpdates": false,
+  "updatesAutomaticallyDownloadUpdates": false,
+  "analyticsEnabled": false,
+  "crashReportsEnabled": false,
+  "systemNotificationsEnabled": false,
+  "githubIntegrationEnabled": false,
+  "promptForWorktreeCreation": false,
+  "fetchOriginBeforeWorktreeCreation": false,
+  "confirmQuitMode": "never",
+  "terminateSessionsOnQuit": true,
+  "defaultWorktreeBaseDirectoryPath": "$state/worktrees"
+}
+EOF
+
+  env -i \
+    HOME="$HOME" USER="$USER" LOGNAME="${LOGNAME:-$USER}" SHELL="${SHELL:-/bin/zsh}" \
+    PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin" LANG="${LANG:-en_US.UTF-8}" \
+    TMPDIR="$state/tmp/" XDG_CONFIG_HOME="$state/xdg" ZMX_DIR="$state/zmx" \
+    nohup "$APP_BIN" -ApplePersistenceIgnoreState YES >"$evidence/app.log" 2>&1 &
+  local pid=$!
+  local socket="/tmp/supacode-$(id -u)/pid-$pid"
+
+  cat >"$state/state.env" <<EOF
+RUN_ID=$run
+PID=$pid
+SOCKET=$socket
+STATE=$state
+EVIDENCE=$evidence
+SEED_REPO=$seed
+XDG=$state/xdg
+ZMX=$state/zmx
+EOF
+
+  local i
+  for i in $(seq 1 120); do
+    kill -0 "$pid" 2>/dev/null || die "app exited during launch; see $evidence/app.log"
+    if [ -S "$socket" ] && SUPACODE_SOCKET_PATH="$socket" "$CLI_BIN" repo list >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.5
+  done
+  SUPACODE_SOCKET_PATH="$socket" "$CLI_BIN" repo list >/dev/null 2>&1 || die "socket never answered; see $evidence/app.log"
+
+  local opened=0
+  for i in $(seq 1 120); do
+    if SUPACODE_SOCKET_PATH="$socket" "$CLI_BIN" repo open "$seed" >"$evidence/launch-repo-open.txt" 2>&1; then
+      opened=1; break
+    fi
+    grep -q "still loading" "$evidence/launch-repo-open.txt" || break
+    sleep 0.5
+  done
+  [ "$opened" = 1 ] || die "repo open failed; see $evidence/launch-repo-open.txt"
+  for i in $(seq 1 60); do
+    if SUPACODE_SOCKET_PATH="$socket" "$CLI_BIN" worktree list 2>/dev/null | grep -q "seed-repo"; then
+      echo "RUN_ID=$run"
+      echo "EVIDENCE=$evidence"
+      return 0
+    fi
+    sleep 0.5
+  done
+  die "seed repo never appeared in worktree list; run: $0 doctor $run"
+}
+
+cmd_doctor() {
+  load "$1"
+  local ok=1
+  check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; ok=0; fi; }
+  check "pid $PID alive" 'alive'
+  check "pid $PID is this checkout's binary" '[ "$(ps -p "$PID" -o comm= 2>/dev/null)" = "$APP_BIN" ]'
+  check "socket $SOCKET present" '[ -S "$SOCKET" ]'
+  check "socket answers repo list" 'SUPACODE_SOCKET_PATH="$SOCKET" "$CLI_BIN" repo list >/dev/null 2>&1'
+  check "config isolated at $XDG" '[ -f "$XDG/supacode/config.json" ]'
+  check "seed repo listed" 'SUPACODE_SOCKET_PATH="$SOCKET" "$CLI_BIN" worktree list 2>/dev/null | grep -q seed-repo'
+  check "window visible" '[ -n "$(window_id)" ]'
+  check "only this Supacode running" '[ "$(other_instances | grep -vx "$PID" || true)" = "" ]'
+  echo "build: $(stat -f '%Sm' "$APP_BIN")  head: $(git -C "$REPO" rev-parse --short HEAD)"
+  [ "$ok" = 1 ]
+}
+
+window_id() {
+  agent-desktop list-windows 2>/dev/null \
+    | jq -r --argjson pid "$PID" '[.data[] | select(.pid == $pid)] | (map(select(.title != "")) + .) | .[0].id // empty'
+}
+
+cmd_window() { load "$1"; require_alive; window_id; }
+
+cmd_cli() {
+  load "$1"; shift
+  [ "${1:-}" = "--" ] && shift
+  require_alive
+  local log="$EVIDENCE/cli.log" out err code
+  out="$(mktemp)"; err="$(mktemp)"
+  set +e
+  SUPACODE_SOCKET_PATH="$SOCKET" "$CLI_BIN" "$@" >"$out" 2>"$err"
+  code=$?
+  set -e
+  {
+    printf '$ supacode'; printf ' %q' "$@"; printf '\n'
+    sed 's/^/stdout: /' "$out"
+    sed 's/^/stderr: /' "$err"
+    echo "exit: $code"
+    echo
+  } >>"$log"
+  cat "$out"; cat "$err" >&2
+  rm -f "$out" "$err"
+  return "$code"
+}
+
+cmd_shot() {
+  load "$1"; require_alive
+  local name="${2:?name required}" wid
+  wid="$(window_id)"; [ -n "$wid" ] || die "no window for pid $PID"
+  agent-desktop screenshot --window-id "$wid" "$EVIDENCE/$name.png" >/dev/null
+  echo "$EVIDENCE/$name.png"
+}
+
+cmd_ax() {
+  load "$1"; require_alive
+  local name="${2:?name required}" wid
+  wid="$(window_id)"; [ -n "$wid" ] || die "no window for pid $PID"
+  agent-desktop snapshot --window-id "$wid" -i --compact >"$EVIDENCE/$name.ax.json"
+  echo "$EVIDENCE/$name.ax.json"
+}
+
+cmd_env() { load "$1"; cat "$(state_dir "$RUN_ID")/state.env"; }
+
+cmd_teardown() {
+  load "$1"
+  if alive; then
+    kill -TERM "$PID" 2>/dev/null || true
+    local i
+    for i in $(seq 1 20); do alive || break; sleep 0.5; done
+    alive && kill -KILL "$PID" 2>/dev/null || true
+  fi
+  if [ -x "$ZMX_BIN" ] && [ -d "$ZMX" ]; then
+    local sessions s
+    sessions="$(ZMX_DIR="$ZMX" "$ZMX_BIN" list --short 2>/dev/null || true)"
+    local ids
+    ids="$(printf '%s\n' "$sessions" | grep -oE 'supa-[0-9A-Fa-f-]{36}' | sort -u || true)"
+    for s in $ids; do
+      ZMX_DIR="$ZMX" "$ZMX_BIN" kill "$s" >/dev/null 2>&1 || true
+    done
+    printf '%s\n' "$sessions" >"$EVIDENCE/zmx-sessions-killed.txt"
+    for s in $ids; do
+      for i in $(seq 1 10); do pgrep -f "$ZMX_BIN attach $s" >/dev/null || break; sleep 0.5; done
+      pkill -f "$ZMX_BIN attach $s" 2>/dev/null || true
+    done
+  fi
+  rm -f "$SOCKET"
+  if [ "$(cat "$EVIDENCE/defaults-before.status" 2>/dev/null)" = present ]; then
+    defaults import "$DOMAIN" "$EVIDENCE/defaults-before.plist"
+  elif [ "$(cat "$EVIDENCE/defaults-before.status" 2>/dev/null)" = absent ]; then
+    defaults delete "$DOMAIN" >/dev/null 2>&1 || true
+  fi
+  git -C "$SEED_REPO" worktree list --porcelain 2>/dev/null >"$EVIDENCE/worktrees-at-teardown.txt" || true
+  rm -rf "$STATE"
+  echo "torn down run $RUN_ID; evidence kept at $EVIDENCE"
+}
+
+main() {
+  local cmd="${1:-}"; shift || true
+  case "$cmd" in
+    launch) cmd_launch "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    cli) cmd_cli "$@" ;;
+    shot) cmd_shot "$@" ;;
+    ax) cmd_ax "$@" ;;
+    window) cmd_window "$@" ;;
+    env) cmd_env "$@" ;;
+    teardown) cmd_teardown "$@" ;;
+    *) usage; exit 2 ;;
+  esac
+}
+
+main "$@"
