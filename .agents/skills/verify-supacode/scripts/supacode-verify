@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 APP="$REPO/.build/DerivedData/Build/Products/Debug/supacode.app"
@@ -10,6 +11,8 @@ DOMAIN="app.supabit.supacode"
 EVIDENCE_ROOT="$REPO/.build/verify-supacode"
 LOCK="/tmp/supacode-verify-$(id -u).lock"
 LEGACY_FILES=(settings.json sidebar.json layouts.json ghostty.config)
+ACCOUNT_HOME="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | awk '{print $2}')"
+AGENT_DIRS=(.gemini .claude .codex .copilot .grok .hermes .kimi-code .kiro .omp .config/opencode .pi)
 
 die() { echo "supacode-verify: $*" >&2; exit 1; }
 
@@ -86,6 +89,58 @@ release_lock() {
   if [ "$(cat "$LOCK/run" 2>/dev/null || true)" = "$1" ]; then rm -rf "$LOCK"; fi
 }
 
+agent_files() {
+  local d
+  (
+    cd "$ACCOUNT_HOME"
+    for d in "${AGENT_DIRS[@]}"; do
+      [ -d "$d" ] || continue
+      find "$d" -maxdepth 5 \( -name projects -o -name sessions -o -name history -o -name logs -o -name cache \
+        -o -name node_modules -o -name todos -o -name shell-snapshots -o -name file-history -o -name backups \
+        -o -name debug -o -name tmp -o -name .git \) -prune -o -type f -size -1024k -print 2>/dev/null
+    done | tr '\n' '\0' | xargs -0 grep -lIi supacode 2>/dev/null | sort || true
+  )
+}
+
+snapshot_agent_files() {
+  local evidence="$1" f
+  mkdir -p "$evidence/agent-files-before"
+  agent_files >"$evidence/agent-files-before.txt"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    mkdir -p "$evidence/agent-files-before/$(dirname "$f")"
+    cp -p "$ACCOUNT_HOME/$f" "$evidence/agent-files-before/$f"
+  done <"$evidence/agent-files-before.txt"
+}
+
+check_agent_files() {
+  [ -f "$EVIDENCE/agent-files-before.txt" ] || return 0
+  local f before changed=0
+  : >"$EVIDENCE/agent-files-report.txt"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    before="$EVIDENCE/agent-files-before/$f"
+    cmp -s "$before" "$ACCOUNT_HOME/$f" && continue
+    case "$f" in
+      */skills/supacode*)
+        mkdir -p "$ACCOUNT_HOME/$(dirname "$f")"
+        cp -p "$before" "$ACCOUNT_HOME/$f"
+        echo "restored ~/$f" >>"$EVIDENCE/agent-files-report.txt" ;;
+      *)
+        changed=1
+        { echo "CHANGED ~/$f (restore: cp -p '$before' '$ACCOUNT_HOME/$f')"; diff "$before" "$ACCOUNT_HOME/$f" || true; } \
+          >>"$EVIDENCE/agent-files-report.txt" ;;
+    esac
+  done <"$EVIDENCE/agent-files-before.txt"
+  agent_files | comm -13 "$EVIDENCE/agent-files-before.txt" - | while IFS= read -r f; do
+    [ "$ACCOUNT_HOME/$f" -nt "$EVIDENCE/agent-files-before.txt" ] && echo "NEW ~/$f" >>"$EVIDENCE/agent-files-report.txt"
+  done
+  if [ "$changed" = 1 ] || grep -q '^NEW ' "$EVIDENCE/agent-files-report.txt"; then
+    echo "supacode-verify: agent integration files outside the run changed; review $EVIDENCE/agent-files-report.txt" >&2
+    return 1
+  fi
+}
+
 pid_windows() {
   agent-desktop list-windows 2>/dev/null \
     | jq -r --argjson pid "$PID" '.data[] | select(.pid == $pid) | "\(.id)\t\(.title)"'
@@ -102,7 +157,7 @@ cmd_launch() {
   [ -x "$APP_BIN" ] || die "no Debug build at $APP. Run: make build-app"
   [ -x "$CLI_BIN" ] || die "bundled CLI missing at $CLI_BIN"
   for f in "${LEGACY_FILES[@]}"; do
-    [ ! -e "$HOME/.supacode/$f" ] || die "legacy $HOME/.supacode/$f exists; a fresh config dir would migrate and retire it"
+    [ ! -e "$ACCOUNT_HOME/.supacode/$f" ] || die "legacy $ACCOUNT_HOME/.supacode/$f exists; a fresh config dir would migrate and retire it"
   done
 
   local run state evidence others
@@ -116,6 +171,7 @@ cmd_launch() {
 
   state="$(state_dir "$run")"
   evidence="$EVIDENCE_ROOT/$run"
+  mkdir -m 700 "$state" || { release_lock "$run"; die "$state already exists"; }
   mkdir -p "$state/xdg/supacode" "$state/zmx" "$state/worktrees" "$state/tmp" "$evidence"
   LAUNCHED=0
   trap '[ "$LAUNCHED" = 1 ] || { echo "supacode-verify: launch failed; tearing down run '"$run"'" >&2; cmd_teardown "'"$run"'" >&2 || true; }' EXIT
@@ -126,6 +182,7 @@ cmd_launch() {
   else
     echo absent >"$evidence/defaults-before.status"
   fi
+  snapshot_agent_files "$evidence"
 
   local seed="$state/seed-repo"
   mkdir -p "$seed"
@@ -152,7 +209,7 @@ cmd_launch() {
 EOF
 
   env -i \
-    HOME="$HOME" USER="$USER" LOGNAME="${LOGNAME:-$USER}" SHELL="${SHELL:-/bin/zsh}" \
+    HOME="$ACCOUNT_HOME" USER="$USER" LOGNAME="${LOGNAME:-$USER}" SHELL="${SHELL:-/bin/zsh}" \
     PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin" LANG="${LANG:-en_US.UTF-8}" \
     TMPDIR="$state/tmp/" XDG_CONFIG_HOME="$state/xdg" ZMX_DIR="$state/zmx" \
     nohup "$APP_BIN" -ApplePersistenceIgnoreState YES >"$evidence/app.log" 2>&1 &
@@ -169,6 +226,7 @@ EOF
 
   local opened=0
   for i in $(seq 1 120); do
+    is_ours || die "app exited during launch; see $EVIDENCE/app.log"
     if app_cli "$SOCKET" repo open "$SEED_REPO" >"$EVIDENCE/launch-repo-open.txt" 2>&1; then opened=1; break; fi
     grep -q "still loading" "$EVIDENCE/launch-repo-open.txt" || break
     sleep 0.5
@@ -177,6 +235,7 @@ EOF
 
   local listed=0
   for i in $(seq 1 60); do
+    is_ours || die "app exited during launch; see $EVIDENCE/app.log"
     if app_cli "$SOCKET" worktree list 2>/dev/null | grep -q "seed-repo"; then listed=1; break; fi
     sleep 0.5
   done
@@ -266,7 +325,7 @@ cmd_env() {
 
 cmd_teardown() {
   load "$1"
-  local i
+  local i status=0
   if is_ours; then
     kill -TERM "$PID" 2>/dev/null || true
     for i in $(seq 1 20); do is_ours || break; sleep 0.5; done
@@ -282,7 +341,7 @@ cmd_teardown() {
     printf '%s\n' "$sessions" >"$EVIDENCE/zmx-sessions-killed.txt"
     for s in $ids; do
       for i in $(seq 1 10); do pgrep -f "$ZMX_BIN attach $s" >/dev/null || break; sleep 0.5; done
-      pkill -f "$ZMX_BIN attach $s" 2>/dev/null || true
+      pkill -f "^$(printf '%s' "$ZMX_BIN" | sed 's/[.[\*^$]/\\&/g') attach $s( |$)" 2>/dev/null || true
     done
   fi
   rm -f "$SOCKET"
@@ -294,12 +353,15 @@ cmd_teardown() {
     case "$(cat "$EVIDENCE/defaults-before.status" 2>/dev/null)" in
       present) defaults import "$DOMAIN" "$EVIDENCE/defaults-before.plist" ;;
       absent) defaults delete "$DOMAIN" >/dev/null 2>&1 || true ;;
+      *) echo "supacode-verify: no defaults backup status for run $RUN_ID; left $DOMAIN untouched" >&2; status=1 ;;
     esac
   fi
+  check_agent_files || status=1
   git -C "$SEED_REPO" worktree list --porcelain 2>/dev/null >"$EVIDENCE/worktrees-at-teardown.txt" || true
   rm -rf "$STATE"
   release_lock "$RUN_ID"
   echo "torn down run $RUN_ID; evidence kept at $EVIDENCE"
+  return "$status"
 }
 
 main() {
