@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+/.env
+/.env.*
+.dev.vars*
+/apps/supacode.sh/.env*
+/apps/supacode.sh/.next/
+/apps/supacode.sh/out/

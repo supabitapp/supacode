@@ -1,0 +1,77 @@
+@import "@repo/ui/index.css";
+
+@source "./**/*.tsx";
+
+:root {
+  --font-sans: var(--font-supacode);
+}
+
+@theme inline {
+  --color-rule: color-mix(in oklch, var(--foreground) 12%, var(--background));
+  --color-rule-strong: color-mix(in oklch, var(--foreground) 28%, var(--background));
+  --text-price: 3rem;
+  --text-price--line-height: 1;
+  --text-price--letter-spacing: -0.03em;
+}
+
+@layer base {
+  :where(a, button, summary):focus-visible {
+    outline: 2px solid var(--color-foreground);
+    outline-offset: 2px;
+  }
+}
+
+body {
+  background-image:
+    radial-gradient(
+      900px 520px at 50% -8%,
+      color-mix(in oklch, var(--muted) 35%, transparent),
+      transparent 60%
+    ),
+    linear-gradient(
+      to right,
+      color-mix(in oklch, var(--border) 30%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in oklch, var(--border) 30%, transparent) 1px,
+      transparent 1px
+    );
+  background-size:
+    100% 100%,
+    64px 64px,
+    64px 64px;
+  background-attachment: fixed;
+}
+
+.hero-glow {
+  box-shadow:
+    0 0 80px -20px color-mix(in oklch, var(--muted) 60%, transparent),
+    0 0 160px -40px color-mix(in oklch, var(--muted) 30%, transparent);
+}
+
+.supacode-reveal {
+  animation: supacode-reveal 700ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  opacity: 0;
+  transform: translateY(14px);
+}
+
+@keyframes supacode-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .supacode-reveal {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
