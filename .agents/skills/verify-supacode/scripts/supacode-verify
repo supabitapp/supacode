@@ -1,0 +1,382 @@
+#!/usr/bin/env bash
+set -euo pipefail
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+APP="$REPO/.build/DerivedData/Build/Products/Debug/supacode.app"
+APP_BIN="$APP/Contents/MacOS/supacode"
+CLI_BIN="$APP/Contents/Resources/bin/supacode"
+ZMX_BIN="$APP/Contents/Resources/zmx/zmx"
+DOMAIN="app.supabit.supacode"
+EVIDENCE_ROOT="$REPO/.build/verify-supacode"
+LOCK="/tmp/supacode-verify-$(id -u).lock"
+LEGACY_FILES=(settings.json sidebar.json layouts.json ghostty.config)
+ACCOUNT_HOME="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | awk '{print $2}')"
+AGENT_DIRS=(.gemini .claude .codex .copilot .grok .hermes .kimi-code .kiro .omp .config/opencode .pi)
+
+die() { echo "supacode-verify: $*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+usage: supacode-verify <command> [args]
+
+  launch                          start an isolated Debug instance, print RUN_ID
+  doctor   <run>                  read-only health check of a run
+  cli      <run> -- <args>        run the bundled supacode CLI against this run's socket
+  shot     <run> <name> [window]  screenshot to evidence/<name>.png (default: main window)
+  ax       <run> <name> [window]  accessibility snapshot to evidence/<name>.ax.json
+  windows  <run>                  list this run's windows as "<id><TAB><title>"
+  env      <run>                  print the run's state as shell assignments
+  teardown <run>                  quit the instance, kill its zmx sessions, restore defaults
+EOF
+}
+
+state_dir() { echo "/tmp/sv-$1"; }
+
+load() {
+  local run="${1:-}"
+  [ -n "$run" ] || die "missing run id"
+  RUN_ID="$run"
+  STATE="$(state_dir "$run")"
+  EVIDENCE="$EVIDENCE_ROOT/$run"
+  SEED_REPO="$STATE/seed-repo"
+  XDG="$STATE/xdg"
+  ZMX="$STATE/zmx"
+  [ -d "$STATE" ] || die "no state for run $run at $STATE"
+  PID="$(cat "$STATE/pid" 2>/dev/null || true)"
+  SOCKET="/tmp/supacode-$(id -u)/pid-$PID"
+  WINDOW="$(cat "$STATE/window" 2>/dev/null || true)"
+}
+
+is_ours() { [ -n "$PID" ] && [ "$(ps -p "$PID" -o comm= 2>/dev/null)" = "$APP_BIN" ]; }
+
+require_alive() {
+  is_ours || die "run $RUN_ID: pid $PID is not this checkout's running app"
+  [ -S "$SOCKET" ] || die "run $RUN_ID: socket $SOCKET missing"
+}
+
+app_cli() {
+  local socket="$1"; shift
+  SUPACODE_SOCKET_PATH="$socket" "$CLI_BIN" "$@"
+}
+
+other_instances() {
+  local p
+  for p in $(pgrep -f '/supacode\.app/Contents/MacOS/supacode' || true); do
+    [ "$p" = "${PID:-}" ] && continue
+    [ "$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')" = "${PID:-}" ] && continue
+    echo "$p"
+  done
+}
+
+domain_exists() {
+  defaults domains | tr ',' '\n' | sed 's/^ *//' | grep -qx "$DOMAIN"
+}
+
+acquire_lock() {
+  local run="$1" holder
+  if ! mkdir "$LOCK" 2>/dev/null; then
+    holder="$(cat "$LOCK/run" 2>/dev/null || true)"
+    [ -n "$holder" ] && [ ! -d "$(state_dir "$holder")" ] \
+      || die "run ${holder:-?} holds $LOCK; tear it down first: $0 teardown ${holder:-<run>}"
+    rm -rf "$LOCK"
+    mkdir "$LOCK" || die "could not take $LOCK"
+  fi
+  echo "$run" >"$LOCK/run"
+}
+
+release_lock() {
+  if [ "$(cat "$LOCK/run" 2>/dev/null || true)" = "$1" ]; then rm -rf "$LOCK"; fi
+}
+
+agent_files() {
+  local d
+  (
+    cd "$ACCOUNT_HOME"
+    for d in "${AGENT_DIRS[@]}"; do
+      [ -d "$d" ] || continue
+      find "$d" -maxdepth 5 \( -name projects -o -name sessions -o -name history -o -name logs -o -name cache \
+        -o -name node_modules -o -name todos -o -name shell-snapshots -o -name file-history -o -name backups \
+        -o -name debug -o -name tmp -o -name .git \) -prune -o -type f -size -1024k -print 2>/dev/null
+    done | tr '\n' '\0' | xargs -0 grep -lIi supacode 2>/dev/null | sort || true
+  )
+}
+
+snapshot_agent_files() {
+  local evidence="$1" f
+  mkdir -p "$evidence/agent-files-before"
+  agent_files >"$evidence/agent-files-before.txt"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    mkdir -p "$evidence/agent-files-before/$(dirname "$f")"
+    cp -p "$ACCOUNT_HOME/$f" "$evidence/agent-files-before/$f"
+  done <"$evidence/agent-files-before.txt"
+}
+
+check_agent_files() {
+  [ -f "$EVIDENCE/agent-files-before.txt" ] || return 0
+  local f before changed=0
+  : >"$EVIDENCE/agent-files-report.txt"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    before="$EVIDENCE/agent-files-before/$f"
+    cmp -s "$before" "$ACCOUNT_HOME/$f" && continue
+    case "$f" in
+      */skills/supacode*)
+        mkdir -p "$ACCOUNT_HOME/$(dirname "$f")"
+        cp -p "$before" "$ACCOUNT_HOME/$f"
+        echo "restored ~/$f" >>"$EVIDENCE/agent-files-report.txt" ;;
+      *)
+        changed=1
+        { echo "CHANGED ~/$f (restore: cp -p '$before' '$ACCOUNT_HOME/$f')"; diff "$before" "$ACCOUNT_HOME/$f" || true; } \
+          >>"$EVIDENCE/agent-files-report.txt" ;;
+    esac
+  done <"$EVIDENCE/agent-files-before.txt"
+  agent_files | comm -13 "$EVIDENCE/agent-files-before.txt" - | while IFS= read -r f; do
+    [ "$ACCOUNT_HOME/$f" -nt "$EVIDENCE/agent-files-before.txt" ] && echo "NEW ~/$f" >>"$EVIDENCE/agent-files-report.txt"
+  done
+  if [ "$changed" = 1 ] || grep -q '^NEW ' "$EVIDENCE/agent-files-report.txt"; then
+    echo "supacode-verify: agent integration files outside the run changed; review $EVIDENCE/agent-files-report.txt" >&2
+    return 1
+  fi
+}
+
+pid_windows() {
+  agent-desktop list-windows 2>/dev/null \
+    | jq -r --argjson pid "$PID" '.data[] | select(.pid == $pid) | "\(.id)\t\(.title)"'
+}
+
+resolve_window() {
+  local wid="${1:-$WINDOW}"
+  [ -n "$wid" ] || die "run $RUN_ID has no recorded main window"
+  pid_windows | cut -f1 | grep -qx "$wid" || die "window $wid does not belong to pid $PID"
+  echo "$wid"
+}
+
+cmd_launch() {
+  [ -x "$APP_BIN" ] || die "no Debug build at $APP. Run: make build-app"
+  [ -x "$CLI_BIN" ] || die "bundled CLI missing at $CLI_BIN"
+  for f in "${LEGACY_FILES[@]}"; do
+    [ ! -e "$ACCOUNT_HOME/.supacode/$f" ] || die "legacy $ACCOUNT_HOME/.supacode/$f exists; a fresh config dir would migrate and retire it"
+  done
+
+  local run state evidence others
+  run="$(openssl rand -hex 3)"
+  acquire_lock "$run"
+  others="$(other_instances)"
+  if [ -n "$others" ]; then
+    release_lock "$run"
+    die "another Supacode is running (pids: $(echo "$others" | tr '\n' ' ')). It shares the $DOMAIN defaults domain; quit it or tear down its run first"
+  fi
+
+  state="$(state_dir "$run")"
+  evidence="$EVIDENCE_ROOT/$run"
+  mkdir -m 700 "$state" || { release_lock "$run"; die "$state already exists"; }
+  mkdir -p "$state/xdg/supacode" "$state/zmx" "$state/worktrees" "$state/tmp" "$evidence"
+  LAUNCHED=0
+  trap '[ "$LAUNCHED" = 1 ] || { echo "supacode-verify: launch failed; tearing down run '"$run"'" >&2; cmd_teardown "'"$run"'" >&2 || true; }' EXIT
+
+  if domain_exists; then
+    defaults export "$DOMAIN" "$evidence/defaults-before.plist" || die "could not back up $DOMAIN"
+    echo present >"$evidence/defaults-before.status"
+  else
+    echo absent >"$evidence/defaults-before.status"
+  fi
+  snapshot_agent_files "$evidence"
+
+  local seed="$state/seed-repo"
+  mkdir -p "$seed"
+  git -C "$seed" init -q -b main
+  echo "# verify seed" >"$seed/README.md"
+  git -C "$seed" add README.md
+  git -C "$seed" -c user.name=verify -c user.email=verify@localhost commit -q -m "seed"
+
+  cat >"$state/xdg/supacode/config.json" <<EOF
+{
+  "appearanceMode": "system",
+  "updatesAutomaticallyCheckForUpdates": false,
+  "updatesAutomaticallyDownloadUpdates": false,
+  "analyticsEnabled": false,
+  "crashReportsEnabled": false,
+  "systemNotificationsEnabled": false,
+  "githubIntegrationEnabled": false,
+  "promptForWorktreeCreation": false,
+  "fetchOriginBeforeWorktreeCreation": false,
+  "confirmQuitMode": "never",
+  "terminateSessionsOnQuit": true,
+  "defaultWorktreeBaseDirectoryPath": "$state/worktrees"
+}
+EOF
+
+  env -i \
+    HOME="$ACCOUNT_HOME" USER="$USER" LOGNAME="${LOGNAME:-$USER}" SHELL="${SHELL:-/bin/zsh}" \
+    PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin" LANG="${LANG:-en_US.UTF-8}" \
+    TMPDIR="$state/tmp/" XDG_CONFIG_HOME="$state/xdg" ZMX_DIR="$state/zmx" \
+    nohup "$APP_BIN" -ApplePersistenceIgnoreState YES >"$evidence/app.log" 2>&1 &
+  echo "$!" >"$state/pid"
+  load "$run"
+
+  local i ready=0
+  for i in $(seq 1 120); do
+    is_ours || die "app exited during launch; see $EVIDENCE/app.log"
+    if [ -S "$SOCKET" ] && app_cli "$SOCKET" repo list >/dev/null 2>&1; then ready=1; break; fi
+    sleep 0.5
+  done
+  [ "$ready" = 1 ] || die "socket never answered; see $EVIDENCE/app.log"
+
+  local opened=0
+  for i in $(seq 1 120); do
+    is_ours || die "app exited during launch; see $EVIDENCE/app.log"
+    if app_cli "$SOCKET" repo open "$SEED_REPO" >"$EVIDENCE/launch-repo-open.txt" 2>&1; then opened=1; break; fi
+    grep -q "still loading" "$EVIDENCE/launch-repo-open.txt" || break
+    sleep 0.5
+  done
+  [ "$opened" = 1 ] || die "repo open failed; see $EVIDENCE/launch-repo-open.txt"
+
+  local listed=0
+  for i in $(seq 1 60); do
+    is_ours || die "app exited during launch; see $EVIDENCE/app.log"
+    if app_cli "$SOCKET" worktree list 2>/dev/null | grep -q "seed-repo"; then listed=1; break; fi
+    sleep 0.5
+  done
+  [ "$listed" = 1 ] || die "seed repo never appeared in worktree list"
+
+  local wid=""
+  for i in $(seq 1 20); do
+    wid="$(pid_windows | awk -F'\t' '$2 != "" && $2 != "Colors" { print $1; exit }')"
+    [ -n "$wid" ] && break
+    sleep 0.5
+  done
+  [ -n "$wid" ] || die "main window never appeared"
+  echo "$wid" >"$STATE/window"
+
+  LAUNCHED=1
+  echo "RUN_ID=$run"
+  echo "EVIDENCE=$EVIDENCE"
+}
+
+cmd_doctor() {
+  load "$1"
+  local ok=1
+  check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; ok=0; fi; }
+  check "pid $PID is this checkout's running app" 'is_ours'
+  check "socket $SOCKET present" '[ -S "$SOCKET" ]'
+  if [ "$ok" = 1 ]; then
+    check "socket answers repo list" 'app_cli "$SOCKET" repo list >/dev/null 2>&1'
+    check "seed repo listed" 'app_cli "$SOCKET" worktree list 2>/dev/null | grep -q seed-repo'
+    check "main window $WINDOW belongs to pid" 'resolve_window >/dev/null 2>&1'
+  else
+    echo "skip  socket probes, because the CLI falls back to another Supacode when the pid is dead"
+  fi
+  check "config isolated at $XDG" '[ -f "$XDG/supacode/config.json" ]'
+  check "run $RUN_ID holds $LOCK" '[ "$(cat "$LOCK/run" 2>/dev/null)" = "$RUN_ID" ]'
+  check "only this Supacode running" '[ -z "$(other_instances)" ]'
+  echo "build: $(stat -f '%Sm' "$APP_BIN")  head: $(git -C "$REPO" rev-parse --short HEAD)"
+  [ "$ok" = 1 ]
+}
+
+cmd_cli() {
+  load "$1"; shift
+  [ "${1:-}" = "--" ] && shift
+  require_alive
+  local log="$EVIDENCE/cli.log" out err code
+  out="$(mktemp)"; err="$(mktemp)"
+  set +e
+  app_cli "$SOCKET" "$@" >"$out" 2>"$err"
+  code=$?
+  set -e
+  {
+    printf '$ supacode'; printf ' %q' "$@"; printf '\n'
+    sed 's/^/stdout: /' "$out"
+    sed 's/^/stderr: /' "$err"
+    echo "exit: $code"
+    echo
+  } >>"$log"
+  cat "$out"; cat "$err" >&2
+  rm -f "$out" "$err"
+  return "$code"
+}
+
+cmd_shot() {
+  load "$1"; require_alive
+  local name="${2:?name required}" wid
+  wid="$(resolve_window "${3:-}")"
+  agent-desktop screenshot --window-id "$wid" "$EVIDENCE/$name.png" >/dev/null
+  echo "$EVIDENCE/$name.png"
+}
+
+cmd_ax() {
+  load "$1"; require_alive
+  local name="${2:?name required}" wid
+  wid="$(resolve_window "${3:-}")"
+  agent-desktop snapshot --window-id "$wid" -i --compact >"$EVIDENCE/$name.ax.json"
+  echo "$EVIDENCE/$name.ax.json"
+}
+
+cmd_windows() { load "$1"; require_alive; pid_windows; }
+
+cmd_env() {
+  load "$1"
+  local key
+  for key in RUN_ID PID SOCKET WINDOW STATE EVIDENCE SEED_REPO XDG ZMX; do
+    printf '%s=%q\n' "$key" "${!key}"
+  done
+}
+
+cmd_teardown() {
+  load "$1"
+  local i status=0
+  if is_ours; then
+    kill -TERM "$PID" 2>/dev/null || true
+    for i in $(seq 1 20); do is_ours || break; sleep 0.5; done
+    if is_ours; then kill -KILL "$PID" 2>/dev/null || true; fi
+  fi
+  if [ -x "$ZMX_BIN" ] && [ -d "$ZMX" ]; then
+    local sessions ids s
+    sessions="$(ZMX_DIR="$ZMX" "$ZMX_BIN" list --short 2>/dev/null || true)"
+    ids="$(printf '%s\n' "$sessions" | grep -oE 'supa-[0-9A-Fa-f-]{36}' | sort -u || true)"
+    for s in $ids; do
+      ZMX_DIR="$ZMX" "$ZMX_BIN" kill "$s" >/dev/null 2>&1 || true
+    done
+    printf '%s\n' "$sessions" >"$EVIDENCE/zmx-sessions-killed.txt"
+    for s in $ids; do
+      for i in $(seq 1 10); do pgrep -f "$ZMX_BIN attach $s" >/dev/null || break; sleep 0.5; done
+      pkill -f "^$(printf '%s' "$ZMX_BIN" | sed 's/[.[\*^$]/\\&/g') attach $s( |$)" 2>/dev/null || true
+    done
+  fi
+  rm -f "$SOCKET"
+  local others
+  others="$(other_instances)"
+  if [ -n "$others" ]; then
+    echo "supacode-verify: Supacode pids $(echo "$others" | tr '\n' ' ')are running; left $DOMAIN untouched. Restore by hand from $EVIDENCE/defaults-before.plist" >&2
+  else
+    case "$(cat "$EVIDENCE/defaults-before.status" 2>/dev/null)" in
+      present) defaults import "$DOMAIN" "$EVIDENCE/defaults-before.plist" ;;
+      absent) defaults delete "$DOMAIN" >/dev/null 2>&1 || true ;;
+      *) echo "supacode-verify: no defaults backup status for run $RUN_ID; left $DOMAIN untouched" >&2; status=1 ;;
+    esac
+  fi
+  check_agent_files || status=1
+  git -C "$SEED_REPO" worktree list --porcelain 2>/dev/null >"$EVIDENCE/worktrees-at-teardown.txt" || true
+  rm -rf "$STATE"
+  release_lock "$RUN_ID"
+  echo "torn down run $RUN_ID; evidence kept at $EVIDENCE"
+  return "$status"
+}
+
+main() {
+  local cmd="${1:-}"; shift || true
+  case "$cmd" in
+    launch) cmd_launch "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    cli) cmd_cli "$@" ;;
+    shot) cmd_shot "$@" ;;
+    ax) cmd_ax "$@" ;;
+    windows) cmd_windows "$@" ;;
+    env) cmd_env "$@" ;;
+    teardown) cmd_teardown "$@" ;;
+    *) usage; exit 2 ;;
+  esac
+}
+
+main "$@"
