@@ -118,7 +118,7 @@ make format  # swift-format only
 ## Website
 
 [`apps/supacode.sh`](apps/supacode.sh) contains the landing page and the Cloudflare
-Pages Worker that serves `/download/` from this repository's GitHub Releases.
+Pages Worker that serves `/download/*` from this repository's GitHub Releases.
 Install the Bun version in [`package.json`](package.json) and the Node version in
 [`apps/supacode.sh/.node-version`](apps/supacode.sh/.node-version). Run from the
 repository root:
@@ -145,8 +145,9 @@ website changes. For deployments, set `CLOUDFLARE_ACCOUNT_ID` and
 environment to `main` and confirm that `main` is the production branch of the
 existing `supacode` Pages project. Set the repository variable
 `SUPACODE_PAGES_PREVIEW_ENABLED` to `true` to deploy previews for PRs from this
-repository. Set `SUPACODE_PAGES_PRODUCTION_ENABLED` to `true` to deploy website
-changes on `main`, or dispatch the workflow from `main` to deploy manually.
+repository. Set `SUPACODE_PAGES_PRODUCTION_ENABLED` to `true` to enable production
+deploys. With that variable enabled, website changes on `main` deploy
+automatically and dispatching the workflow from `main` deploys manually.
 
 On a preview deployment, request `/download/latest/appcast.xml` on the preview
 host to exercise its Worker. The homepage's Download button points to
