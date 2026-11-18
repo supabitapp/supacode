@@ -13,17 +13,14 @@ This directory is the maintained source for verifying Supacode's user-facing beh
 ## Driving conventions
 
 - Run app commands through `$S cli <run> -- <args>`, never a bare `supacode`.
-- Read ids from CLI output (`worktree list`, `tab list`, `pane list`). Do not construct ids except the documented seed worktree id.
-- Run accessibility actions with `--window-id "$($S window <run>)"`, never with `--app Supacode`.
+- Read ids from CLI output (`worktree list`, `tab list`, `pane list`). Each recipe sets the ids it needs in its preconditions.
+- Run accessibility actions with the run's window id (`WINDOW` from `$S env <run>`, or an id from `$S windows <run>`), never with `--app Supacode`.
 - Keyboard shortcuts and physical clicks need agent-desktop `--headed`. That steals the user's focus and cursor, so use it only when the user allows physical input. Otherwise report the shortcut path as not driven.
 - A mutation is proven only when a second view agrees. For example, check `tab list` after `tab new`, or `git worktree list` after `repo worktree-new`.
 
 ## Proof and skip reporting
 
-- Capture state before and after: a screenshot or AX dump, plus `cli.log`.
-- Record the feature ID and the entry point you used next to each artifact name.
-- Report an unreachable entry point with the attempted command and the unmet precondition. Never report it as verified through a different path.
-- Evidence stays in `.build/verify-supacode/<run>/` after teardown.
+The proof standards live in `SKILL.md` under Evidence. Name each artifact after its feature ID, such as `tab-new-after.png`. For an entry point you could not drive, report the attempted command and the unmet precondition. Never count it as verified through a different path.
 
 ## Feature entry contract
 

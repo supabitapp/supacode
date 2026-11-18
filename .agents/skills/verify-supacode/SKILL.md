@@ -22,7 +22,7 @@ A Debug build shares bundle id `app.supabit.supacode` with any installed release
 - `ZMX_DIR` is pointed at a scratch dir, so terminal sessions are private and teardown can kill them.
 - UserDefaults (sidebar order, layouts, onboarding flags) cannot be redirected. `HOME` overrides do not reach `FileManager.homeDirectoryForCurrentUser` or cfprefsd. The helper exports the domain to `defaults-before.plist` at launch and imports it back at teardown.
 - A fresh config dir triggers the legacy relocation migrator, which moves files out of `~/.supacode`. Launch refuses when `~/.supacode/{settings,sidebar,layouts}.json` or `ghostty.config` exists.
-- Launch refuses when any `supacode.app/Contents/MacOS/supacode` process is running. That includes the user's own Supacode and another verify run. Only one verify run can exist per machine, because the UserDefaults snapshot and restore would race. Never quit the user's app to make room. Report the refusal instead.
+- Launch refuses when any `supacode.app/Contents/MacOS/supacode` process is running. That includes the user's own Supacode and another verify run. Only one verify run can exist per user, because the UserDefaults snapshot and restore would race. A lock at `/tmp/supacode-verify-<uid>.lock` enforces this, and teardown releases it. Never quit the user's app to make room. Report the refusal instead.
 - Debug builds skip PostHog and Sentry. The seeded config also disables update checks, GitHub integration, system notifications, and the quit confirmation.
 
 ## Launch
@@ -44,9 +44,9 @@ Launch does the following:
 5. Waits for the socket to answer, then retries `repo open` until the app stops replying "Supacode is still loading".
 6. Returns once `worktree list` shows the seed repo.
 
-At that point the window shows `seed-repo › main` in the sidebar. Launch exits non-zero with the reason on any failure. If it fails after starting the app, run teardown for the printed run id.
+At that point the window shows `seed-repo › main` in the sidebar. Launch exits non-zero with the reason on any failure. A failed launch tears itself down, so nothing is left running and the evidence dir keeps `app.log`. Launch also records the main window id for `shot` and `ax`.
 
-Run state lives in `/tmp/sv-<run>/state.env`. Print it with `$S env <run>`. The keys are `PID`, `SOCKET`, `SEED_REPO`, `XDG`, `ZMX`, and `EVIDENCE`.
+Run state lives in `/tmp/sv-<run>/`. Print it as quoted shell assignments with `$S env <run>`. The keys are `RUN_ID`, `PID`, `SOCKET`, `WINDOW`, `STATE`, `EVIDENCE`, `SEED_REPO`, `XDG`, and `ZMX`.
 
 The seed repo's main worktree id is its percent-encoded path with a trailing slash: `%2Ftmp%2Fsv-<run>%2Fseed-repo%2F`. Prefer reading ids from `$S cli <run> -- worktree list` over constructing them.
 
@@ -61,10 +61,11 @@ $S doctor <run>
 It checks these things:
 
 - The pid is alive and is this checkout's binary.
-- The socket exists and answers.
+- The socket exists and answers. Doctor skips socket probes when the pid check fails, because the CLI then falls back to any other live Supacode.
 - Config is isolated.
 - The seed repo is listed.
-- An agent-desktop window exists for the pid.
+- The recorded main window still belongs to the pid.
+- This run holds the lock.
 - No other Supacode is running.
 
 It also prints the build mtime and `HEAD`. If the build predates your change, run `make build-app`, tear down, and relaunch.
@@ -101,7 +102,9 @@ Read them with these commands:
 ```bash
 $S ax <run> <name>        # interactive AX tree -> EVIDENCE/<name>.ax.json
 jq -r '.. | objects | select(.name? != null) | "\(.role)\t\(.name)"' "$EVIDENCE/<name>.ax.json"
-WID="$($S window <run>)"  # agent-desktop window id scoped to this run's pid
+$S windows <run>          # "<id><TAB><title>" for every window this run's pid owns
+$S shot <run> <name> <id> # capture a non-main window, such as Settings
+WID="$($S env <run> | sed -n 's/^WINDOW=//p')"
 agent-desktop click/find/... --window-id "$WID"   # never --app Supacode, which can match the user's app
 ```
 
@@ -111,7 +114,7 @@ Tab strip items do not expose names. Read the focused tab's title from the `wind
 
 Artifacts go to `<repo>/.build/verify-supacode/<run>/`. The directory is gitignored and survives teardown.
 
-- `$S shot <run> <name>` writes `<name>.png`, a window screenshot scoped by pid.
+- `$S shot <run> <name> [window]` writes `<name>.png`. It captures the main window by default, and any window id you pass must belong to the run's pid.
 - `cli.log` holds every CLI call with its output and exit code.
 - `app.log` holds app stdout and stderr. It is usually empty, because SupaLogger output is buffered.
 - `launch-repo-open.txt`, `defaults-before.plist`, `zmx-sessions-killed.txt`, and `worktrees-at-teardown.txt` are written by the helper.
@@ -131,18 +134,18 @@ $S teardown <run>
 
 Teardown works in this order:
 
-1. Sends SIGTERM to this run's pid, then SIGKILL after 10 seconds.
+1. Checks that the pid still runs this checkout's binary, then sends SIGTERM, and SIGKILL after 10 seconds.
 2. Kills each zmx session listed in this run's `ZMX_DIR` and waits for its `zmx attach` process to exit.
 3. Removes the socket.
-4. Restores the defaults domain from `defaults-before.plist`, or deletes the domain if it did not exist before.
-5. Deletes `/tmp/sv-<run>`.
+4. Restores the defaults domain from `defaults-before.plist`, or deletes the domain if it did not exist before. When another Supacode is running at that point, it leaves the domain alone and prints the backup path.
+5. Deletes `/tmp/sv-<run>` and releases the lock.
 
 It never kills by process name. The evidence dir stays. Run teardown after every failed attempt too. To confirm the restore, run `defaults export app.supabit.supacode - | diff - <(plutil -convert xml1 -o - $EVIDENCE/defaults-before.plist)`.
 
 ## Feature map
 
-`features/README.md` indexes one recipe per user-facing feature. Read the matching file before driving. A proof is incomplete when the map lists entry points you skipped.
+`features/README.md` indexes one recipe per user-facing feature. Read the matching file before driving. Report every entry point the map lists. Mark each one as driven or not driven, and say why for each one not driven. A feature is fully proven only when every entry point was driven.
 
 ## Helper reference
 
-`scripts/supacode-verify` is executable and has these commands: `launch`, `doctor <run>`, `cli <run> -- <args>`, `shot <run> <name>`, `ax <run> <name>`, `window <run>`, `env <run>`, and `teardown <run>`. Each exits non-zero with a `supacode-verify:` message when its precondition fails, such as a dead pid or a missing socket.
+`scripts/supacode-verify` is executable and has these commands: `launch`, `doctor <run>`, `cli <run> -- <args>`, `shot <run> <name> [window]`, `ax <run> <name> [window]`, `windows <run>`, `env <run>`, and `teardown <run>`. Each exits non-zero with a `supacode-verify:` message when its precondition fails, such as a dead pid or a missing socket.
