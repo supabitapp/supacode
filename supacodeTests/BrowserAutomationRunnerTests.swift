@@ -89,6 +89,10 @@ struct BrowserAutomationRunnerTests {
       defer { pendingDialog = nil }
       return pendingDialog
     }
+
+    func redacted(_ text: String) -> String {
+      text.replacing("hunter2", with: "[masked]")
+    }
   }
 
   private static let before = """
@@ -270,6 +274,35 @@ struct BrowserAutomationRunnerTests {
         "\"document.title\"", "error: boom\nlog: ready", "saved /tmp/page.png", "(no console messages)",
       ])
     #expect(result.failure == nil)
+  }
+
+  @Test func everythingTheRunnerPrintsIsRedacted() async {
+    let page = FakePage(snapshots: ["- status [ref=e1]: idle", "- status [ref=e1]: you typed hunter2"])
+    page.console = ["log: password is hunter2"]
+    page.title = "Account hunter2"
+    page.onPerform = { (action) throws(BrowserAutomationError) -> String? in
+      if case .fill = action {
+        throw .rejected("field rejects hunter2")
+      }
+      return "clicked link \"hunter2\""
+    }
+    let printed = await BrowserAutomationRunner(page: page).run([
+      Self.click, .evaluate(source: "hunter2"), .console(clear: false), .snapshot(full: true, scope: nil),
+    ])
+    #expect(
+      printed.lines == [
+        "clicked link \"[masked]\"", "\"[masked]\"", "log: password is [masked]",
+        "page: Account [masked] <http://localhost/form>", "- status [ref=e1]: you typed [masked]",
+      ])
+
+    let failed = await BrowserAutomationRunner(page: page, reportsChanges: false).run([
+      .fill(target: "e1", text: "x")
+    ])
+    #expect(failed.failure == "field rejects [masked]")
+
+    page.pendingDialog = BrowserPageDialog(kind: .alert, message: "saved hunter2")
+    let blocked = await BrowserAutomationRunner(page: page).run([Self.click])
+    #expect(blocked.failure?.contains("alert \"saved [masked]\"") == true)
   }
 
   @Test func anActionThatOpensADialogSaysSoAndStopsTheBatch() async {

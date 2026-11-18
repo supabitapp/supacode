@@ -24,6 +24,7 @@ struct BrowserAutomationPageTests {
       webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
       super.init()
       webView.navigationDelegate = self
+      session.console.install(in: webView)
     }
 
     nonisolated deinit {}
@@ -75,6 +76,10 @@ struct BrowserAutomationPageTests {
 
     func answerDialog(_ answer: BrowserDialogAnswer) -> BrowserPageDialog? {
       nil
+    }
+
+    func redacted(_ text: String) -> String {
+      session.redacted(text)
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
@@ -174,6 +179,10 @@ struct BrowserAutomationPageTests {
 
     let read = await Self.quiet(page).run([.evaluate(source: "document.getElementById('secret').value")])
     #expect(read.lines == ["\"[masked]\""])
+    let thrown = await Self.quiet(page).run([
+      .evaluate(source: "(() => { throw new Error('leaked ' + document.getElementById('secret').value) })()")
+    ])
+    #expect(thrown.failure == "The script failed: Error: leaked [masked]")
 
     _ = await page.pageValue("document.getElementById('cover').remove(); return ''")
     let sent = await BrowserAutomationRunner(page: page).run([
@@ -295,6 +304,22 @@ struct BrowserAutomationPageTests {
     let thrown = await Self.quiet(page).run([.evaluate(source: "missingFunction()")])
     #expect(thrown.failure?.hasPrefix("The script failed: ") == true)
     #expect(thrown.failure?.contains("missingFunction") == true)
+
+    let broken = await Self.quiet(page).run([.evaluate(source: "const = 1")])
+    #expect(broken.failure?.hasPrefix("The script failed: SyntaxError") == true)
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func evalThatThrowsAfterASideEffectRunsOnce() async throws {
+    let page = try WebPage(files: ["form.html": Self.form])
+    defer { page.remove() }
+    await page.open("form.html")
+    let result = await Self.quiet(page).run([
+      .evaluate(source: "(window.runs = (window.runs || 0) + 1, JSON.parse('{'))")
+    ])
+    #expect(result.failure?.hasPrefix("The script failed: SyntaxError") == true)
+    let runs = await Self.quiet(page).run([.evaluate(source: "window.runs")])
+    #expect(runs.lines == ["1"])
   }
 
   @Test(.timeLimit(.minutes(1)))
@@ -387,5 +412,13 @@ struct BrowserAutomationPageTests {
     _ = await BrowserAutomationRunner(page: content).run([delete])
     let dismissed = await BrowserAutomationRunner(page: content).run([.dialog(.dismiss)])
     #expect(dismissed.lines.last?.hasSuffix(": kept") == true)
+
+    _ = await BrowserAutomationRunner(page: content).run([delete])
+    #expect(content.pendingDialog != nil)
+    content.load(try #require(URL(string: "data:text/html,%3Ctitle%3ENext%3C/title%3E")), focusing: false)
+    #expect(await content.waitUntilLoaded(timeout: .seconds(20)))
+    #expect(content.pendingDialog == nil)
+    let next = await BrowserAutomationRunner(page: content).run([Self.snapshot])
+    #expect(next.lines.first?.hasPrefix("page: Next <data:text/html,") == true)
   }
 }

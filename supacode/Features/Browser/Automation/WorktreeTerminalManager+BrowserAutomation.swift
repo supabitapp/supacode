@@ -30,6 +30,7 @@ extension WorktreeTerminalManager {
       guard let content = liveBrowserContent(target) else {
         return BrowserAutomationResult(refusal: "The browser tab could not be started.")
       }
+      content.captureConsole()
       return await content.automation.serialized {
         await BrowserAutomationRunner(page: content, reportsChanges: !quiet, isCallerGone: isCallerGone).run(steps)
       }

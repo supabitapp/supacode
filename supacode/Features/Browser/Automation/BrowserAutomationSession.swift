@@ -116,13 +116,16 @@ final class BrowserAutomationSession {
   }
 
   func evaluate(_ source: String, in webView: WKWebView) async throws(BrowserAutomationError) -> String {
-    console.install(in: webView)
     let asExpression = "return (\(source)\n);"
     let asStatements = "\(source)\n"
     do {
       return try await evaluate(body: asExpression, in: webView)
-    } catch .rejected(let message) where message.contains("SyntaxError") {
-      return try await evaluate(body: asStatements, in: webView)
+    } catch .internalFailure {
+      do {
+        return try await evaluate(body: asStatements, in: webView)
+      } catch .internalFailure(let message) {
+        throw .rejected("The script failed: \(message)")
+      }
     }
   }
 
@@ -142,25 +145,37 @@ final class BrowserAutomationSession {
 
   private func evaluate(body: String, in webView: WKWebView) async throws(BrowserAutomationError) -> String {
     let script = """
-      const value = await (async () => { \(body) })();
-      if (value === undefined) return "undefined";
+      let value;
+      try {
+        value = await (async () => { \(body) })();
+      } catch (error) {
+        return { thrown: String(error) };
+      }
+      if (value === undefined) return { value: "undefined" };
       try {
         const json = JSON.stringify(value, null, 2);
-        return json === undefined ? String(value) : json;
+        return { value: json === undefined ? String(value) : json };
       } catch (error) {
-        return String(value);
+        return { value: String(value) };
       }
       """
     let page = Script(body: script, world: .page)
     let reply = try await call(page, in: webView, timeout: BrowserPageAction.timeout) { result in
       switch result {
-      case .success(let value):
-        .success(Reply(succeeded: true, text: value as? String ?? String(describing: value)))
+      case .success(let outcome):
+        let fields = outcome as? [String: Any]
+        return .success(
+          Reply(
+            succeeded: fields?["thrown"] == nil, error: fields?["thrown"] as? String, text: fields?["value"] as? String)
+        )
       case .failure(let error):
-        .failure(.rejected("The script failed: \(Self.scriptErrorMessage(error))"))
+        return .failure(.internalFailure(Self.scriptErrorMessage(error)))
       }
     }
-    return redacted(reply.text ?? "")
+    guard reply.succeeded else {
+      throw .rejected("The script failed: \(reply.error ?? "")")
+    }
+    return reply.text ?? ""
   }
 
   private func drive(
@@ -169,7 +184,6 @@ final class BrowserAutomationSession {
     in webView: WKWebView,
     timeout: Duration
   ) async throws(BrowserAutomationError) -> Reply {
-    console.install(in: webView)
     let callArguments: [String: Any] = ["command": command, "args": arguments]
     var reply = try await callDriver(callArguments, in: webView, timeout: timeout)
     if reply.needsBootstrap {
@@ -178,12 +192,8 @@ final class BrowserAutomationSession {
     }
     remember(reply.secrets)
     guard reply.succeeded else {
-      throw .rejected(redacted(reply.error ?? "The browser command failed."))
+      throw .rejected(reply.error ?? "The browser command failed.")
     }
-    reply.ack = reply.ack.map(redacted)
-    reply.text = reply.text.map(redacted)
-    reply.url = reply.url.map(redacted)
-    reply.title = reply.title.map(redacted)
     return reply
   }
 

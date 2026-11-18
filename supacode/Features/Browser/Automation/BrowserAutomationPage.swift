@@ -60,4 +60,5 @@ protocol BrowserAutomationPage: AnyObject {
   func saveScreenshot(to path: String?) async throws(BrowserAutomationError) -> String
   func consoleMessages(clearing: Bool) -> [String]
   func answerDialog(_ answer: BrowserDialogAnswer) -> BrowserPageDialog?
+  func redacted(_ text: String) -> String
 }

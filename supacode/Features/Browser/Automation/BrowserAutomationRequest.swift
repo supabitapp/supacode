@@ -195,6 +195,13 @@ nonisolated struct BrowserAutomationResult: Equatable, Sendable {
   var refusal: String?
   var createdTabID: String?
 
+  func mapPageText(_ transform: (String) -> String) -> BrowserAutomationResult {
+    var mapped = self
+    mapped.lines = lines.map(transform)
+    mapped.failure = failure.map(transform)
+    return mapped
+  }
+
   func response(nonce: String) -> [String: String] {
     var fields: [String: String] = [:]
     fields["id"] = createdTabID

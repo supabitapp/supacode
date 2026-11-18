@@ -148,6 +148,7 @@ final class BrowserContent: TabContent, TabContentToolbar {
   func load(_ url: URL, focusing: Bool = true) {
     page.url = url
     guard let webView else { return }
+    navigation?.answerDialog(.dismiss)
     navigation?.failedURL = nil
     webView.load(URLRequest(url: url))
     if focusing {
@@ -163,8 +164,10 @@ final class BrowserContent: TabContent, TabContentToolbar {
     case .reload:
       reload()
     case .goBack:
+      navigation?.answerDialog(.dismiss)
       webView.goBack()
     case .goForward:
+      navigation?.answerDialog(.dismiss)
       webView.goForward()
     case .zoomIn:
       webView.pageZoom = min(webView.pageZoom + 0.1, 3)
@@ -186,6 +189,7 @@ final class BrowserContent: TabContent, TabContentToolbar {
 
   private func reload() {
     guard let webView else { return }
+    navigation?.answerDialog(.dismiss)
     if let failedURL = navigation?.failedURL {
       navigation?.failedURL = nil
       webView.load(URLRequest(url: failedURL))
@@ -332,7 +336,11 @@ extension BrowserContent: BrowserAutomationPage {
   }
 
   func consoleMessages(clearing: Bool) -> [String] {
-    automation.console.drain(clearing: clearing).map(automation.redacted)
+    automation.console.drain(clearing: clearing)
+  }
+
+  func redacted(_ text: String) -> String {
+    automation.redacted(text)
   }
 
   @discardableResult

@@ -247,4 +247,27 @@ struct WorktreeTerminalManagerBrowserTests {
       BrowserAutomationRequest(operation: .listTabs), worktreeID: "/tmp/repo/other")
     #expect(empty.lines == ["(no browser tabs)"])
   }
+
+  @Test(.dependencies, .timeLimit(.minutes(1)))
+  func consoleCollectsFromTheFirstCommandSentToATab() async throws {
+    let harness = makeHarness(usesLiveBrowserContent: true)
+    let html = "<title>Ticker</title><script>setInterval(function () { console.log('tick') }, 50)</script>"
+    let encoded = try #require(html.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed))
+    harness.manager.handleCommand(
+      .openBrowserTab(harness.worktree, url: URL(string: "data:text/html,\(encoded)"), focusing: false))
+    let tab = try #require(harness.layout?.panes.flatMap(\.tabs).first)
+    defer { ContentRuntime.liveValue.remove(tab.content.id, tombstone: false) }
+    let content = try #require(ContentRuntime.liveValue.content(for: tab.content.id) as? BrowserContent)
+    let readConsole = BrowserAutomationRequest(
+      tabID: tab.id.rawValue.uuidString, operation: .run(steps: [.console(clear: false)], quiet: false))
+
+    let first = await harness.manager.runBrowserAutomation(readConsole, worktreeID: nil)
+    #expect(first.refusal == nil)
+    while content.automation.console.entries.isEmpty {
+      await Task.yield()
+    }
+    let second = await harness.manager.runBrowserAutomation(readConsole, worktreeID: nil)
+
+    #expect(second.lines.first?.hasPrefix("log: tick") == true)
+  }
 }

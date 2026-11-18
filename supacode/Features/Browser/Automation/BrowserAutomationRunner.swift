@@ -23,6 +23,10 @@ struct BrowserAutomationRunner {
   var isCallerGone: () -> Bool = { false }
 
   func run(_ steps: [BrowserAutomationStep]) async -> BrowserAutomationResult {
+    await runSteps(steps).mapPageText(page.redacted)
+  }
+
+  private func runSteps(_ steps: [BrowserAutomationStep]) async -> BrowserAutomationResult {
     var progress = Progress()
     for (index, step) in steps.enumerated() {
       progress.isLastStep = index == steps.count - 1

@@ -137,11 +137,13 @@ final class BrowserNavigationHandler: NSObject, WKNavigationDelegate, WKUIDelega
   }
 
   func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    answerDialog(.dismiss)
     documentChanged?()
   }
 
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
     Self.logger.warning("Web content process terminated; reloading.")
+    answerDialog(.dismiss)
     documentChanged?()
     webView.reload()
   }
