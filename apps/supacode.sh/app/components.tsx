@@ -2,9 +2,9 @@
 
 import { AppleFinderIcon, Copy01Icon, Tick01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Button } from "@repo/ui/components/ui/button";
 import { posthog } from "posthog-js";
 import { type ReactNode, useState } from "react";
+import { Button } from "./ui/button";
 
 export function DownloadButton() {
   return (

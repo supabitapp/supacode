@@ -1,6 +1,0 @@
-{
-  "name": "supacode",
-  "private": true,
-  "packageManager": "bun@1.4.2",
-  "workspaces": ["apps/supacode.sh", "packages/ui", "packages/typescript-config"]
-}

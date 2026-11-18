@@ -72,8 +72,3 @@ fastlane/test_output
 *.profraw
 .env
 .DS_Store
-
-node_modules/
-.wrangler/
-/.env.*
-.dev.vars*

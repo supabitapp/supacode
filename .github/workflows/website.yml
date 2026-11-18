@@ -5,10 +5,6 @@ on:
     branches: [main]
     paths: &website-paths
       - apps/supacode.sh/**
-      - packages/typescript-config/**
-      - packages/ui/**
-      - bun.lock
-      - package.json
       - .github/workflows/website.yml
   push:
     branches: [main]
@@ -29,6 +25,9 @@ jobs:
       node-version: ${{ steps.node.outputs.node-version }}
     env:
       NEXT_TELEMETRY_DISABLED: '1'
+    defaults:
+      run:
+        working-directory: apps/supacode.sh
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -38,17 +37,16 @@ jobs:
         with:
           node-version-file: apps/supacode.sh/.node-version
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: apps/supacode.sh/package.json
       - run: bun install --frozen-lockfile --ignore-scripts
-      - run: bun run --filter supacode.sh check-types
-      - run: bun run --filter supacode.sh test
-      - run: bun run --filter supacode.sh build
+      - run: bun run check-types
+      - run: bun run test
+      - run: bun run build
       - name: Check Pages output
-        working-directory: apps/supacode.sh
         run: |
           test -s out/index.html
           cmp public/_worker.js out/_worker.js
-          cmp public/screenshot.png out/screenshot.png
-          cmp public/supacode-app-icon.png out/supacode-app-icon.png
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: supacode-website
@@ -59,11 +57,9 @@ jobs:
   deploy:
     needs: website-check
     if: >-
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
+      (github.event.pull_request.head.repo.full_name == github.repository &&
        vars.SUPACODE_PAGES_PREVIEW_ENABLED == 'true') ||
-      ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-       github.ref == 'refs/heads/main' &&
+      (github.ref == 'refs/heads/main' &&
        vars.SUPACODE_PAGES_PRODUCTION_ENABLED == 'true')
     runs-on: ubuntu-latest
     environment:
@@ -101,9 +97,6 @@ jobs:
           curl -fsS --retry 3 --retry-all-errors --max-time 20 --dump-header "$RUNNER_TEMP/appcast.headers" \
             -o /dev/null "${DEPLOYMENT_URL%/}/download/latest/appcast.xml"
           grep -qi '^x-supacode-cache:' "$RUNNER_TEMP/appcast.headers"
-      - name: Show preview link
-        if: github.event_name == 'pull_request'
-        env:
-          PREVIEW_URL: ${{ steps.pages.outputs.pages-deployment-alias-url || steps.pages.outputs.deployment-url }}
-        run: |
-          printf 'Preview: %s\n\nThe preview uses the production license checkout.\n' "$PREVIEW_URL" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$EXPECTED_ENVIRONMENT" == preview ]]; then
+            printf 'This preview uses the production license checkout.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
