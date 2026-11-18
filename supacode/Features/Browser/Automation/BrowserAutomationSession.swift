@@ -82,6 +82,7 @@ final class BrowserAutomationSession {
   }
 
   func documentChanged() {
+    baseline = nil
     for id in Array(pending.keys) {
       finish(id, .failure(.contextLost))
     }

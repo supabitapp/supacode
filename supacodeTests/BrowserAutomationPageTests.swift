@@ -219,6 +219,19 @@ struct BrowserAutomationPageTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
+  func aNewDocumentForgetsWhatWasReadOnTheOldOne() async throws {
+    let page = try WebPage(files: ["form.html": Self.form, "done.html": Self.done])
+    defer { page.remove() }
+    await page.open("form.html")
+    _ = await BrowserAutomationRunner(page: page).run([Self.step(.snapshot)])
+    #expect(page.snapshotBaseline != nil)
+    await page.open("done.html")
+    #expect(page.snapshotBaseline == nil)
+    let result = await BrowserAutomationRunner(page: page).run([Self.step(.press, key: "Tab")])
+    #expect(result.lines == ["pressed Tab", "no visible change"])
+  }
+
+  @Test(.timeLimit(.minutes(1)))
   func aCallPendingAcrossANavigationIsAbandoned() async throws {
     let page = try WebPage(files: ["form.html": Self.form, "done.html": Self.done])
     defer { page.remove() }
