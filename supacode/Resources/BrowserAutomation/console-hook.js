@@ -1,4 +1,5 @@
 (() => {
+  const maximumLength = 2000;
   if (window.__supacodeConsoleHooked) return;
   Object.defineProperty(window, '__supacodeConsoleHooked', { value: true });
 
@@ -15,7 +16,8 @@
 
   const post = (level, values) => {
     try {
-      window.webkit.messageHandlers.supacodeConsole.postMessage({ level, text: values.map(format).join(' ') });
+      const text = values.map(format).join(' ').slice(0, maximumLength);
+      window.webkit.messageHandlers.supacodeConsole.postMessage({ level, text });
     } catch (error) {
       return;
     }

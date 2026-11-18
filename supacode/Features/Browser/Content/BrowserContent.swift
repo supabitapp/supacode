@@ -332,11 +332,16 @@ extension BrowserContent: BrowserAutomationPage {
   }
 
   func saveScreenshot(to path: String?) async throws(BrowserAutomationError) -> String {
-    try await BrowserScreenshot.save(try liveWebView(), to: path)
+    try BrowserScreenshot.write(try await automation.screenshot(of: try liveWebView()), to: path)
   }
 
   func consoleMessages(clearing: Bool) -> [String] {
-    automation.console.drain(clearing: clearing)
+    automation.consoleMessages(clearing: clearing)
+  }
+
+  func refreshSecrets() async {
+    guard let webView else { return }
+    await automation.refreshSecrets(in: webView)
   }
 
   func redacted(_ text: String) -> String {

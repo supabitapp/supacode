@@ -496,7 +496,7 @@ function supacodeCreateDriver(engine, config) {
     });
   };
 
-  const commands = { snapshot, click, fill, select, press, wait, settle };
+  const commands = { snapshot, click, fill, select, press, wait, settle, secrets: () => ({}) };
 
   const run = async (command, args) => {
     const handler = commands[command];

@@ -25,6 +25,7 @@ struct BrowserAutomationRunnerTests {
     var url = "http://localhost/form"
     var title = "Form"
     var console: [String] = []
+    var secretRefreshes = 0
     var onPerform: (BrowserPageAction) throws(BrowserAutomationError) -> String? = { _ in nil }
     var onSettle: () -> Void = {}
 
@@ -90,6 +91,11 @@ struct BrowserAutomationRunnerTests {
       return pendingDialog
     }
 
+    func refreshSecrets() async {
+      await Task.yield()
+      secretRefreshes += 1
+    }
+
     func redacted(_ text: String) -> String {
       text.replacing("hunter2", with: "[masked]")
     }
@@ -113,6 +119,7 @@ struct BrowserAutomationRunnerTests {
     #expect(page.calls == [.snapshot, Self.clicked, .settle, .snapshot])
     #expect(result == BrowserAutomationResult(lines: ["done", "changed:\n- status [ref=e2]: saved"]))
     #expect(page.lastSnapshot == BrowserPageSnapshot(text: Self.after, url: page.url, title: page.title))
+    #expect(page.secretRefreshes == 1)
   }
 
   @Test func aQuietActionDoesNotReadThePage() async {
@@ -332,6 +339,7 @@ struct BrowserAutomationRunnerTests {
       blocked.failure
         == "A page dialog is open: confirm \"Delete it?\". Answer it with `dialog accept` or `dialog dismiss`.")
     #expect(page.calls.isEmpty)
+    #expect(page.secretRefreshes == 0)
 
     let answered = await BrowserAutomationRunner(page: page).run([.dialog(.accept(text: nil))])
     #expect(page.calls == [.answer(.accept(text: nil)), .settle, .snapshot])

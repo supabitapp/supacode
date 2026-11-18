@@ -34,13 +34,15 @@ final class BrowserAutomationSession {
   }
 
   private struct PendingCall {
-    var continuation: CheckedContinuation<Result<Reply, BrowserAutomationError>, Never>
+    var abandon: (BrowserAutomationError) -> Void
     var timeout: Task<Void, Never>
   }
 
   private static let logger = SupaLogger("BrowserAutomation")
   private static let rememberedSecretLimit = 32
   private static let settleTimeout = Duration.seconds(3)
+  private static let secretsTimeout = Duration.seconds(2)
+  private static let mask = "[masked]"
   private static let driverBody = """
     const driver = globalThis.__supacodeDriver;
     if (!driver) return { needsBootstrap: true };
@@ -115,6 +117,26 @@ final class BrowserAutomationSession {
     _ = try? await drive("settle", [:], in: webView, timeout: Self.settleTimeout)
   }
 
+  func refreshSecrets(in webView: WKWebView) async {
+    _ = try? await drive("secrets", [:], in: webView, timeout: Self.secretsTimeout)
+  }
+
+  func screenshot(of webView: WKWebView) async throws(BrowserAutomationError) -> Data {
+    try await race(timeout: BrowserPageAction.timeout) { finish in
+      webView.takeSnapshot(with: nil) { image, error in
+        if let png = image.flatMap(BrowserScreenshot.png) {
+          finish(.success(png))
+        } else {
+          finish(.failure(.internalFailure("The screenshot failed: \(error?.localizedDescription ?? "no image")")))
+        }
+      }
+    }
+  }
+
+  func consoleMessages(clearing: Bool) -> [String] {
+    console.drain(clearing: clearing).map { String(redacted($0).prefix(BrowserConsoleCapture.shownLengthLimit)) }
+  }
+
   func evaluate(_ source: String, in webView: WKWebView) async throws(BrowserAutomationError) -> String {
     let asExpression = "return (\(source)\n);"
     let asStatements = "\(source)\n"
@@ -130,7 +152,17 @@ final class BrowserAutomationSession {
   }
 
   func redacted(_ text: String) -> String {
-    secrets.reduce(text) { $0.replacing($1, with: "[masked]") }
+    secrets.reduce(text) { masked, secret in
+      masked.replacing(Self.jsonSpelling(of: secret), with: Self.mask).replacing(secret, with: Self.mask)
+    }
+  }
+
+  private static func jsonSpelling(of value: String) -> String {
+    let options: JSONSerialization.WritingOptions = [.fragmentsAllowed, .withoutEscapingSlashes]
+    guard let data = try? JSONSerialization.data(withJSONObject: value, options: options),
+      let json = String(bytes: data, encoding: .utf8)
+    else { return value }
+    return String(json.dropFirst().dropLast())
   }
 
   func waitUntilLoaded(_ webView: WKWebView, timeout: Duration) async -> Bool {
@@ -238,36 +270,48 @@ final class BrowserAutomationSession {
     timeout: Duration,
     parse: @escaping (Result<Any, any Error>) -> Result<Reply, BrowserAutomationError>
   ) async throws(BrowserAutomationError) -> Reply {
-    let id = UUID()
-    let result = await withCheckedContinuation { continuation in
-      let timeoutTask = Task { [weak self, clock] in
-        guard (try? await clock.sleep(for: timeout)) != nil else { return }
-        self?.finish(id, .failure(.timedOut))
-      }
-      pending[id] = PendingCall(continuation: continuation, timeout: timeoutTask)
+    try await race(timeout: timeout) { finish in
       webView.callAsyncJavaScript(
         script.body, arguments: script.arguments, in: nil, in: script.world
-      ) { [weak self, weak webView] result in
-        guard let self, pending[id] != nil else { return }
+      ) { [weak webView] result in
         if case .failure = result, webView?.isLoading == true {
-          finish(id, .failure(.contextLost))
+          finish(.failure(.contextLost))
         } else {
-          finish(id, parse(result))
+          finish(parse(result))
         }
+      }
+    }
+  }
+
+  private func race<Value: Sendable>(
+    timeout: Duration,
+    _ start: (@escaping @MainActor (Result<Value, BrowserAutomationError>) -> Void) -> Void
+  ) async throws(BrowserAutomationError) -> Value {
+    let id = UUID()
+    let result: Result<Value, BrowserAutomationError> = await withCheckedContinuation { continuation in
+      let timeoutTask = Task { [weak self, clock] in
+        guard (try? await clock.sleep(for: timeout)) != nil else { return }
+        self?.abandon(id, .timedOut)
+      }
+      pending[id] = PendingCall(abandon: { continuation.resume(returning: .failure($0)) }, timeout: timeoutTask)
+      start { [weak self] result in
+        guard let call = self?.pending.removeValue(forKey: id) else { return }
+        call.timeout.cancel()
+        continuation.resume(returning: result)
       }
     }
     return try result.get()
   }
 
-  private func finish(_ id: UUID, _ result: Result<Reply, BrowserAutomationError>) {
+  private func abandon(_ id: UUID, _ error: BrowserAutomationError) {
     guard let call = pending.removeValue(forKey: id) else { return }
     call.timeout.cancel()
-    call.continuation.resume(returning: result)
+    call.abandon(error)
   }
 
   private func abandonPendingCalls(_ error: BrowserAutomationError) {
     for id in Array(pending.keys) {
-      finish(id, .failure(error))
+      abandon(id, error)
     }
   }
 

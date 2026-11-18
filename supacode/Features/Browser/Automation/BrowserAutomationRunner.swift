@@ -23,7 +23,10 @@ struct BrowserAutomationRunner {
   var isCallerGone: () -> Bool = { false }
 
   func run(_ steps: [BrowserAutomationStep]) async -> BrowserAutomationResult {
-    await runSteps(steps).mapPageText(page.redacted)
+    if page.pendingDialog == nil, !page.isLoadingPage {
+      await page.refreshSecrets()
+    }
+    return await runSteps(steps).mapPageText(page.redacted)
   }
 
   private func runSteps(_ steps: [BrowserAutomationStep]) async -> BrowserAutomationResult {

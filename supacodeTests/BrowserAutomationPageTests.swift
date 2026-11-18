@@ -1,4 +1,6 @@
 import AppKit
+import Clocks
+import ConcurrencyExtras
 import Foundation
 import Testing
 import WebKit
@@ -10,10 +12,11 @@ import WebKit
 struct BrowserAutomationPageTests {
   private final class WebPage: NSObject, BrowserAutomationPage, WKNavigationDelegate {
     let webView: WKWebView
-    let session = BrowserAutomationSession()
+    let session: BrowserAutomationSession
     let directory: URL
 
-    init(files: [String: String]) throws {
+    init(files: [String: String], clock: any Clock<Duration> = ContinuousClock()) throws {
+      session = BrowserAutomationSession(clock: clock)
       directory = FileManager.default.temporaryDirectory.appending(path: "browser-automation-\(UUID().uuidString)")
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       for (name, html) in files {
@@ -39,7 +42,9 @@ struct BrowserAutomationPageTests {
 
     func open(_ name: String) async {
       webView.loadFileURL(directory.appending(path: name), allowingReadAccessTo: directory)
-      _ = await waitUntilLoaded(timeout: .seconds(20))
+      while webView.isLoading {
+        await Task.yield()
+      }
     }
 
     func loadPage(_ url: URL) {
@@ -67,11 +72,15 @@ struct BrowserAutomationPageTests {
     }
 
     func saveScreenshot(to path: String?) async throws(BrowserAutomationError) -> String {
-      try await BrowserScreenshot.save(webView, to: path)
+      try BrowserScreenshot.write(try await session.screenshot(of: webView), to: path)
     }
 
     func consoleMessages(clearing: Bool) -> [String] {
-      session.console.drain(clearing: clearing)
+      session.consoleMessages(clearing: clearing)
+    }
+
+    func refreshSecrets() async {
+      await session.refreshSecrets(in: webView)
     }
 
     func answerDialog(_ answer: BrowserDialogAnswer) -> BrowserPageDialog? {
@@ -193,6 +202,70 @@ struct BrowserAutomationPageTests {
     #expect(navigated.contains("navigated: Done <file://"))
     #expect(navigated.contains("token=[masked]"))
     #expect(!navigated.contains("hunter2"))
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func aPasswordSomeoneTypedBeforeAutomationIsRedactedToo() async throws {
+    let page = try WebPage(files: ["form.html": Self.form])
+    defer { page.remove() }
+    await page.open("form.html")
+    _ = await page.pageValue("document.getElementById('password').value = 'hunter2'; return ''")
+    let read = await Self.quiet(page).run([.evaluate(source: "document.getElementById('password').value")])
+    #expect(read.lines == ["\"[masked]\""])
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func aPasswordIsRedactedInItsJSONSpellingAndBeforeTruncation() async throws {
+    let page = try WebPage(files: ["form.html": Self.form])
+    defer { page.remove() }
+    await page.open("form.html")
+    let password = "pa\"ss\\word"
+    let read = "document.getElementById('password').value"
+    let result = await Self.quiet(page).run([
+      .fill(target: "role=textbox[name=\"Password\"]", text: password),
+      .evaluate(source: "({ value: \(read) })"),
+      .evaluate(source: "console.log('x'.repeat(496) + \(read)); return 1"),
+      .console(clear: true),
+    ])
+    #expect(result.failure == nil)
+    #expect(result.lines[1] == "{\n  \"value\": \"[masked]\"\n}")
+    let logged = try #require(result.lines.last)
+    #expect(logged.hasPrefix("log: xxxx"))
+    #expect(logged.count == BrowserConsoleCapture.shownLengthLimit)
+    #expect(!logged.contains("pa"))
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func aPageCannotGrowTheConsoleCaptureWithoutBound() async throws {
+    let page = try WebPage(files: ["form.html": Self.form])
+    defer { page.remove() }
+    await page.open("form.html")
+    let spoof = "window.webkit.messageHandlers.supacodeConsole.postMessage"
+    let result = await Self.quiet(page).run([
+      .evaluate(source: "\(spoof)({ level: 'z'.repeat(50000), text: 'y'.repeat(50000) }); return 1"),
+      .console(clear: false),
+    ])
+    #expect(result.lines.last?.hasPrefix("log: yyyy") == true)
+    #expect(page.session.console.entries.map(\.count) == [BrowserConsoleCapture.storedLengthLimit + "log: ".count])
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func aScriptThatNeverSettlesTimesOutInsteadOfHoldingTheTab() async throws {
+    let clock = TestClock()
+    let page = try WebPage(files: ["form.html": Self.form], clock: clock)
+    defer { page.remove() }
+    await page.open("form.html")
+    let result = LockIsolated<BrowserAutomationResult?>(nil)
+    let runner = Self.quiet(page)
+    let task = Task {
+      let finished = await runner.run([.evaluate(source: "new Promise(() => {})")])
+      result.setValue(finished)
+    }
+    while result.value == nil {
+      await clock.advance(by: .seconds(11))
+    }
+    await task.value
+    #expect(result.value?.failure == "Timed out. The action may have happened.")
   }
 
   @Test(.timeLimit(.minutes(1)))
