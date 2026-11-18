@@ -216,6 +216,39 @@ struct BrowserAutomationRunnerTests {
     #expect(result.lines == ["found text \"Welcome\""])
   }
 
+  @Test func anOversizedTimeoutIsBoundedInsteadOfTrapping() async {
+    let page = FakePage(snapshots: [Self.before])
+    var sentTimeout: Double?
+    page.onCommand = { command, arguments in
+      guard command == "wait" else { return nil }
+      sentTimeout = arguments["timeoutMs"] as? Double
+      return BrowserDriverReply(ack: "found")
+    }
+    var wait = Self.step(.wait, target: nil)
+    wait.text = "Welcome"
+    wait.timeout = 1e100
+    let result = await BrowserAutomationRunner(page: page, reportsChanges: false).run([wait])
+    #expect(result.lines == ["found"])
+    #expect((sentTimeout ?? .infinity) <= BrowserAutomationStep.maximumTimeoutSeconds * 1000)
+    #expect(BrowserAutomationStep(verb: .wait, timeout: -5).boundedTimeout == .zero)
+  }
+
+  @Test func aBatchStopsWhenItsCallerHasGone() async {
+    let page = FakePage(snapshots: [Self.before])
+    var callerIsGone = false
+    page.onCommand = { command, _ in
+      if command == "click" {
+        callerIsGone = true
+      }
+      return nil
+    }
+    let runner = BrowserAutomationRunner(page: page, reportsChanges: false, isCallerGone: { callerIsGone })
+    let result = await runner.run([Self.step(.click), Self.step(.click), Self.step(.click)])
+    #expect(page.commands == ["click", "settle"])
+    #expect(result.lines == ["click done"])
+    #expect(result.failure == "Stopped before step 2: the caller disconnected.")
+  }
+
   @Test func navigateLoadsTheResolvedAddress() async {
     let page = FakePage(snapshots: [Self.before])
     var navigate = Self.step(.navigate, target: nil)

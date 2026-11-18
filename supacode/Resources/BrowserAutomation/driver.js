@@ -3,6 +3,7 @@ function supacodeCreateDriver(engine, config) {
   const refPattern = /^(p\d+)?e\d+$/;
   const snapshotOptions = { mode: 'ai', refPrefix, doNotRenderActive: true };
   const maskedValue = '[masked]';
+  const minimumSecretLength = 4;
 
   class DriverError extends Error {
     constructor(message, isMissingElement) {
@@ -23,20 +24,35 @@ function supacodeCreateDriver(engine, config) {
 
   const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-  const maskPasswords = (text) => {
-    if (!text) return text;
-    let masked = text;
-    for (const input of document.querySelectorAll('input[type="password"]')) {
-      const ref = input._ariaRef && input._ariaRef.ref;
-      if (!ref || !input.value) continue;
-      const line = new RegExp('^(\\s*- .*\\[ref=' + escapeRegExp(ref) + '\\](?: \\[[^\\]\\n]*\\])*\'?): .*$', 'm');
-      masked = masked.replace(line, '$1: ' + maskedValue);
+  const passwordInputs = (root) => {
+    const inputs = Array.from(root.querySelectorAll('input[type="password"]'));
+    for (const host of root.querySelectorAll('*')) {
+      if (host.shadowRoot) inputs.push(...passwordInputs(host.shadowRoot));
     }
-    return masked;
+    return inputs;
   };
 
+  const filledPasswordInputs = () => passwordInputs(document).filter((input) => input.value);
+
+  const withPasswordsMasked = (read) => {
+    const inputs = filledPasswordInputs();
+    for (const input of inputs) {
+      Object.defineProperty(input, 'value', { configurable: true, get: () => maskedValue });
+    }
+    try {
+      return read();
+    } finally {
+      for (const input of inputs) delete input.value;
+    }
+  };
+
+  const secrets = () =>
+    filledPasswordInputs()
+      .map((input) => input.value)
+      .filter((value) => value.length >= minimumSecretLength);
+
   const snapshot = () => ({
-    text: maskPasswords(engine.ariaSnapshot(snapshotRoot(), snapshotOptions)),
+    text: withPasswordsMasked(() => engine.ariaSnapshot(snapshotRoot(), snapshotOptions)),
     url: location.href,
     title: document.title,
   });
@@ -485,12 +501,17 @@ function supacodeCreateDriver(engine, config) {
   const run = async (command, args) => {
     const handler = commands[command];
     if (!handler) return { ok: false, error: 'Unknown browser command ' + JSON.stringify(command) + '.' };
+    let result;
     try {
-      return { ok: true, ...(await handler(args || {})) };
+      result = { ok: true, ...(await handler(args || {})) };
     } catch (error) {
-      if (error instanceof DriverError) return { ok: false, error: error.message };
-      return { ok: false, error: 'Page script error: ' + ((error && error.message) || String(error)) };
+      const message =
+        error instanceof DriverError
+          ? error.message
+          : 'Page script error: ' + ((error && error.message) || String(error));
+      result = { ok: false, error: message };
     }
+    return { ...result, secrets: secrets() };
   };
 
   return { run };

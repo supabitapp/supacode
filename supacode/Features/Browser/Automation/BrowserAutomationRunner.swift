@@ -24,7 +24,7 @@ struct BrowserAutomationRunner {
   static let deltaLineLimit = 30
   static let actionTimeout = Duration.seconds(10)
   static let loadTimeout = Duration.seconds(30)
-  static let defaultWaitSeconds = 10.0
+  static let defaultWaitTimeout = Duration.seconds(10)
 
   private struct ReportBase {
     var generation: Int
@@ -33,11 +33,16 @@ struct BrowserAutomationRunner {
 
   let page: any BrowserAutomationPage
   var reportsChanges = true
+  var isCallerGone: () -> Bool = { false }
 
   func run(_ steps: [BrowserAutomationStep]) async -> BrowserAutomationResult {
     var result = BrowserAutomationResult()
     var reportBase: ReportBase?
     for (index, step) in steps.enumerated() {
+      guard !isCallerGone() else {
+        result.failure = "Stopped before step \(index + 1): the caller disconnected."
+        return result
+      }
       do {
         if step.verb == .snapshot {
           result.lines += try await snapshot(step)
@@ -102,7 +107,7 @@ struct BrowserAutomationRunner {
         throw .rejected("navigate needs a URL.")
       }
       page.loadPage(url)
-      let finished = await page.waitUntilLoaded(timeout: step.timeout.map { .seconds($0) } ?? Self.loadTimeout)
+      let finished = await page.waitUntilLoaded(timeout: step.boundedTimeout ?? Self.loadTimeout)
       return "opened \(url.absoluteString)" + (finished ? "" : " (still loading)")
     case .click:
       return try await act("click", ["target": try Self.required(step.target, "a target")])
@@ -142,7 +147,7 @@ struct BrowserAutomationRunner {
     if step.hidden == true {
       arguments["state"] = "hidden"
     }
-    let total = Duration.seconds(step.timeout ?? Self.defaultWaitSeconds)
+    let total = step.boundedTimeout ?? Self.defaultWaitTimeout
     let started = ContinuousClock.now
     while true {
       let remaining = total - (ContinuousClock.now - started)

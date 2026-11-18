@@ -56,7 +56,7 @@ struct WorktreeTerminalManagerBrowserTests {
     ) {
       AppFeature()
     } withDependencies: {
-      $0.uuid = .incrementing
+      $0.uuid = usesLiveBrowserContent ? UUIDGenerator { UUID() } : .incrementing
       $0.contentRuntime = usesLiveBrowserContent ? ContentRuntime.liveValue : ContentRuntime()
       if usesLiveBrowserContent {
         $0.continuousClock = TestClock()

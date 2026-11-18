@@ -3,9 +3,13 @@ import Foundation
 nonisolated enum BrowserBatchLine {
   enum Error: Swift.Error, LocalizedError, Equatable {
     case unterminatedQuote
+    case trailingBackslash
 
     var errorDescription: String? {
-      "A quote is not closed."
+      switch self {
+      case .unterminatedQuote: "A quote is not closed."
+      case .trailingBackslash: "The line ends with a backslash that escapes nothing."
+      }
     }
   }
 
@@ -47,6 +51,7 @@ nonisolated enum BrowserBatchLine {
       }
     }
     guard quote == nil else { throw Error.unterminatedQuote }
+    guard !isEscaped else { throw Error.trailingBackslash }
     if isInToken {
       tokens.append(current)
     }

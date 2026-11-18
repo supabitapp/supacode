@@ -4,7 +4,15 @@ import IdentifiedCollections
 nonisolated struct BrowserAutomationTarget: Equatable, Sendable {
   enum Resolution: Equatable, Sendable {
     case tab(BrowserAutomationTarget)
+    case ambiguous([Candidate])
     case refused(String)
+  }
+
+  struct Candidate: Equatable, Sendable {
+    var tabID: TabID
+    var contentID: ContentID
+    var customTitle: String?
+    var storedTitle: String
   }
 
   static let openHint = "Open one with `supacode browser open <url>`."
@@ -16,8 +24,7 @@ nonisolated struct BrowserAutomationTarget: Equatable, Sendable {
   static func resolve(
     tabID: String?,
     worktreeID: Worktree.ID?,
-    layouts: [(worktreeID: Worktree.ID, layout: PaneLayout)],
-    liveTitle: (ContentID) -> String? = { _ in nil }
+    layouts: [(worktreeID: Worktree.ID, layout: PaneLayout)]
   ) -> Resolution {
     if let tabID {
       return resolve(explicit: tabID, layouts: layouts)
@@ -37,10 +44,10 @@ nonisolated struct BrowserAutomationTarget: Equatable, Sendable {
     guard !browserTabs.isEmpty else {
       return .refused("No browser tab in this worktree. \(openHint)")
     }
-    let listed = browserTabs.prefix(8).map { tab in
-      "\(tab.id.rawValue.uuidString)  \(tab.customTitle ?? liveTitle(tab.content.id) ?? tab.title)"
-    }
-    return .refused("Several browser tabs are open. Pass -t <tab>:\n" + listed.joined(separator: "\n"))
+    return .ambiguous(
+      browserTabs.prefix(8).map {
+        Candidate(tabID: $0.id, contentID: $0.content.id, customTitle: $0.customTitle, storedTitle: $0.title)
+      })
   }
 
   private static func resolve(

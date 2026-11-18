@@ -65,35 +65,16 @@ struct BrowserAutomationTargetTests {
     #expect(Self.resolve(Self.layout([first, second], selected: second)) == Self.target(second))
   }
 
-  @Test func severalBrowserTabsBehindATerminalAreListed() {
-    let terminal = Self.tab(.terminal)
-    let first = Self.tab(.browser, title: "Docs")
-    let second = Self.tab(.browser, title: "App")
-    let expected = """
-      Several browser tabs are open. Pass -t <tab>:
-      \(first.id.rawValue.uuidString)  Docs
-      \(second.id.rawValue.uuidString)  App
-      """
-    #expect(Self.resolve(Self.layout([terminal, first, second], selected: terminal)) == .refused(expected))
-  }
-
-  @Test func listedTabsPreferARenameThenTheLivePageTitle() {
+  @Test func severalBrowserTabsBehindATerminalAreOfferedAsCandidates() {
     let terminal = Self.tab(.terminal)
     var renamed = Self.tab(.browser, title: "New Tab")
     renamed.customTitle = "Docs"
-    let live = Self.tab(.browser, title: "New Tab")
-    let resolution = BrowserAutomationTarget.resolve(
-      tabID: nil,
-      worktreeID: Self.worktreeID,
-      layouts: [(worktreeID: Self.worktreeID, layout: Self.layout([terminal, renamed, live], selected: terminal))],
-      liveTitle: { _ in "Sign In" }
-    )
-    let expected = """
-      Several browser tabs are open. Pass -t <tab>:
-      \(renamed.id.rawValue.uuidString)  Docs
-      \(live.id.rawValue.uuidString)  Sign In
-      """
-    #expect(resolution == .refused(expected))
+    let plain = Self.tab(.browser, title: "App")
+    let expected = [renamed, plain].map {
+      BrowserAutomationTarget.Candidate(
+        tabID: $0.id, contentID: $0.content.id, customTitle: $0.customTitle, storedTitle: $0.title)
+    }
+    #expect(Self.resolve(Self.layout([terminal, renamed, plain], selected: terminal)) == .ambiguous(expected))
   }
 
   @Test func aWorktreeWithoutABrowserTabSaysHowToOpenOne() {

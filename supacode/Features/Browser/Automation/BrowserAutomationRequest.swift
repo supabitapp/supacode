@@ -21,6 +21,12 @@ nonisolated struct BrowserAutomationStep: Decodable, Equatable, Sendable {
   var scope: String?
   var hidden: Bool?
   var timeout: Double?
+
+  static let maximumTimeoutSeconds = 600.0
+
+  var boundedTimeout: Duration? {
+    timeout.map { .seconds(min(max($0, 0), Self.maximumTimeoutSeconds)) }
+  }
 }
 
 nonisolated struct BrowserAutomationRequest: Decodable, Equatable, Sendable {
@@ -73,13 +79,8 @@ nonisolated struct BrowserAutomationResult: Equatable, Sendable {
   var createdTabID: String?
 
   func response(nonce: String) -> [String: String] {
-    if let refusal {
-      return ["error": refusal]
-    }
     var fields: [String: String] = [:]
-    if let createdTabID {
-      fields["id"] = createdTabID
-    }
+    fields["id"] = createdTabID
     var body = lines
     if let failure {
       body.append("failed: \(failure)")
@@ -87,6 +88,9 @@ nonisolated struct BrowserAutomationResult: Equatable, Sendable {
     }
     if !body.isEmpty {
       fields["output"] = (["--- page \(nonce) ---"] + body + ["--- end \(nonce) ---"]).joined(separator: "\n")
+    }
+    if let refusal {
+      fields["error"] = refusal
     }
     return fields
   }

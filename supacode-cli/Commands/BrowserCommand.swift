@@ -259,6 +259,9 @@ extension BrowserCommand {
       if hidden, target == nil {
         throw ValidationError("--hidden needs a target.")
       }
+      guard (0...600).contains(timeout) else {
+        throw ValidationError("--timeout must be between 0 and 600 seconds.")
+      }
     }
 
     func step() -> [String: Any] {

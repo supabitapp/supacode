@@ -35,6 +35,7 @@ final class BrowserAutomationSession {
     var succeeded = false
     var error: String?
     var reply = BrowserDriverReply()
+    var secrets: [String] = []
   }
 
   private struct PendingCall {
@@ -43,6 +44,7 @@ final class BrowserAutomationSession {
   }
 
   private static let logger = SupaLogger("BrowserAutomation")
+  private static let rememberedSecretLimit = 32
   private static let runBody = """
     const driver = globalThis.__supacodeDriver;
     if (!driver) return { needsBootstrap: true };
@@ -65,6 +67,7 @@ final class BrowserAutomationSession {
   private var queueTail: Task<Void, Never>?
   private var lastActivity: ContinuousClock.Instant?
   private var requestsInFlight = 0
+  private var secrets: [String] = []
   private(set) var generation = 0
   var baseline: BrowserSnapshotBaseline?
 
@@ -111,10 +114,27 @@ final class BrowserAutomationSession {
       try await bootstrap(in: webView)
       raw = try await call(Self.runBody, callArguments, in: webView, timeout: timeout)
     }
+    remember(raw.secrets)
     guard raw.succeeded else {
-      throw .rejected(raw.error ?? "The browser command failed.")
+      throw .rejected(redacted(raw.error ?? "The browser command failed."))
     }
-    return raw.reply
+    return BrowserDriverReply(
+      ack: raw.reply.ack.map(redacted),
+      text: raw.reply.text.map(redacted),
+      url: raw.reply.url.map(redacted),
+      title: raw.reply.title.map(redacted)
+    )
+  }
+
+  func redacted(_ text: String) -> String {
+    secrets.reduce(text) { $0.replacing($1, with: "[masked]") }
+  }
+
+  private func remember(_ values: [String]) {
+    let known = Set(secrets)
+    secrets.append(contentsOf: values.filter { !known.contains($0) })
+    secrets.sort { $0.count > $1.count }
+    secrets.removeLast(max(secrets.count - Self.rememberedSecretLimit, 0))
   }
 
   func waitUntilLoaded(_ webView: WKWebView, timeout: Duration) async -> Bool {
@@ -202,7 +222,8 @@ final class BrowserAutomationSession {
             text: fields["text"] as? String,
             url: fields["url"] as? String,
             title: fields["title"] as? String
-          )
+          ),
+          secrets: fields["secrets"] as? [String] ?? []
         ))
     }
   }

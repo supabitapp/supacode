@@ -89,6 +89,20 @@ struct BrowserAutomationPageTests {
       });
     </script>
     """
+  private static let echo = """
+    <!doctype html><title>Echo</title>
+    <label>Secret <input id="secret" type="password"></label>
+    <div style="pointer-events: none"><label>Pin <input id="pin" type="password"></label></div>
+    <p id="status" role="status"></p>
+    <form action="done.html"><label>Token <input name="token" type="password"></label><button>Send</button></form>
+    <div id="cover" style="position:fixed;inset:0"></div>
+    <script>
+      document.getElementById('secret').addEventListener('input', function (event) {
+        document.getElementById('status').textContent = 'You typed ' + event.target.value;
+        document.title = 'Echo ' + event.target.value;
+      });
+    </script>
+    """
   private static let done = "<!doctype html><title>Done</title><h1>Done</h1><a href=\"form.html\">Back</a>"
 
   private static func step(
@@ -125,6 +139,39 @@ struct BrowserAutomationPageTests {
     ])
     #expect(cleared.failure == nil)
     #expect(await page.pageValue("return document.getElementById('password').value") == "")
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func aPasswordIsRedactedWhereverThePageRepeatsIt() async throws {
+    let page = try WebPage(files: ["echo.html": Self.echo, "done.html": Self.done])
+    defer { page.remove() }
+    await page.open("echo.html")
+    let filled = await BrowserAutomationRunner(page: page).run([
+      Self.step(.fill, "#secret", text: "hunter2"),
+      Self.step(.fill, "#pin", text: "42"),
+    ])
+    #expect(filled.failure == nil)
+    let full = await BrowserAutomationRunner(page: page).run([BrowserAutomationStep(verb: .snapshot, full: true)])
+    let output = (filled.lines + full.lines).joined(separator: "\n")
+    #expect(!output.contains("hunter2"))
+    #expect(output.contains("You typed [masked]"))
+    #expect(output.contains("page: Echo [masked] <file://"))
+    #expect(output.contains("textbox \"Pin\": \"[masked]\""))
+    #expect(!output.contains(": 42"))
+
+    let covered = await BrowserAutomationRunner(page: page, reportsChanges: false).run([Self.step(.click, "#secret")])
+    #expect(covered.failure?.contains("is covered by") == true)
+    #expect(covered.failure?.contains("hunter2") == false)
+
+    _ = await page.pageValue("document.getElementById('cover').remove(); return ''")
+    let sent = await BrowserAutomationRunner(page: page).run([
+      Self.step(.fill, "role=textbox[name=\"Token\"]", text: "hunter2"),
+      Self.step(.click, "role=button[name=\"Send\"]"),
+    ])
+    let navigated = sent.lines.joined(separator: "\n")
+    #expect(navigated.contains("navigated: Done <file://"))
+    #expect(navigated.contains("token=[masked]"))
+    #expect(!navigated.contains("hunter2"))
   }
 
   @Test(.timeLimit(.minutes(1)))

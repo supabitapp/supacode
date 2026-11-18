@@ -64,6 +64,14 @@ struct BrowserCLITests {
       #expect(targeted.exitCode != 0)
       #expect(targeted.standardError.contains("pass -t and -w to `batch`"))
 
+      let dangling = try await cli(["browser", "batch"], "fill e5 abc\\\n")
+      #expect(dangling.exitCode != 0)
+      #expect(dangling.standardError.contains("Line 1: The line ends with a backslash"))
+
+      let endless = try await cli(["browser", "wait", "--text", "x", "--timeout", "9999"], nil)
+      #expect(endless.exitCode != 0)
+      #expect(endless.standardError.contains("--timeout must be between 0 and 600 seconds."))
+
       let empty = try await cli(["browser", "batch"], "# nothing\n")
       #expect(empty.exitCode != 0)
       #expect(empty.standardError.contains("No steps on stdin."))

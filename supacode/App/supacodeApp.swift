@@ -530,7 +530,11 @@ struct SupacodeApp: App {
       return
     }
     Task {
-      let result = await terminalManager.runBrowserAutomation(request, worktreeID: params["worktreeID"])
+      let result = await terminalManager.runBrowserAutomation(
+        request,
+        worktreeID: params["worktreeID"],
+        isCallerGone: { AgentHookSocketServer.isPeerClosed(clientFD) }
+      )
       let nonce = String(UUID().uuidString.prefix(6)).lowercased()
       AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: [result.response(nonce: nonce)])
     }

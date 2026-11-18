@@ -4,7 +4,8 @@ import Foundation
 extension WorktreeTerminalManager {
   func runBrowserAutomation(
     _ request: BrowserAutomationRequest,
-    worktreeID rawWorktreeID: String?
+    worktreeID rawWorktreeID: String?,
+    isCallerGone: @escaping () -> Bool = { false }
   ) async -> BrowserAutomationResult {
     let worktreeID =
       rawWorktreeID.map { WorktreeID($0.removingPercentEncoding ?? $0) }
@@ -19,15 +20,14 @@ extension WorktreeTerminalManager {
       createdTabID = opened.tabID.rawValue.uuidString
     } else {
       let layouts = appStore?.withState { $0.terminals.layouts.map { (worktreeID: $0.id, layout: $0.layout) } } ?? []
-      let resolution = BrowserAutomationTarget.resolve(
-        tabID: request.tabID,
-        worktreeID: worktreeID,
-        layouts: layouts,
-        liveTitle: { ContentRuntime.liveValue.content(for: $0)?.chrome?.reportedTitle }
-      )
-      switch resolution {
+      switch BrowserAutomationTarget.resolve(tabID: request.tabID, worktreeID: worktreeID, layouts: layouts) {
       case .refused(let message):
         return BrowserAutomationResult(refusal: message)
+      case .ambiguous(let candidates):
+        return BrowserAutomationResult(
+          lines: candidates.map(Self.listing),
+          refusal: "Several browser tabs are open. Pass -t <tab> with an ID from the page output."
+        )
       case .tab(let target):
         guard let live = liveBrowserContent(target) else {
           return BrowserAutomationResult(refusal: "The browser tab could not be started.")
@@ -39,10 +39,17 @@ extension WorktreeTerminalManager {
       if request.newTab?.url != nil {
         _ = await content.waitUntilLoaded(timeout: BrowserAutomationRunner.loadTimeout)
       }
-      return await BrowserAutomationRunner(page: content, reportsChanges: !request.quiet).run(request.steps)
+      return await BrowserAutomationRunner(page: content, reportsChanges: !request.quiet, isCallerGone: isCallerGone)
+        .run(request.steps)
     }
     result.createdTabID = createdTabID
     return result
+  }
+
+  private static func listing(_ candidate: BrowserAutomationTarget.Candidate) -> String {
+    let content = ContentRuntime.liveValue.content(for: candidate.contentID) as? BrowserContent
+    let title = candidate.customTitle ?? content?.page.reportedTitle ?? candidate.storedTitle
+    return "\(candidate.tabID.rawValue.uuidString)  \(content?.automation.redacted(title) ?? title)"
   }
 
   private func openAutomationTab(
