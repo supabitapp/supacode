@@ -78,6 +78,15 @@ extension RepoCommand {
     @Flag(help: "Pin the worktree as soon as creation starts (local repositories).")
     var pin = false
 
+    @Flag(
+      help: """
+        Check out --branch if it already exists and no worktree has it, instead of refusing the \
+        name. A reused branch keeps its own base and tracking, so --base, --fetch, and --upstream \
+        apply only when the branch is created (local repositories).
+        """
+    )
+    var reuseExistingBranch = false
+
     @OptionGroup var backgroundOption: BackgroundOption
 
     @OptionGroup var timeoutOption: TimeoutOption
@@ -89,6 +98,10 @@ extension RepoCommand {
       // Keep the empty-value wire encoding of "no upstream" out of the CLI surface.
       if let upstream, upstream.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         throw ValidationError("--upstream requires a branch name; use --no-upstream to clear tracking.")
+      }
+      // A generated name never matches an existing branch.
+      if reuseExistingBranch, branch == nil {
+        throw ValidationError("--reuse-existing-branch requires --branch.")
       }
     }
 
@@ -102,7 +115,7 @@ extension RepoCommand {
             repoID: rID,
             options: .init(
               branch: branch, base: base, upstream: resolvedUpstream, fetch: fetch, name: name,
-              location: location, pin: pin)
+              location: location, pin: pin, reuseExistingBranch: reuseExistingBranch)
           )),
         timeoutSeconds: timeoutOption.timeout
       )

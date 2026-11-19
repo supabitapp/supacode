@@ -482,6 +482,7 @@ private nonisolated enum DeeplinkParser {
       worktreePath: worktreePath,
       background: parseBoolFlag("background", from: queryItems),
       pin: parseBoolFlag("pin", from: queryItems),
+      reuseExistingBranch: parseBoolFlag("reuse-existing-branch", from: queryItems),
     )
   }
 }
