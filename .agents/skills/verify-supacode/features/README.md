@@ -28,8 +28,10 @@ Each feature file starts with an H1 and a one-paragraph description. It then has
 
 ## Features
 
-- [Terminal tabs](./terminal-tabs.md) covers creating, typing into, renaming, and closing tabs. Proven end to end.
-- [Panes and splits](./panes.md) covers splitting, focusing, zooming, and closing panes.
-- [Worktrees](./worktrees.md) covers creating, pinning, archiving, and deleting worktrees, and their sidebar appearance.
+- [Terminal tabs](./terminal-tabs.md) covers creating, typing into, renaming, moving, and closing tabs.
+- [Panes and splits](./panes.md) covers splitting, focusing, zooming, resizing, equalizing, windowing, and closing panes.
+- [Worktrees](./worktrees.md) covers creating, focusing, pinning, archiving, and deleting worktrees, and their sidebar appearance.
 - [Repositories](./repositories.md) covers adding a local repository and listing repositories.
-- [Settings](./settings.md) covers opening the Settings window at each section.
+- [Settings](./settings.md) covers opening the Settings window at each section, repository settings, and persisting a change.
+
+Every CLI-drivable step in these files was driven on a live run. Menu, shortcut, file-panel, and context-menu paths need physical input and have not been driven.
