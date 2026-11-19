@@ -22,6 +22,7 @@ let appResources: ResourceFileElements = [
   "supacode/AppIcon.icon",
   "supacode/Assets.xcassets",
   "supacode/notification.wav",
+  .folderReference(path: "supacode/Resources/BrowserAutomation"),
 ]
 
 let appBuildableFolders: [BuildableFolder] = [
@@ -91,6 +92,7 @@ let sharedTestSupportSources: [Path] = [
 // Real git / shell subprocess suites.
 let gitTestSources: [Path] = [
   "supacodeTests/AgentHook*.swift",
+  "supacodeTests/BrowserCLITests.swift",
   "supacodeTests/Git*.swift",
   "supacodeTests/RemoteSSHCommandTests.swift",
   "supacodeTests/ShellClient*.swift",

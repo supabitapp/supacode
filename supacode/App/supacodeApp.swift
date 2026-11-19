@@ -361,7 +361,7 @@ struct SupacodeApp: App {
     runtime: GhosttyRuntime,
     terminalManager: WorktreeTerminalManager
   ) -> LayoutContentFactory {
-    TerminalContentBuilder(
+    let terminals = TerminalContentBuilder(
       runtime: runtime,
       worktree: { [weak terminalManager] id in
         terminalManager?.appStore?.withState { $0.repositories.worktree(for: id) }
@@ -395,7 +395,26 @@ struct SupacodeApp: App {
         terminalManager?.hostIfExists(for: request.worktreeID)?
           .blockingScriptEnvironment(for: request.tabID) ?? [:]
       }
-    ).factory()
+    )
+    let browsers = BrowserContentBuilder(
+      host: { [weak terminalManager] worktreeID in
+        guard let terminalManager,
+          let worktree = terminalManager.appStore?.withState({ $0.repositories.worktree(for: worktreeID) })
+        else { return nil }
+        return terminalManager.host(for: worktree)
+      },
+      openBrowserTab: { [weak terminalManager] worktreeID, url, sourceContentID in
+        terminalManager?.openBrowserTab(in: worktreeID, url: url, placement: .tab(near: sourceContentID))
+      }
+    )
+    return LayoutContentFactory { request in
+      switch request.content {
+      case .terminal(let terminalState):
+        terminals.terminalContent(request, terminalState: terminalState)
+      case .browser(let browserState):
+        browsers.browserContent(request, browserState: browserState)
+      }
+    }
   }
 
   @MainActor
@@ -493,9 +512,34 @@ struct SupacodeApp: App {
       handleWorktreeAppearanceQuery(params: params, repos: repos, clientFD: clientFD, store: store)
     case "scripts":
       handleScriptsQuery(params: params, repos: repos, clientFD: clientFD, store: store)
+    case "browser":
+      handleBrowserQuery(params: params, clientFD: clientFD, terminalManager: terminalManager)
     default:
       AgentHookSocketServer.sendCommandResponse(
         clientFD: clientFD, ok: false, error: "Unknown resource: \(resource)")
+    }
+  }
+
+  private static func handleBrowserQuery(
+    params: [String: String],
+    clientFD: Int32,
+    terminalManager: WorktreeTerminalManager
+  ) {
+    let request: BrowserAutomationRequest
+    do {
+      request = try BrowserAutomationRequest(json: params["request"] ?? "")
+    } catch {
+      AgentHookSocketServer.sendCommandResponse(clientFD: clientFD, ok: false, error: error.message)
+      return
+    }
+    Task {
+      let result = await terminalManager.runBrowserAutomation(
+        request,
+        worktreeID: params["worktreeID"],
+        isCallerGone: { AgentHookSocketServer.isPeerClosed(clientFD) }
+      )
+      let nonce = String(UUID().uuidString.prefix(6)).lowercased()
+      AgentHookSocketServer.sendQueryResponse(clientFD: clientFD, data: [result.response(nonce: nonce)])
     }
   }
 

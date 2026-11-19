@@ -38,7 +38,8 @@ final class PaneWindow: NSWindow, WindowTintColorProviding {
 enum PaneWindowShortcut {
   enum Intent: Equatable {
     case exitWindowMode
-    case newTab(ContentID)
+    case newTerminalTab
+    case newBrowserTab(ContentID)
     case closeTab(ContentID)
     case beginRename(TabID)
     case selectTab(TabID)
@@ -62,13 +63,14 @@ enum PaneWindowShortcut {
     if matched(AppShortcuts.toggleWindowMode) {
       return event.isARepeat ? .ignore : .exitWindowMode
     }
-    if matched(AppShortcuts.newTerminalTab) {
+    let selectedContentChords: [(shortcut: AppShortcut, intent: (ContentID) -> Intent)] = [
+      (AppShortcuts.newTerminalTab, { _ in .newTerminalTab }),
+      (AppShortcuts.newBrowserTab, Intent.newBrowserTab),
+      (AppShortcuts.closeTab, Intent.closeTab),
+    ]
+    for chord in selectedContentChords where matched(chord.shortcut) {
       guard !event.isARepeat, let contentID = pane.selectedTab?.content.id else { return .ignore }
-      return .newTab(contentID)
-    }
-    if matched(AppShortcuts.closeTab) {
-      guard !event.isARepeat, let contentID = pane.selectedTab?.content.id else { return .ignore }
-      return .closeTab(contentID)
+      return chord.intent(contentID)
     }
     if matched(AppShortcuts.renameTab) {
       guard !event.isARepeat, let tab = pane.selectedTab, !tab.isLocked else { return .ignore }
@@ -295,6 +297,11 @@ final class PaneWindowManager {
       Self.logger.error("Pane window \(paneID.rawValue) has no pane in \(worktreeID); passing the chord through.")
       return false
     }
+    if let contentID = pane.selectedTab?.content.id,
+      ContentRuntime.liveValue.content(for: contentID)?.claimsKeyEquivalent(event) == true
+    {
+      return false
+    }
     let isWorktreeSelected =
       terminalManager.appStore?.withState { $0.repositories.selectedWorktreeID } == worktreeID
     let intent = PaneWindowShortcut.intent(
@@ -307,8 +314,10 @@ final class PaneWindowManager {
     switch intent {
     case .exitWindowMode:
       terminalManager.sendLayout(worktreeID, .exitWindowMode(paneID: paneID))
-    case .newTab(let contentID):
-      terminalManager.sendLayout(worktreeID, .contentRequestedNewTab(content: contentID))
+    case .newTerminalTab:
+      terminalManager.createTerminalTab(inPane: paneID, of: worktreeID)
+    case .newBrowserTab(let contentID):
+      terminalManager.openBrowserTab(in: worktreeID, url: nil, placement: .tab(near: contentID))
     case .closeTab(let contentID):
       terminalManager.sendLayout(worktreeID, .contentRequestedClose(content: contentID, scope: .tab))
     case .beginRename(let tabID):
@@ -596,8 +605,16 @@ private struct WindowedPaneRootView: View {
           enabled: pane.selectedTab != nil,
           token: pane.selectedTab?.content.id
         ) {
+          guard windowIsKey() else { return }
+          manager.createTerminalTab(inPane: paneID, of: worktreeID)
+        }
+        .focusedSceneAction(
+          \.newBrowserTabAction,
+          enabled: pane.selectedTab != nil,
+          token: pane.selectedTab?.content.id
+        ) {
           guard windowIsKey(), let contentID = pane.selectedTab?.content.id else { return }
-          store.send(.contentRequestedNewTab(content: contentID))
+          manager.openBrowserTab(in: worktreeID, url: nil, placement: .tab(near: contentID))
         }
         .focusedSceneAction(
           \.renameTabAction,

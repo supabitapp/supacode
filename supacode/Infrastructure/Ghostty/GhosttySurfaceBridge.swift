@@ -50,6 +50,7 @@ final class GhosttySurfaceBridge {
   var surface: ghostty_surface_t?
   weak var surfaceView: GhosttySurfaceView?
   var onTitleChange: ((String) -> Void)?
+  var onOpenURL: ((URL) -> Bool)?
   var onPromptTitle: (() -> Void)?
   var onSplitAction: ((GhosttySplitAction) -> Bool)?
   var onCloseRequest: ((Bool) -> Void)?
@@ -468,7 +469,9 @@ final class GhosttySurfaceBridge {
       state.openUrl = rawUrl
       if let request = ghosttyOpenURLRequest(urlString: rawUrl, kind: openUrl.kind) {
         SupaLogger("GhosttySurfaceBridge").debug("OPEN_URL raw=\(rawUrl ?? "nil") resolved=\(request.url)")
-        NSWorkspace.shared.open(request.url)
+        if onOpenURL?(request.url) != true {
+          NSWorkspace.shared.open(request.url)
+        }
       }
       return true
 

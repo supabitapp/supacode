@@ -108,6 +108,23 @@ struct GhosttySurfaceBridgeTests {
     }
   }
 
+  @Test
+  func openUrlHandsTheLinkToTheLinkHandler() {
+    let bridge = GhosttySurfaceBridge()
+    let target = ghostty_target_s(tag: GHOSTTY_TARGET_SURFACE, target: .init())
+    var received: [URL] = []
+    bridge.onOpenURL = { url in
+      received.append(url)
+      return true
+    }
+
+    withOpenURLAction(url: "http://localhost:8765/second.html") { action in
+      #expect(bridge.handleAction(target: target, action: action))
+    }
+
+    #expect(received == [URL(string: "http://localhost:8765/second.html")])
+  }
+
   @Test func desktopNotificationEmitsCallback() {
     let bridge = GhosttySurfaceBridge()
     var received: (title: String, body: String)?
