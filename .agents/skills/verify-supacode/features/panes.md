@@ -30,9 +30,9 @@ Preconditions:
 - **Prove the new pane is live.** Run `$S cli <run> -- tab send -w "$W" -t "$NT" -i 'pwd > /tmp/sv-<run>/pane-pwd.txt'`. The file contains `/tmp/sv-<run>/seed-repo` (possibly `/private/tmp/...`).
 - **Focus.** Run `$S cli <run> -- pane focus -w "$W" -d left`. `pane list -w "$W" --focused` prints `$P1`. After a `-d v` split, use `-d up` instead. `pane focus -w "$W" -p "$NT"` focuses the new pane by its tab id.
 - **Zoom.** Run `$S cli <run> -- pane zoom -w "$W"` and capture `$S shot <run> pane-zoomed` and `$S ax <run> pane-zoomed`. Only one pane is visible, and the AX `group` reads `Terminal split: 1 pane`. Running zoom again restores `2 panes`.
-- **Resize and equalize.** Take `$S shot <run> resize-before`, run `$S cli <run> -- pane resize -w "$W" -p "$P1" -d right --amount 200`, and take `$S shot <run> resize-after`. The divider moves right. `$S cli <run> -- pane equalize -w "$W"` puts it back at 50/50 (`$S shot <run> equalized`).
+- **Resize and equalize.** Take `$S shot <run> pane-resize-before`, run `$S cli <run> -- pane resize -w "$W" -p "$P1" -d right --amount 200`, and take `$S shot <run> pane-resize-after`. The divider moves right. `$S cli <run> -- pane equalize -w "$W"` puts it back at 50/50 (`$S shot <run> pane-equalize-after`).
 - **Window mode.** Run `$S cli <run> -- pane window -w "$W" -p "$NT"`. `$S windows <run>` lists one more window, titled after the pane's tab, and the main window's AX `group` reads `Terminal split: 1 pane`. Running the same command again closes that window and restores `2 panes`.
-- **Close.** Run `$S cli <run> -- pane close -w "$W" -p "$NT"`. `pane list` is back to `$P1`, `tab list` no longer has `$NT`, and `zmx list --short` no longer lists its session.
+- **Close.** Run `$S cli <run> -- pane close -w "$W" -p "$NT"`. `pane list` is back to `$P1`, `tab list` no longer has `$NT`, and polling the run's zmx list (see `SKILL.md` under Evidence) shows `supa-<$NT lowercased>` gone. The session ends after `pane close` returns.
 
 ## Gotchas
 
