@@ -431,6 +431,8 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.systemNotificationsEnabled == false)
     // Missing key (pre-feature file) decodes to the default, now false.
     #expect(settings.global.moveNotifiedWorktreeToTop == false)
+    // Missing key (pre-feature file) leaves custom sidebar folders off.
+    #expect(settings.global.sidebarFoldersEnabled == false)
     #expect(settings.global.analyticsEnabled == true)
     #expect(settings.global.crashReportsEnabled == true)
     #expect(settings.global.githubIntegrationEnabled == true)
@@ -1149,6 +1151,26 @@ struct SettingsFilePersistenceTests {
     }
 
     #expect(reloaded.global.hoverFocusMode == .terminals)
+  }
+
+  @Test(.dependencies) func roundTripsSidebarFoldersEnabled() throws {
+    let storage = SettingsTestStorage()
+
+    withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      $settings.withLock { $0.global.sidebarFoldersEnabled = true }
+    }
+
+    let reloaded: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var reloaded: SettingsFile
+      return reloaded
+    }
+
+    #expect(reloaded.global.sidebarFoldersEnabled == true)
   }
 
   @Test func hoverFocusModeRawValuesAreStableAcrossReleases() {

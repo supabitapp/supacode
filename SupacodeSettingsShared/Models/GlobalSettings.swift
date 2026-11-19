@@ -184,6 +184,10 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var automaticRepositoryRefreshEnabled: Bool
   /// Whether hovering a split pane focuses it (focus follows mouse). Off by default.
   public var hoverFocusMode: HoverFocusMode
+  /// Whether rows in the Pinned and Active sidebar sections nest under their
+  /// user-assigned group folders instead of by repository and branch. Off by
+  /// default; groups are kept while off.
+  public var sidebarFoldersEnabled: Bool
   /// System-wide chord that toggles the app; nil (the default) leaves it unbound.
   public var globalToggleVisibilityHotkey: AppShortcutOverride?
 
@@ -279,6 +283,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     chromeTextSize: ChromeTextSize = .default,
     automaticRepositoryRefreshEnabled: Bool = true,
     hoverFocusMode: HoverFocusMode = .never,
+    sidebarFoldersEnabled: Bool = false,
     globalToggleVisibilityHotkey: AppShortcutOverride? = nil
   ) {
     self.appearanceMode = appearanceMode
@@ -327,6 +332,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.chromeTextSize = chromeTextSize
     self.automaticRepositoryRefreshEnabled = automaticRepositoryRefreshEnabled
     self.hoverFocusMode = hoverFocusMode
+    self.sidebarFoldersEnabled = sidebarFoldersEnabled
     self.globalToggleVisibilityHotkey = globalToggleVisibilityHotkey
   }
 
@@ -557,6 +563,10 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
       ((try? container.decodeIfPresent(String.self, forKey: .hoverFocusMode)) ?? nil)
       .flatMap(HoverFocusMode.init(rawValue:))
       ?? Self.default.hoverFocusMode
+    // Pre-feature files omit this key; folders default off.
+    sidebarFoldersEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .sidebarFoldersEnabled)
+      ?? Self.default.sidebarFoldersEnabled
     // A malformed value falls back to unbound instead of throwing, which would
     // reset the whole file to defaults.
     globalToggleVisibilityHotkey =

@@ -18,9 +18,21 @@ struct WorktreeCustomizationView: View {
         LabeledContent("Color") {
           ColorSwatchRow(color: $store.color)
         }
+        if store.showsGroup {
+          TextField("Group", text: $store.group, prompt: Text("None"))
+            .onSubmit {
+              store.send(.saveButtonTapped)
+            }
+            .help("Folder for this row in the Pinned and Active sections. Use / for subfolders.")
+        }
       } header: {
         Text("Customize Appearance")
         Text("Override the sidebar title and tint for `\(store.defaultName)`.")
+      } footer: {
+        if store.showsGroup {
+          Text("Groups nest rows into folders in the Pinned and Active sections, for example `Project 1/Backend`.")
+            .foregroundStyle(.secondary)
+        }
       }
       .headerProminence(.increased)
     }

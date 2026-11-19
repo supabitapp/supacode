@@ -209,10 +209,10 @@ private struct SidebarSectionDispatcher: View {
     case .placeholder:
       SidebarPlaceholderView()
         .moveDisabled(true)
-    case .highlight(let kind, let rowIDs):
+    case .highlight(let kind, _, let rows):
       SidebarHighlightSection(
         kind: kind,
-        rowIDs: rowIDs,
+        rows: rows,
         store: store,
         terminalManager: terminalManager,
         repositoryHighlightByID: structure.repositoryHighlightByID,

@@ -90,6 +90,7 @@ public struct SettingsFeature {
     public var chromeTextSize: ChromeTextSize
     public var automaticRepositoryRefreshEnabled: Bool
     public var hoverFocusMode: HoverFocusMode
+    public var sidebarFoldersEnabled: Bool
     public var globalToggleVisibilityHotkey: AppShortcutOverride?
     /// True when the last registration of the global hotkey failed (chord
     /// unavailable). Transient UI state, never persisted.
@@ -233,6 +234,7 @@ public struct SettingsFeature {
       chromeTextSize = settings.chromeTextSize
       automaticRepositoryRefreshEnabled = settings.automaticRepositoryRefreshEnabled
       hoverFocusMode = settings.hoverFocusMode
+      sidebarFoldersEnabled = settings.sidebarFoldersEnabled
       globalToggleVisibilityHotkey = settings.globalToggleVisibilityHotkey
       defaultWorktreeBaseDirectoryPath =
         SupacodePaths.normalizedWorktreeBaseDirectoryPath(settings.defaultWorktreeBaseDirectoryPath) ?? ""
@@ -426,6 +428,7 @@ public struct SettingsFeature {
         state.chromeTextSize = normalizedSettings.chromeTextSize
         state.automaticRepositoryRefreshEnabled = normalizedSettings.automaticRepositoryRefreshEnabled
         state.hoverFocusMode = normalizedSettings.hoverFocusMode
+        state.sidebarFoldersEnabled = normalizedSettings.sidebarFoldersEnabled
         state.globalToggleVisibilityHotkey = normalizedSettings.globalToggleVisibilityHotkey
         state.defaultWorktreeBaseDirectoryPath = normalizedSettings.defaultWorktreeBaseDirectoryPath ?? ""
         state.syncGlobalDefaults()
@@ -1223,6 +1226,7 @@ extension SettingsFeature.State {
     settings.chromeTextSize = chromeTextSize
     settings.automaticRepositoryRefreshEnabled = automaticRepositoryRefreshEnabled
     settings.hoverFocusMode = hoverFocusMode
+    settings.sidebarFoldersEnabled = sidebarFoldersEnabled
     settings.globalToggleVisibilityHotkey = globalToggleVisibilityHotkey
   }
 }
