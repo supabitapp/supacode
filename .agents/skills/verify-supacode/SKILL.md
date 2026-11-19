@@ -30,6 +30,8 @@ A Debug build shares bundle id `app.supabit.supacode` with any installed release
 
 Prerequisite: a Debug build of this checkout. `make build-app` writes it to `.build/DerivedData/Build/Products/Debug/supacode.app`. The first build takes several minutes.
 
+If `make build-app` stops in preflight, `make doctor` names each fix. When several Xcodes are installed and the selected one is not ready (for example, its license is not yet accepted), `DEVELOPER_DIR=/Applications/<ready Xcode>.app/Contents/Developer make build-app` builds with another one. A missing Metal Toolchain installs without sudo through `DEVELOPER_DIR=<that dir> xcodebuild -downloadComponent MetalToolchain`.
+
 ```bash
 $S launch
 # RUN_ID=5a1680
@@ -93,10 +95,11 @@ Run `$S cli <run> -- <noun> --help` for every flag. The nouns are `open`, `repo`
 | `window` | `<repo> · <tab title>` | Window title. It carries the focused tab's title. |
 | `outline` | `Sidebar` | The repository and worktree tree. |
 | `heading` | `<repo name>` | One per repository. |
-| `treeitem` | `<branch>` | One per worktree row. |
+| `treeitem` | `<title> <subtitle>` | One per worktree row, such as `verify-wt`, `main Default`, or `Verify Row verify-wt`. |
 | `group` | `Terminal split: N pane(s)` | Pane count of the focused worktree. |
 | `button` | `Hide Sidebar`, `Back`, `Forward` | Toolbar buttons. |
 | `switch` | `Files`, `Pull Request`, `Notifications` | Inspector toggles. |
+| `link` | `Review in Settings` | The sidebar's `Advanced agent integration` card, when it shows. It opens Settings at Developer. |
 
 Read them with these commands:
 
@@ -110,6 +113,16 @@ agent-desktop click/find/... --window-id "$WID"   # never --app Supacode, which 
 ```
 
 Tab strip items do not expose names. Read the focused tab's title from the `window` name, and the tab set from `tab list`.
+
+**Alerts.** When the app rejects a CLI command (an unknown tab, pane, or repository, or archiving the main worktree), the CLI exits non-zero and the main window also keeps a modal alert. `repo open` on a missing path raises an alert too, but exits `0`. Every later screenshot shows the alert until you dismiss it, so dismiss it right after the failing drive:
+
+```bash
+REF="$(agent-desktop find --window-id "$WID" --surface sheet --role button --name OK | jq -r '.data.matches[0].ref_id')"
+agent-desktop click "$REF"
+agent-desktop find --window-id "$WID" --surface sheet --role button --count   # ELEMENT_NOT_FOUND once dismissed
+```
+
+The `click` reports `ACTION_FAILED` because the alert disappears under it. Trust the follow-up `find`, not the click's exit status.
 
 ## Evidence
 
