@@ -95,7 +95,7 @@ Run `$S cli <run> -- <noun> --help` for every flag. The nouns are `open`, `repo`
 | `window` | `<repo> · <tab title>` | Window title. It carries the focused tab's title. |
 | `outline` | `Sidebar` | The repository and worktree tree. |
 | `heading` | `<repo name>` | One per repository. |
-| `treeitem` | `<title> <subtitle>` | One per worktree row, such as `verify-wt`, `main Default`, `Verify Row verify-wt`, or, when pinned, `Verify Row seed-repo, verify-wt`. |
+| `treeitem` | `<title> <subtitle>` | One per worktree row, such as `verify-wt`, `main Default`, or `Verify Row verify-wt`. |
 | `group` | `Terminal split: N pane(s)` | Pane count of the focused worktree. |
 | `button` | `Hide Sidebar`, `Back`, `Forward` | Toolbar buttons. |
 | `switch` | `Files`, `Pull Request`, `Notifications` | Inspector toggles. |
@@ -114,7 +114,7 @@ agent-desktop click/find/... --window-id "$WID"   # never --app Supacode, which 
 
 Tab strip items do not expose names. Read the focused tab's title from the `window` name, and the tab set from `tab list`.
 
-**Alerts.** When the app rejects a CLI command (an unknown tab, pane, or repository, resizing a windowed pane, or archiving the main worktree), the CLI exits non-zero and the main window also keeps a modal alert. `repo open` on a missing path raises an alert too, but exits `0`. Every later screenshot shows the alert until you dismiss it, so dismiss it right after the failing drive. An alert can appear after the CLI returns, so poll the first `find` until it matches:
+**Alerts.** Some app-side rejections of a CLI command also leave a modal alert on the main window, beyond the CLI's non-zero exit. Each feature recipe names the ones that do. `repo open` on a missing path raises an alert too, but exits `0`. Every later screenshot shows the alert until you dismiss it, so dismiss it right after the failing drive. An alert can appear after the CLI returns, so poll the first `find` until it matches:
 
 ```bash
 REF="$(agent-desktop find --window-id "$WID" --surface sheet --role button --name OK | jq -r '.data.matches[0].ref_id')"
