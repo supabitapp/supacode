@@ -40,5 +40,5 @@ Preconditions:
 - `pane split -d` takes only `h`/`horizontal` or `v`/`vertical`, so it splits right or down. `-d left` fails in the CLI. Splitting left or up needs the File menu or the tab strip's `Splits and Window Mode` menu, which need headed input.
 - `pane focus -d` and `pane resize -d` take `left|right|up|down` or `l|r|u|d`.
 - While a pane is zoomed or windowed, `pane list` still prints every pane. Read the visible count from the AX `group` name.
-- `pane resize` on a windowed pane fails: `It is in window mode, so it has no divider to move.` `--amount 0` fails in the CLI with exit `64`.
+- `pane resize` on a windowed pane fails with exit `1` (`It is in window mode, so it has no divider to move.`) and leaves an alert in the main window. Dismiss it as described in `SKILL.md` under Alerts. `--amount 0` fails in the CLI with exit `64`.
 - An unknown pane id fails with `The pane could not be found. It may have been closed.` and leaves an alert in the main window. Dismiss it as described in `SKILL.md` under Alerts.

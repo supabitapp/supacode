@@ -114,7 +114,7 @@ agent-desktop click/find/... --window-id "$WID"   # never --app Supacode, which 
 
 Tab strip items do not expose names. Read the focused tab's title from the `window` name, and the tab set from `tab list`.
 
-**Alerts.** When the app rejects a CLI command (an unknown tab, pane, or repository, or archiving the main worktree), the CLI exits non-zero and the main window also keeps a modal alert. `repo open` on a missing path raises an alert too, but exits `0`. Every later screenshot shows the alert until you dismiss it, so dismiss it right after the failing drive. An alert can appear after the CLI returns, so poll the first `find` until it matches:
+**Alerts.** Some app-side rejections of a CLI command also leave a modal alert on the main window, beyond the CLI's non-zero exit. Each feature recipe names the ones that do. `repo open` on a missing path raises an alert too, but exits `0`. Every later screenshot shows the alert until you dismiss it, so dismiss it right after the failing drive. An alert can appear after the CLI returns, so poll the first `find` until it matches:
 
 ```bash
 REF="$(agent-desktop find --window-id "$WID" --surface sheet --role button --name OK | jq -r '.data.matches[0].ref_id')"
