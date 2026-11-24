@@ -18,7 +18,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case selectNextTab, selectPreviousTab
   case openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository, openPullRequest, copyPath
   case runScript, stopRunScript, renameTab, toggleWindowMode
-  case newTerminalTab, closeTab
+  case newTerminalTab, newBrowserTab, closeTab
   case splitRight, splitLeft, splitDown, splitUp
   case focusSplitLeft, focusSplitRight, focusSplitUp, focusSplitDown
   case resizePaneLeft, resizePaneRight, resizePaneUp, resizePaneDown
@@ -39,7 +39,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
       .selectWorktree, .selectTab, .selectNextTab, .selectPreviousTab,
       .openWorktree, .revealInFinder, .openRepository, .addRemoteRepository, .cloneRepository,
       .openPullRequest, .copyPath, .runScript, .stopRunScript, .renameTab, .toggleWindowMode,
-      .newTerminalTab, .closeTab, .splitRight, .splitLeft, .splitDown, .splitUp,
+      .newTerminalTab, .newBrowserTab, .closeTab, .splitRight, .splitLeft, .splitDown, .splitUp,
       .focusSplitLeft, .focusSplitRight, .focusSplitUp, .focusSplitDown,
       .resizePaneLeft, .resizePaneRight, .resizePaneUp, .resizePaneDown,
       .toggleSplitZoom, .equalizeSplits, .jumpToLatestUnread,
@@ -104,6 +104,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .renameTab: "renameTab"
     case .toggleWindowMode: "toggleWindowMode"
     case .newTerminalTab: "newTerminalTab"
+    case .newBrowserTab: "newBrowserTab"
     case .closeTab: "closeTab"
     case .splitRight: "splitRight"
     case .splitLeft: "splitLeft"
@@ -164,6 +165,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "renameTab": .renameTab,
     "toggleWindowMode": .toggleWindowMode,
     "newTerminalTab": .newTerminalTab,
+    "newBrowserTab": .newBrowserTab,
     "closeTab": .closeTab,
     "splitRight": .splitRight,
     "splitLeft": .splitLeft,
@@ -247,6 +249,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .renameTab: "Rename Tab"
     case .toggleWindowMode: "Toggle Window Mode"
     case .newTerminalTab: "New Terminal Tab"
+    case .newBrowserTab: "New Browser Tab"
     case .closeTab: "Close Tab"
     case .splitRight: "Split Right"
     case .splitLeft: "Split Left"
@@ -598,6 +601,7 @@ public enum AppShortcuts {
   public static let renameTab = AppShortcut(id: .renameTab, key: "r", modifiers: [.control, .shift])
   public static let toggleWindowMode = AppShortcut(id: .toggleWindowMode, key: "m", modifiers: [.command, .shift])
   public static let newTerminalTab = AppShortcut(id: .newTerminalTab, key: "t", modifiers: .command)
+  public static let newBrowserTab = AppShortcut(id: .newBrowserTab, key: "b", modifiers: [.command, .shift])
   // Hardcoded to the platform's close chord: no settings row, and the
   // recorder refuses ⌘W for anything else.
   public static let closeTab = AppShortcut(id: .closeTab, key: "w", modifiers: .command, isCustomizable: false)
@@ -735,7 +739,7 @@ public enum AppShortcuts {
     ),
     AppShortcutGroup(
       category: .tabSelection,
-      shortcuts: [newTerminalTab, closeTab, renameTab]
+      shortcuts: [newTerminalTab, newBrowserTab, closeTab, renameTab]
         + tabSelection + [selectPreviousTab, selectNextTab]
         + [startSearch, findNext, findPrevious, useSelectionForFind]
     ),

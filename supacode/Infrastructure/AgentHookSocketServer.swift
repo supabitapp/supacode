@@ -325,6 +325,24 @@ final class AgentHookSocketServer {
     shutdownAndClose(clientFD)
   }
 
+  nonisolated static func isPeerClosed(_ clientFD: Int32) -> Bool {
+    let queue = kqueue()
+    guard queue >= 0 else { return false }
+    defer { close(queue) }
+    var change = kevent(
+      ident: UInt(clientFD),
+      filter: Int16(EVFILT_WRITE),
+      flags: UInt16(EV_ADD | EV_ONESHOT),
+      fflags: 0,
+      data: 0,
+      udata: nil
+    )
+    var event = kevent()
+    var noWait = timespec(tv_sec: 0, tv_nsec: 0)
+    guard kevent(queue, &change, 1, &event, 1, &noWait) > 0 else { return false }
+    return event.flags & UInt16(EV_EOF) != 0
+  }
+
   private nonisolated static func acceptAndParse(
     socketFD: Int32
   ) -> Message? {

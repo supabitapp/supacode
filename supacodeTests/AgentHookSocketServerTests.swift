@@ -312,4 +312,16 @@ struct AgentHookSocketServerTests {
     #expect(!FileManager.default.fileExists(atPath: "\(directory)/pid-999999999"))
     #expect(FileManager.default.fileExists(atPath: "\(directory)/pid-abc"))
   }
+
+  @Test func aClientThatOnlyFinishedWritingIsStillThereAndAClosedOneIsGone() {
+    var descriptors: [Int32] = [0, 0]
+    #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
+    defer { close(descriptors[0]) }
+    #expect(!AgentHookSocketServer.isPeerClosed(descriptors[0]))
+    #expect(write(descriptors[1], "{}", 2) == 2)
+    shutdown(descriptors[1], SHUT_WR)
+    #expect(!AgentHookSocketServer.isPeerClosed(descriptors[0]))
+    close(descriptors[1])
+    #expect(AgentHookSocketServer.isPeerClosed(descriptors[0]))
+  }
 }

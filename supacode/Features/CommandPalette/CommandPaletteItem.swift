@@ -218,6 +218,7 @@ struct CommandPaletteItem: Identifiable, Equatable {
 /// topology entries.
 enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
   case newTerminalTab = "new-terminal-tab"
+  case newBrowserTab = "new-browser-tab"
   case closeTab = "close-tab"
   case splitRight = "split-right"
   case splitLeft = "split-left"
@@ -237,6 +238,7 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
   var title: String {
     switch self {
     case .newTerminalTab: "New Terminal Tab"
+    case .newBrowserTab: "New Browser Tab"
     case .closeTab: "Close Tab"
     case .splitRight: "Split Right"
     case .splitLeft: "Split Left"
@@ -259,6 +261,7 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
   var systemImage: String {
     switch self {
     case .newTerminalTab: "macwindow"
+    case .newBrowserTab: "globe"
     case .closeTab: "xmark"
     case .splitRight: TerminalSplitMenuDirection.right.systemImage
     case .splitLeft: TerminalSplitMenuDirection.left.systemImage
@@ -281,6 +284,7 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
   var appShortcut: AppShortcut? {
     switch self {
     case .newTerminalTab: AppShortcuts.newTerminalTab
+    case .newBrowserTab: AppShortcuts.newBrowserTab
     case .closeTab: AppShortcuts.closeTab
     case .splitRight: AppShortcuts.splitRight
     case .splitLeft: AppShortcuts.splitLeft

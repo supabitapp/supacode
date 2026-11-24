@@ -6,6 +6,7 @@ import SwiftUI
 struct TerminalCommands: Commands {
   @Shared(.settingsFile) private var settingsFile
   @FocusedValue(\.newTerminalAction) private var newTerminalAction
+  @FocusedValue(\.newBrowserTabAction) private var newBrowserTabAction
   @FocusedValue(\.renameTabAction) private var renameTabAction
   @FocusedValue(\.splitTerminalAction) private var splitTerminalAction
   @FocusedValue(\.toggleWindowModeAction) private var toggleWindowModeAction
@@ -29,6 +30,12 @@ struct TerminalCommands: Commands {
       }
       .appKeyboardShortcut(AppShortcuts.newTerminalTab.effective(from: overrides))
       .disabled(newTerminalAction?.isEnabled != true)
+
+      Button("New Browser Tab", systemImage: "globe") {
+        newBrowserTabAction?()
+      }
+      .appKeyboardShortcut(AppShortcuts.newBrowserTab.effective(from: overrides))
+      .disabled(newBrowserTabAction?.isEnabled != true)
 
       Button("Rename Tab", systemImage: "pencil") {
         renameTabAction?()
@@ -189,6 +196,17 @@ extension FocusedValues {
   var newTerminalAction: FocusedAction<Void>? {
     get { self[NewTerminalActionKey.self] }
     set { self[NewTerminalActionKey.self] = newValue }
+  }
+}
+
+private struct NewBrowserTabActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
+extension FocusedValues {
+  var newBrowserTabAction: FocusedAction<Void>? {
+    get { self[NewBrowserTabActionKey.self] }
+    set { self[NewBrowserTabActionKey.self] = newValue }
   }
 }
 

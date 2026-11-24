@@ -68,6 +68,7 @@ nonisolated struct TerminalClient: Sendable {
     /// command; the manager picks placement (tab in the zoomed/top-right pane, or a split).
     case openFileWithScript(Worktree, input: String)
     case ensureInitialTab(Worktree, runSetupScriptIfNew: Bool, focusing: Bool)
+    case openBrowserTab(Worktree, url: URL? = nil, placement: BrowserTabPlacement = .beside, focusing: Bool = true)
     case stopRunScript(Worktree, focusing: Bool = true)
     case stopScript(Worktree, definitionID: UUID, focusing: Bool = true)
     case runBlockingScript(Worktree, kind: BlockingScriptKind, script: String, focusing: Bool = true)

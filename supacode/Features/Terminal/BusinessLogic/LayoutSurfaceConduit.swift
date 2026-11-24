@@ -51,6 +51,10 @@ struct LayoutSurfaceConduit {
     view.bridge.onSplitAction = { _ in Self.ignoreTopologyAction("split") }
     view.bridge.onGotoTab = { _ in Self.ignoreTopologyAction("goto_tab") }
     view.bridge.onMoveTab = { _ in Self.ignoreTopologyAction("move_tab") }
+    view.bridge.onOpenURL = { [weak view] url in
+      guard let view, isLive(view) else { return false }
+      return host.onOpenLink?(url) ?? false
+    }
     view.bridge.onCommandPaletteToggle = { [weak view] in
       guard let view, isLive(view) else { return false }
       host.onCommandPaletteToggle?()

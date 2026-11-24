@@ -382,7 +382,7 @@ extension LayoutFeature {
     }
     guard var pane = state.layout.panes[id: paneID] else {
       // Unreachable behind the guards above; reap the started session anyway.
-      return reap(identity.contentID, worktree: state.id)
+      return reap(identity.contentID, kind: spec.content.kind, worktree: state.id)
     }
     let tab = TabItem(
       id: identity.tabID,
@@ -574,7 +574,7 @@ extension LayoutFeature {
     guard var pane = state.layout.pane(containingTab: tabID), let index = pane.tabs.index(id: tabID) else {
       return .none
     }
-    let contentID = pane.tabs[index].content.id
+    let content = pane.tabs[index].content
     releaseTabBookkeeping(&state, tabID: tabID)
     pane.tabs.remove(at: index)
     if pane.tabs.isEmpty {
@@ -588,7 +588,7 @@ extension LayoutFeature {
     }
     // Reap after the tree has collapsed so the collapse is the turn's state
     // mutation and the surface teardown runs off it, not before it.
-    return reap(contentID, worktree: state.id)
+    return reap(content.id, kind: content.kind, worktree: state.id)
   }
 
   private func reduceMoveTab(
@@ -818,7 +818,7 @@ extension LayoutFeature {
       // Defense in depth behind the anchor pre-check; reaping routes the
       // started session into the kill path instead of leaking it.
       Self.logger.error("splitPane insert failed at \(anchorID.rawValue): \(error)")
-      return reap(identity.contentID, worktree: state.id)
+      return reap(identity.contentID, kind: spec.content.kind, worktree: state.id)
     }
     let tab = TabItem(
       id: identity.tabID,
@@ -939,7 +939,7 @@ extension LayoutFeature {
     // Reap after the tree has collapsed so the collapse is the turn's state
     // mutation and the surface teardown runs off it, not before it. Merged: one
     // hung kill must not queue the siblings behind it.
-    return .merge(pane.tabs.map { reap($0.content.id, worktree: state.id) })
+    return .merge(pane.tabs.map { reap($0.content.id, kind: $0.content.kind, worktree: state.id) })
   }
 
   private func reduceResizePane(_ state: inout State, node: SplitTree<PaneID>.Node, ratio: Double) -> Effect<Action> {
@@ -1100,7 +1100,11 @@ extension LayoutFeature {
   /// confirms the tombstone. The kill runs unstructured so element teardown
   /// cannot abandon a half-killed session; a cancelled effect confirms the
   /// tombstone straight on the runtime instead of leaving it stale.
-  private func reap(_ contentID: ContentID, worktree worktreeID: Worktree.ID) -> Effect<Action> {
+  private func reap(_ contentID: ContentID, kind: ContentKind, worktree worktreeID: Worktree.ID) -> Effect<Action> {
+    guard kind.hasPersistentSession else {
+      contentRuntime.remove(contentID, tombstone: false)
+      return .none
+    }
     contentRuntime.remove(contentID, tombstone: true)
     return .run { [contentRuntime, sessionKiller] send in
       let kill = Task { await sessionKiller.kill(contentID, worktreeID) }
@@ -1131,10 +1135,10 @@ extension LayoutFeature {
 }
 
 nonisolated extension ContentState {
-  /// The terminal payload; the only kind today.
   fileprivate var terminalState: TerminalContentState? {
     switch self {
     case .terminal(let state): state
+    case .browser: nil
     }
   }
 }

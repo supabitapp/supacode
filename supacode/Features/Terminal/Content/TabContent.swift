@@ -30,6 +30,9 @@ protocol TabContent: AnyObject {
   var toolbar: (any TabContentToolbar)? { get }
   /// The current persistable state, including restoration data.
   func snapshot() -> ContentSnapshot
+  var holdsKeyboardFocus: Bool { get }
+  func focus()
+  func claimsKeyEquivalent(_ event: NSEvent) -> Bool
 }
 
 extension TabContent {
@@ -44,6 +47,9 @@ extension TabContent {
   var chrome: (any TabChrome)? { nil }
   // A docked toolbar is opt-in per content kind.
   var toolbar: (any TabContentToolbar)? { nil }
+  var holdsKeyboardFocus: Bool { false }
+  func focus() {}
+  func claimsKeyEquivalent(_ event: NSEvent) -> Bool { false }
 }
 
 /// Where in the layout a content is being created; a runtime hint for the
@@ -178,6 +184,11 @@ final class TerminalContent: TabContent {
 
   // Only a zmx-backed live surface can drop its renderer and reattach.
   var isHibernatable: Bool { surfaceView != nil && usesZmx }
+
+  var holdsKeyboardFocus: Bool {
+    guard let surfaceView else { return false }
+    return surfaceView.window?.firstResponder === surfaceView
+  }
 
   func startSession(at geometry: ContentGeometry) {
     guard surfaceView == nil else { return }

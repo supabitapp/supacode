@@ -184,6 +184,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var automaticRepositoryRefreshEnabled: Bool
   /// Whether hovering a split pane focuses it (focus follows mouse). Off by default.
   public var hoverFocusMode: HoverFocusMode
+  public var opensLinksInBrowserTab: Bool
   /// System-wide chord that toggles the app; nil (the default) leaves it unbound.
   public var globalToggleVisibilityHotkey: AppShortcutOverride?
 
@@ -279,6 +280,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     chromeTextSize: ChromeTextSize = .default,
     automaticRepositoryRefreshEnabled: Bool = true,
     hoverFocusMode: HoverFocusMode = .never,
+    opensLinksInBrowserTab: Bool = false,
     globalToggleVisibilityHotkey: AppShortcutOverride? = nil
   ) {
     self.appearanceMode = appearanceMode
@@ -327,6 +329,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.chromeTextSize = chromeTextSize
     self.automaticRepositoryRefreshEnabled = automaticRepositoryRefreshEnabled
     self.hoverFocusMode = hoverFocusMode
+    self.opensLinksInBrowserTab = opensLinksInBrowserTab
     self.globalToggleVisibilityHotkey = globalToggleVisibilityHotkey
   }
 
@@ -557,6 +560,9 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
       ((try? container.decodeIfPresent(String.self, forKey: .hoverFocusMode)) ?? nil)
       .flatMap(HoverFocusMode.init(rawValue:))
       ?? Self.default.hoverFocusMode
+    opensLinksInBrowserTab =
+      try container.decodeIfPresent(Bool.self, forKey: .opensLinksInBrowserTab)
+      ?? Self.default.opensLinksInBrowserTab
     // A malformed value falls back to unbound instead of throwing, which would
     // reset the whole file to defaults.
     globalToggleVisibilityHotkey =
