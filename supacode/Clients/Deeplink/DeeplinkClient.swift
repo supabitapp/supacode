@@ -417,7 +417,7 @@ private nonisolated enum DeeplinkParser {
     }
     let rawAmount = queryItems.first(where: { $0.name == "amount" })?.value
     let rawRatio = queryItems.first(where: { $0.name == "ratio" })?.value
-    var amount: PaneResizeAmount?
+    let amount: PaneResizeAmount?
     switch (rawAmount, rawRatio) {
     case (let rawAmount?, nil):
       guard let points = UInt16(rawAmount), points > 0 else {
