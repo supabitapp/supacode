@@ -18,6 +18,32 @@ struct AppFeatureMissingWorktreeTerminalTests {
     isMissing: true
   )
 
+  @Test func openTabsKeepTheTerminalAreaUntilTheLastOneCloses() {
+    let paneID = PaneID()
+    let tab = TabItem(
+      id: TabID(),
+      title: "agent",
+      content: ContentSnapshot(id: ContentID(), state: .terminal(TerminalContentState(workingDirectory: nil)))
+    )
+    let populated = PaneLayout(
+      tree: SplitTree(view: paneID),
+      panes: [Pane(id: paneID, tabs: [tab], selectedTabID: tab.id)],
+      focusedPaneID: paneID
+    )
+    let healthy = Worktree(
+      id: "/tmp/repo/healthy",
+      name: "healthy",
+      detail: "healthy",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/healthy"),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
+    )
+
+    #expect(WorktreeDetailView.TerminalAccess(worktree: worktree, layout: populated) == .existingTabsOnly)
+    #expect(WorktreeDetailView.TerminalAccess(worktree: worktree, layout: PaneLayout()) == .hidden)
+    #expect(WorktreeDetailView.TerminalAccess(worktree: worktree, layout: nil) == .hidden)
+    #expect(WorktreeDetailView.TerminalAccess(worktree: healthy, layout: nil) == .full)
+  }
+
   @Test(.dependencies) func newShellsAreRefused() async {
     let (store, sent) = makeStore()
 

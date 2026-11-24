@@ -247,15 +247,6 @@ struct WorktreeDetailView: View {
     return !repositories.isInitialLoadComplete
   }
 
-  /// How much of the selected worktree's terminal area is usable. A worktree
-  /// whose directory went missing keeps its open tabs until they close, but
-  /// refuses new shells.
-  enum TerminalAccess {
-    case hidden
-    case existingTabsOnly
-    case full
-  }
-
   private func terminalAccess(
     state: AppFeature.State,
     loadingInfo: WorktreeLoadingInfo?,
@@ -267,8 +258,7 @@ struct WorktreeDetailView: View {
       !shouldShowMultiSelectionSummary(
         repositories: state.repositories, selectedWorktreeSummaries: selectedWorktreeSummaries)
     else { return .hidden }
-    guard selectedWorktree.isMissing else { return .full }
-    return Self.hasFocusedTab(in: state, worktreeID: selectedWorktree.id) ? .existingTabsOnly : .hidden
+    return TerminalAccess(worktree: selectedWorktree, layout: state.terminals.layouts[id: selectedWorktree.id]?.layout)
   }
 
   private func requestDeleteWorktree(_ worktree: Worktree, repositories: RepositoriesFeature.State) {
@@ -326,6 +316,7 @@ struct WorktreeDetailView: View {
             token: selectedWorktree.id
           ) { store.send(.newTerminalInWorktree(selectedWorktree.id)) }
         )
+        .environment(\.allowsNewTabs, terminalAccess == .full)
         .safeAreaInset(edge: .top, spacing: 0) {
           if terminalAccess == .existingTabsOnly {
             MissingWorktreeBanner(worktree: selectedWorktree) {
@@ -1053,56 +1044,6 @@ private struct FailedRepositoryDetailView: View {
       .help("Remove this repository from Supacode. Files on disk are untouched.")
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-  }
-}
-
-private struct MissingWorktreeDetailView: View {
-  let worktree: Worktree
-  let requestDelete: () -> Void
-
-  var body: some View {
-    ContentUnavailableView {
-      Label("Working directory missing", systemImage: "exclamationmark.triangle.fill")
-        .foregroundStyle(.orange)
-    } description: {
-      VStack(spacing: 6) {
-        Text("Restore the directory to keep working here, or delete this worktree to clean up.")
-        Text(worktree.workingDirectory.path(percentEncoded: false))
-          .monospaced()
-          .textSelection(.enabled)
-      }
-    } actions: {
-      Button("Delete Worktree…", systemImage: "trash", role: .destructive, action: requestDelete)
-        .help("Delete this worktree from Supacode.")
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-  }
-}
-
-private struct MissingWorktreeBanner: View {
-  let worktree: Worktree
-  let requestDelete: () -> Void
-
-  var body: some View {
-    HStack(spacing: 8) {
-      Label("Working directory missing", systemImage: "exclamationmark.triangle.fill")
-        .foregroundStyle(.orange)
-        .appFont(.callout, weight: .semibold)
-        .help("Open terminals keep running. New terminals are disabled until the directory is restored.")
-      Text(worktree.workingDirectory.path(percentEncoded: false))
-        .appFont(.callout, monospaced: true)
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .truncationMode(.middle)
-        .textSelection(.enabled)
-      Spacer(minLength: 0)
-      Button("Delete Worktree…", systemImage: "trash", role: .destructive, action: requestDelete)
-        .controlSize(.small)
-        .help("Delete this worktree from Supacode.")
-    }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 6)
-    .background(.bar)
   }
 }
 

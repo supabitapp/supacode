@@ -1717,6 +1717,16 @@ struct LayoutFeatureTests {
     #expect(harness.store.state.layout.isConsistent)
   }
 
+  @Test func refusedContentLeavesTheLayoutUntouched() async {
+    let harness = await makeHarness()
+    harness.store.dependencies.layoutContentFactory = LayoutContentFactory(make: { _ in nil })
+
+    await harness.store.send(.contentRequestedNewTab(content: harness.contentID))
+    await harness.store.send(.contentRequestedSplit(content: harness.contentID, direction: .right))
+
+    #expect(Set(harness.runtime.contents.keys) == [harness.contentID])
+  }
+
   @Test func contentRequestedSplitOpensAFreshTabInTheNewPane() async throws {
     let harness = await makeHarness()
     await harness.store.send(.contentRequestedSplit(content: harness.contentID, direction: .right)) {

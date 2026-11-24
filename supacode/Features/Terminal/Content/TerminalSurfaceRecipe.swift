@@ -309,13 +309,20 @@ struct TerminalContentBuilder {
   private func terminalContent(
     _ request: ContentRequest,
     terminalState: TerminalContentState
-  ) -> any TabContent {
+  ) -> (any TabContent)? {
     guard let capturedWorktree = worktree(request.worktreeID) else {
       // A vanished worktree cannot host a session; inert content keeps the
       // layout itself usable.
       TerminalSurfaceRecipe.builderLogger.error(
         "No worktree \(request.worktreeID.rawValue) for content \(request.contentID.rawValue)")
       return InertTabContent(id: request.contentID, state: request.content)
+    }
+    // Ghostty falls back to an unrelated directory for a deleted cwd, so only
+    // a tab that already exists may reattach to a missing worktree.
+    guard !capturedWorktree.isMissing || request.origin == .restored else {
+      TerminalSurfaceRecipe.builderLogger.info(
+        "Refusing a new terminal in missing worktree \(request.worktreeID.rawValue)")
+      return nil
     }
     let lookUpWorktree = worktree
     return TerminalContent(
