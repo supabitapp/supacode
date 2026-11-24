@@ -587,14 +587,13 @@ struct AppFeature {
           .run { _ in
             await terminalClient.send(.setSelectedWorktreeID(worktree.id))
           },
-          worktree.isMissing
-            ? .none
-            : .run { _ in
-              // A worktree selected for the first time (fresh install, empty
-              // migration) still needs its bootstrap tab; no-op when populated.
-              await terminalClient.send(
-                .ensureInitialTab(worktree, runSetupScriptIfNew: runSetupScriptIfNew, focusing: wantsFocus))
-            },
+          .run { _ in
+            // A worktree selected for the first time (fresh install, empty
+            // migration) still needs its bootstrap tab; no-op when populated.
+            guard !worktree.isMissing else { return }
+            await terminalClient.send(
+              .ensureInitialTab(worktree, runSetupScriptIfNew: runSetupScriptIfNew, focusing: wantsFocus))
+          },
           .run { _ in
             await worktreeInfoWatcher.send(.setSelectedWorktreeID(worktree.id))
           },
