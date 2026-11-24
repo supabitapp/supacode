@@ -454,6 +454,7 @@ struct DeeplinkClientTests {
     "direction=sideways", "amount=120", "direction=left&amount=0", "direction=left&amount=-5",
     "direction=left&amount=abc", "direction=left&amount=70000", "direction=left&ratio=0.05",
     "direction=left&ratio=0.95", "direction=left&ratio=abc", "direction=left&amount=10&ratio=0.4",
+    "direction=left&ratio", "direction=left&amount=120&ratio", "direction=left&amount",
   ])
   func worktreePaneResizeInvalidQueryReturnsNil(_ query: String) {
     let url = URL(string: "supacode://worktree/\(encoded)/pane/\(paneUUID.uuidString)/resize?\(query)")!

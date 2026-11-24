@@ -123,6 +123,21 @@ struct SplitTreeTests {
     #expect(try ratio(afterResizing: .right) == 0.05 + 10.0 / 1000)
   }
 
+  @Test func resizingToARatioSetsTheLeafShareOfTheNearestMatchingSplit() throws {
+    let (leafA, leafB, leafC) = (IDLeaf(id: 1), IDLeaf(id: 2), IDLeaf(id: 3))
+    let inner = SplitTree<IDLeaf>.Node.split(
+      .init(direction: .horizontal, ratio: 0.5, left: .leaf(view: leafB), right: .leaf(view: leafC)))
+    let tree = SplitTree(
+      root: .split(.init(direction: .horizontal, ratio: 0.5, left: .leaf(view: leafA), right: inner)))
+    let resized = try tree.resizing(node: .leaf(view: leafC), toRatio: 0.75, along: .left)
+    guard case .split(let outer) = resized.root, case .split(let resizedInner) = outer.right else {
+      Issue.record("Expected nested splits")
+      return
+    }
+    #expect(outer.ratio == 0.5)
+    #expect(resizedInner.ratio == 0.25)
+  }
+
   @Test func insertingSpanningParentWrapsTheImmediateParentSplit() throws {
     let leafA = IDLeaf(id: 1)
     let leafB = IDLeaf(id: 2)
