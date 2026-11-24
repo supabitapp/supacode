@@ -129,7 +129,7 @@ struct GitClientWorktreeDiscoveryTests {
 
     let worktrees = try await client.worktrees(for: repoRoot)
 
-    #expect(worktrees.map(\.id) == ["/tmp/repo", "/tmp/repo/.worktrees/feature"])
+    #expect(worktrees.map(\.id) == ["/tmp/repo/", "/tmp/repo/.worktrees/feature/"])
     let runs = recorder.runInvocations()
     #expect(runs.count == 1)
     if let invocation = runs.first {

@@ -126,7 +126,7 @@ struct GitClient {
     let entries = try JSONDecoder().decode([GitWtWorktreeEntry].self, from: data)
       .filter { !$0.isBare }
     let worktreeEntries = entries.enumerated().map { index, entry in
-      let worktreeURL = URL(fileURLWithPath: entry.path).standardizedFileURL
+      let worktreeURL = Self.listedWorktreeURL(path: entry.path)
       // Orphan signal: working dir is gone (lock state checked separately when reconciling).
       let isMissing = !fileManager.fileExists(atPath: entry.path)
       let isAttached = !entry.branch.isEmpty
@@ -1572,6 +1572,15 @@ struct GitClient {
       return "."
     }
     return result.joined(separator: "/")
+  }
+
+  /// `fileURLWithPath` adds the trailing slash and `standardizedFileURL` drops
+  /// the `/private` prefix only when the path exists, so a listed worktree whose
+  /// directory was deleted would get a new id. Standardizing the parent keeps it stable.
+  nonisolated static func listedWorktreeURL(path: String) -> URL {
+    let url = URL(filePath: path, directoryHint: .isDirectory)
+    return url.deletingLastPathComponent().standardizedFileURL
+      .appending(path: url.lastPathComponent, directoryHint: .isDirectory)
   }
 
   /// Stat the filesystem first so a directory URL built without a trailing-slash

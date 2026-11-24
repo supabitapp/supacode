@@ -36,17 +36,19 @@ struct AppFeatureRenameTabTests {
     #expect(sent.value.isEmpty)
   }
 
-  @Test(.dependencies) func missingSelectedWorktreeDoesNothing() async {
+  @Test(.dependencies) func missingSelectedWorktreeStillRenamesItsOpenTab() async {
     let worktree = Self.makeWorktree(id: "/tmp/rename-tab/missing", isMissing: true)
+    let tabID = TabID()
     let sent = LockIsolated<[TerminalClient.Command]>([])
     let store = Self.makeStore(worktrees: [worktree], selection: worktree.id)
+    store.dependencies.terminalClient.selectedTabID = { _ in tabID }
     store.dependencies.terminalClient.send = { command in
       sent.withValue { $0.append(command) }
     }
 
     await store.send(.renameSelectedTerminalTab).finish()
 
-    #expect(sent.value.isEmpty)
+    #expect(sent.value == [.beginTabRename(worktree, tabID: tabID)])
   }
 
   @Test(.dependencies) func noSelectedTabDoesNothing() async {

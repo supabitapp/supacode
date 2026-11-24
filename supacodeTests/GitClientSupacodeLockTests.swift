@@ -37,6 +37,21 @@ struct GitClientSupacodeLockTests {
     #expect(adminExists)
   }
 
+  @Test func worktreeKeepsItsIDWhenItsDirectoryIsDeleted() async throws {
+    let fixture = try await GitWorktreeFixture()
+    defer { fixture.cleanup() }
+    let worktreeURL = try await fixture.addLinkedWorktree(named: "feature-deleted")
+    let worktreeID = WorktreeID(worktreeURL.path(percentEncoded: false))
+
+    let before = try await GitClient().worktrees(for: fixture.workURL)
+    try FileManager.default.removeItem(at: worktreeURL)
+    let after = try await GitClient().worktrees(for: fixture.workURL)
+
+    #expect(before.first { $0.id == worktreeID }?.isMissing == false)
+    #expect(after.first { $0.id == worktreeID }?.isMissing == true)
+    #expect(Set(after.map(\.id)) == Set(before.map(\.id)))
+  }
+
   @Test func reconcileLeavesUserLockUntouched() async throws {
     let fixture = try await GitWorktreeFixture()
     defer { fixture.cleanup() }
