@@ -198,11 +198,21 @@ extension PaneCommand {
     @Option(help: "Distance in points. Defaults to one shortcut step.")
     var amount: UInt16?
 
+    @Option(
+      help: "The pane's share of the nearest split along the direction's axis, from 0.1 to 0.9. Replaces --amount.")
+    var ratio: Double?
+
     @OptionGroup var timeoutOption: TimeoutOption
 
     func validate() throws {
       if amount == 0 {
         throw ValidationError("--amount must be at least 1.")
+      }
+      if amount != nil, ratio != nil {
+        throw ValidationError("Pass either --amount or --ratio, not both.")
+      }
+      if let ratio, !(0.1...0.9).contains(ratio) {
+        throw ValidationError("--ratio must be between 0.1 and 0.9.")
       }
     }
 
@@ -211,7 +221,7 @@ extension PaneCommand {
       let token = try IDResolvers.resolveFocusedPaneToken(pane, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
       try Dispatcher.dispatch(
         deeplinkURL: DeeplinkURLBuilder.paneResize(
-          worktreeID: wID, paneToken: token, direction: direction.rawValue, amount: amount),
+          worktreeID: wID, paneToken: token, direction: direction.rawValue, amount: amount, ratio: ratio),
         timeoutSeconds: timeoutOption.timeout
       )
     }

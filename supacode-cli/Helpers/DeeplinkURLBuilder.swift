@@ -139,9 +139,12 @@ nonisolated enum DeeplinkURLBuilder {
     "supacode://worktree/\(worktreeID)/pane/\(paneToken)/zoom"
   }
 
-  static func paneResize(worktreeID: String, paneToken: String, direction: String, amount: UInt16?) -> String {
+  static func paneResize(
+    worktreeID: String, paneToken: String, direction: String, amount: UInt16?, ratio: Double?
+  ) -> String {
     var url = "supacode://worktree/\(worktreeID)/pane/\(paneToken)/resize?direction=\(direction)"
     if let amount { url += "&amount=\(amount)" }
+    if let ratio { url += "&ratio=\(ratio)" }
     return url
   }
 

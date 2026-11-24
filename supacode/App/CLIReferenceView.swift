@@ -109,8 +109,10 @@ struct CLIReferenceView: View {
     ),
     .init(command: "supacode pane zoom [-w <id>] [-p <token>]", description: "Toggle a pane's zoom."),
     .init(
-      command: "supacode pane resize [-w <id>] [-p <token>] -d l|r|u|d [--amount <points>]",
-      description: "Move a pane's divider toward a direction. Defaults to the focused pane and one shortcut step."
+      command: "supacode pane resize [-w <id>] [-p <token>] -d l|r|u|d [--amount <points> | --ratio <0.1-0.9>]",
+      description:
+        "Move a pane's divider toward a direction, or set the pane's share of the split with --ratio. "
+        + "Defaults to the focused pane and one shortcut step."
     ),
     .init(command: "supacode pane equalize [-w <id>]", description: "Equalize every split ratio."),
     .init(command: "supacode pane window [-w <id>] [-p <token>]", description: "Toggle a pane's window mode."),

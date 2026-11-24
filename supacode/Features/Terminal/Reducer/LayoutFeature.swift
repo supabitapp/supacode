@@ -212,7 +212,8 @@ struct LayoutFeature {
     case contentRequestedFocusSplit(content: ContentID, direction: SplitTree<PaneID>.FocusDirection)
     case contentRequestedToggleZoom(content: ContentID)
     /// A content asked to grow its pane by `amount` pixels toward `direction`.
-    case contentRequestedResize(content: ContentID, direction: SplitTree<PaneID>.SpatialDirection, amount: UInt16)
+    case contentRequestedResize(
+      content: ContentID, direction: SplitTree<PaneID>.SpatialDirection, amount: PaneResizeAmount)
     case contentRequestedGotoTab(content: ContentID, target: TabTarget)
     /// A content asked to reorder its tab by `amount` strip positions,
     /// wrapping at the ends.
@@ -872,13 +873,14 @@ extension LayoutFeature {
     return reduceSplitPane(&state, anchorID: located.pane.id, direction: direction, spec: spec)
   }
 
-  /// Grows the content's pane by `amount` pixels. Mirrors the legacy resize
-  /// binding, including its side effect of clearing any zoom.
+  /// Grows the content's pane by `amount` pixels, or sets its share of the
+  /// nearest split along `direction`'s axis to a ratio. Mirrors the legacy
+  /// resize binding, including its side effect of clearing any zoom.
   private func reduceContentRequestedResize(
     _ state: inout State,
     contentID: ContentID,
     direction: SplitTree<PaneID>.SpatialDirection,
-    amount: UInt16
+    amount: PaneResizeAmount
   ) -> Effect<Action> {
     guard let located = state.layout.tab(containingContent: contentID),
       let node = state.layout.tree.find(id: located.pane.id.rawValue)
@@ -888,18 +890,23 @@ extension LayoutFeature {
       Self.logger.info("resize refused: pane \(located.pane.id.rawValue) is windowed")
       return .none
     }
-    let size = paneTreeSize(state)
-    guard size.width >= 1, size.height >= 1 else {
-      Self.logger.info("resize skipped: pane extents are degenerate.")
-      return .none
-    }
     do {
-      state.layout.tree = try state.layout.tree.resizing(
-        node: node,
-        by: amount,
-        in: direction,
-        with: CGRect(origin: .zero, size: size)
-      )
+      switch amount {
+      case .ratio(let ratio):
+        state.layout.tree = try state.layout.tree.resizing(node: node, toRatio: ratio, along: direction)
+      case .points(let points):
+        let size = paneTreeSize(state)
+        guard size.width >= 1, size.height >= 1 else {
+          Self.logger.info("resize skipped: pane extents are degenerate.")
+          return .none
+        }
+        state.layout.tree = try state.layout.tree.resizing(
+          node: node,
+          by: points,
+          in: direction,
+          with: CGRect(origin: .zero, size: size)
+        )
+      }
     } catch {
       Self.logger.warning("contentRequestedResize found no resizable split for \(contentID.rawValue)")
     }

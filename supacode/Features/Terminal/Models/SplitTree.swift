@@ -258,34 +258,8 @@ nonisolated struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
     with bounds: CGRect
   ) throws -> Self {
     guard let root else { throw SplitError.viewNotFound }
-    guard let path = root.path(to: node) else { throw SplitError.viewNotFound }
-
-    let targetSplitDirection: Direction =
-      switch direction {
-      case .top, .down: .vertical
-      case .left, .right: .horizontal
-      }
-
-    var splitPath: Path?
-    var splitNode: Node?
-
-    if !path.path.isEmpty {
-      for index in stride(from: path.path.count - 1, through: 0, by: -1) {
-        let parentPath = Path(path: Array(path.path.prefix(index)))
-        if let parent = root.node(at: parentPath), case .split(let split) = parent {
-          if split.direction == targetSplitDirection {
-            splitPath = parentPath
-            splitNode = parent
-            break
-          }
-        }
-      }
-    }
-
-    guard let splitPath,
-      let splitNode,
-      case .split(let split) = splitNode
-    else {
+    let splitPath = try nearestSplit(enclosing: node, along: direction, in: root).path
+    guard let splitNode = root.node(at: splitPath), case .split(let split) = splitNode else {
       throw SplitError.viewNotFound
     }
 
@@ -322,6 +296,40 @@ nonisolated struct SplitTree<Leaf: Identifiable & Hashable>: Equatable {
 
     let newRoot = try root.replacingNode(at: splitPath, with: .split(newSplit))
     return .init(root: newRoot, zoomed: nil)
+  }
+
+  func resizing(node: Node, toRatio ratio: Double, along direction: SpatialDirection) throws -> Self {
+    guard let root else { throw SplitError.viewNotFound }
+    let (splitPath, side) = try nearestSplit(enclosing: node, along: direction, in: root)
+    guard let splitNode = root.node(at: splitPath) else { throw SplitError.viewNotFound }
+    let clamped = min(0.9, max(0.1, ratio))
+    let newRoot = try root.replacingNode(
+      at: splitPath,
+      with: splitNode.resizing(to: side == .left ? clamped : 1 - clamped)
+    )
+    return .init(root: newRoot, zoomed: nil)
+  }
+
+  private func nearestSplit(
+    enclosing node: Node,
+    along direction: SpatialDirection,
+    in root: Node
+  ) throws -> (path: Path, side: PathComponent) {
+    guard let path = root.path(to: node) else { throw SplitError.viewNotFound }
+    let targetSplitDirection: Direction =
+      switch direction {
+      case .top, .down: .vertical
+      case .left, .right: .horizontal
+      }
+    for index in stride(from: path.path.count - 1, through: 0, by: -1) {
+      let parentPath = Path(path: Array(path.path.prefix(index)))
+      if let parent = root.node(at: parentPath), case .split(let split) = parent,
+        split.direction == targetSplitDirection
+      {
+        return (parentPath, path.path[index])
+      }
+    }
+    throw SplitError.viewNotFound
   }
 
   func viewBounds(boundsOf: (Leaf) -> CGSize) -> CGSize {

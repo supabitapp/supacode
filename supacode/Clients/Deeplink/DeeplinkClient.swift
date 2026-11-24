@@ -415,13 +415,27 @@ private nonisolated enum DeeplinkParser {
       logger.warning("Invalid pane resize direction '\(directionRaw)'.")
       return nil
     }
-    var amount: UInt16?
-    if let rawAmount = queryItems.first(where: { $0.name == "amount" })?.value {
+    let rawAmount = queryItems.first(where: { $0.name == "amount" })?.value
+    let rawRatio = queryItems.first(where: { $0.name == "ratio" })?.value
+    var amount: PaneResizeAmount?
+    switch (rawAmount, rawRatio) {
+    case (let rawAmount?, nil):
       guard let points = UInt16(rawAmount), points > 0 else {
         logger.warning("Invalid pane resize amount '\(rawAmount)'.")
         return nil
       }
-      amount = points
+      amount = .points(points)
+    case (nil, let rawRatio?):
+      guard let ratio = Double(rawRatio), PaneResizeAmount.ratioRange.contains(ratio) else {
+        logger.warning("Invalid pane resize ratio '\(rawRatio)'.")
+        return nil
+      }
+      amount = .ratio(ratio)
+    case (nil, nil):
+      amount = nil
+    case (_?, _?):
+      logger.warning("Pane resize takes either an amount or a ratio, not both.")
+      return nil
     }
     return .worktree(
       id: worktreeID,

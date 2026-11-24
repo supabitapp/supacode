@@ -545,7 +545,7 @@ final class WorktreeTerminalManager {
     case .resizePane(let worktree, let paneToken, let direction, let amount):
       sendSelectedContentLayoutAction(worktree.id, paneToken: paneToken) {
         .contentRequestedResize(
-          content: $0, direction: direction.spatialDirection, amount: amount ?? Self.paneResizeStep)
+          content: $0, direction: direction.spatialDirection, amount: amount ?? .points(Self.paneResizeStep))
       }
     case .splitPane(let worktree, let token, let direction, let input, let id, let focusing):
       splitPane(in: worktree, paneToken: token, direction: direction, input: input, id: id, focusing: focusing)
