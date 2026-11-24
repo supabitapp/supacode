@@ -129,7 +129,7 @@ supacode pane focus [-w <id>] [-p <id>] [-d l|r|u|d]                # Focus a pa
 supacode pane split [-w <id>] [-p <token>] [-d h|v] [-i <cmd>] [-n <uuid>] [--background]  # Split into a new pane (prints the new tab UUID).
 supacode pane close [-w <id>] [-p <token>] [--background]           # Close a pane and all its tabs.
 supacode pane zoom [-w <id>] [-p <token>]                           # Toggle a pane's zoom.
-supacode pane resize [-w <id>] [-p <token>] -d l|r|u|d [--amount <points>]  # Move a pane's divider toward a direction (default: one shortcut step).
+supacode pane resize [-w <id>] [-p <token>] -d l|r|u|d [--amount <points> | --ratio <0.1-0.9>]  # Move a pane's divider toward a direction (default: one shortcut step), or set the pane's share of the split.
 supacode pane equalize [-w <id>]                                    # Equalize every split ratio.
 supacode pane window [-w <id>] [-p <token>]                         # Toggle a pane's window mode.
 ```
@@ -233,6 +233,7 @@ action that would otherwise focus its target (`tab new`, `tab send`,
 | `--input` | `-i` | - | Command to run in a new terminal, or the text `tab send` types into an existing one. |
 | `--direction` | `-d` | `horizontal` | Split direction (`h`/`v`) for splits; neighbor direction (`l`/`r`/`u`/`d`) for `pane focus`, `pane resize`, and `tab move`. |
 | `--amount` | - | one shortcut step | Points to move the divider for `pane resize`. |
+| `--ratio` | - | - | The pane's share (0.1 to 0.9) of the nearest split along `--direction`'s axis for `pane resize`. Replaces `--amount`. |
 | `--id` | `-n` | random | UUID for a new tab. |
 | `--focused` | `-f` | - | Print only the focused item in `list` commands. |
 | `--background` | - | - | Do not move the selection or focus; see Background Mode. |

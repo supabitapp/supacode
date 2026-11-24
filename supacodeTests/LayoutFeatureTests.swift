@@ -1092,7 +1092,8 @@ struct LayoutFeatureTests {
     harness.recorder.contents[split.contentID]?.renderer?.frame = NSRect(x: 800, y: 0, width: 800, height: 600)
     await enterWindowMode(harness, paneID: harness.paneID)
     // A pane window has no dividers; the request must not resize the main tree.
-    await harness.store.send(.contentRequestedResize(content: harness.contentID, direction: .right, amount: 10))
+    await harness.store.send(
+      .contentRequestedResize(content: harness.contentID, direction: .right, amount: .points(10)))
   }
 
   // MARK: - Selection, focus, and zoom.
@@ -1763,7 +1764,7 @@ struct LayoutFeatureTests {
     harness.recorder.contents[split.contentID]?.renderer?.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
     // 100px rightward over a 1600px-wide horizontal split: 0.5 + 100/1600.
     await harness.store.send(
-      .contentRequestedResize(content: harness.contentID, direction: .right, amount: 100)
+      .contentRequestedResize(content: harness.contentID, direction: .right, amount: .points(100))
     ) {
       let node = try #require($0.layout.tree.root)
       $0.layout.tree = try $0.layout.tree.resizing(
@@ -1782,6 +1783,27 @@ struct LayoutFeatureTests {
     #expect(harness.store.state.layout.isConsistent)
   }
 
+  @Test func contentRequestedResizeToARatioSetsThePaneShareWithoutGeometry() async throws {
+    let harness = await makeHarness()
+    let split = await splitPane(harness, anchor: harness.paneID)
+    await harness.store.send(
+      .contentRequestedResize(content: split.contentID, direction: .left, amount: .ratio(0.3))
+    ) {
+      $0.layout.tree = try $0.layout.tree.resizing(
+        node: try #require($0.layout.tree.find(id: harness.paneID.rawValue)),
+        toRatio: 0.7,
+        along: .right
+      )
+    }
+    let ratio: Double? =
+      switch harness.store.state.layout.tree.root {
+      case .split(let split): split.ratio
+      case .leaf, nil: nil
+      }
+    #expect(ratio == 0.7)
+    #expect(harness.store.state.layout.isConsistent)
+  }
+
   @Test func contentRequestedResizeMeasuresAgainstTheMountedPaneTree() async throws {
     let harness = await makeHarness()
     let split = await splitPane(harness, anchor: harness.paneID, direction: .down)
@@ -1792,7 +1814,7 @@ struct LayoutFeatureTests {
     mounted.frame = NSRect(x: 0, y: 0, width: 800, height: 366)
     paneTree.addSubview(mounted)
     await harness.store.send(
-      .contentRequestedResize(content: harness.contentID, direction: .down, amount: 100)
+      .contentRequestedResize(content: harness.contentID, direction: .down, amount: .points(100))
     ) {
       $0.layout.tree = try $0.layout.tree.resizing(
         node: try #require($0.layout.tree.find(id: harness.paneID.rawValue)),
@@ -1813,7 +1835,8 @@ struct LayoutFeatureTests {
     let harness = await makeHarness()
     harness.mock?.renderer?.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
     // A lone pane has no split to resize.
-    await harness.store.send(.contentRequestedResize(content: harness.contentID, direction: .right, amount: 50))
+    await harness.store.send(
+      .contentRequestedResize(content: harness.contentID, direction: .right, amount: .points(50)))
     #expect(harness.store.state.layout.isConsistent)
   }
 
@@ -1821,7 +1844,8 @@ struct LayoutFeatureTests {
     let harness = await makeHarness()
     _ = await splitPane(harness, anchor: harness.paneID)
     // Renderers report zero extents (mid-wake); the ratio must not move.
-    await harness.store.send(.contentRequestedResize(content: harness.contentID, direction: .right, amount: 50))
+    await harness.store.send(
+      .contentRequestedResize(content: harness.contentID, direction: .right, amount: .points(50)))
     #expect(harness.store.state.layout.isConsistent)
   }
 

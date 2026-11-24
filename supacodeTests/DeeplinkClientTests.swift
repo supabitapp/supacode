@@ -422,7 +422,19 @@ struct DeeplinkClientTests {
       parse(url)
         == .worktree(
           id: "/tmp/repo/wt-1",
-          action: .paneResize(token: paneUUID, direction: .right, amount: 120)
+          action: .paneResize(token: paneUUID, direction: .right, amount: .points(120))
+        )
+    )
+  }
+
+  @Test func worktreePaneResizeCarriesRatio() {
+    let url = URL(
+      string: "supacode://worktree/\(encoded)/pane/\(paneUUID.uuidString)/resize?direction=left&ratio=0.4")!
+    #expect(
+      parse(url)
+        == .worktree(
+          id: "/tmp/repo/wt-1",
+          action: .paneResize(token: paneUUID, direction: .left, amount: .ratio(0.4))
         )
     )
   }
@@ -440,7 +452,9 @@ struct DeeplinkClientTests {
 
   @Test(arguments: [
     "direction=sideways", "amount=120", "direction=left&amount=0", "direction=left&amount=-5",
-    "direction=left&amount=abc", "direction=left&amount=70000",
+    "direction=left&amount=abc", "direction=left&amount=70000", "direction=left&ratio=0.05",
+    "direction=left&ratio=0.95", "direction=left&ratio=abc", "direction=left&amount=10&ratio=0.4",
+    "direction=left&ratio", "direction=left&amount=120&ratio", "direction=left&amount",
   ])
   func worktreePaneResizeInvalidQueryReturnsNil(_ query: String) {
     let url = URL(string: "supacode://worktree/\(encoded)/pane/\(paneUUID.uuidString)/resize?\(query)")!

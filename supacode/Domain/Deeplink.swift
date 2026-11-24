@@ -57,7 +57,7 @@ enum Deeplink: Equatable, Sendable {
     /// Toggle window mode for the pane addressed by `token`.
     case paneWindow(token: UUID)
     case paneEqualize
-    case paneResize(token: UUID, direction: TerminalSplitMenuDirection, amount: UInt16?)
+    case paneResize(token: UUID, direction: TerminalSplitMenuDirection, amount: PaneResizeAmount?)
     case surface(tabID: UUID, surfaceID: UUID, input: String?)
     case surfaceSplit(tabID: UUID, surfaceID: UUID, direction: SplitDirection, input: String?, id: UUID?)
     case surfaceDestroy(tabID: UUID, surfaceID: UUID)

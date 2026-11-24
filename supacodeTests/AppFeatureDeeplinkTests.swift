@@ -259,9 +259,9 @@ struct AppFeatureDeeplinkTests {
     store.exhaustivity = .off
 
     await store.send(
-      .deeplink(.worktree(id: worktree.id, action: .paneResize(token: token, direction: .left, amount: 120))))
+      .deeplink(.worktree(id: worktree.id, action: .paneResize(token: token, direction: .left, amount: .points(120)))))
     await store.finish()
-    #expect(sent.value.contains(.resizePane(worktree, paneToken: token, direction: .left, amount: 120)))
+    #expect(sent.value.contains(.resizePane(worktree, paneToken: token, direction: .left, amount: .points(120))))
   }
 
   @Test(.dependencies) func paneResizeOnAWindowedPaneAlertsInsteadOfAcking() async {

@@ -391,16 +391,32 @@ struct WorktreeTerminalManagerAckTests {
     let panes = await layOutLeftPaneBesideTopOverFocusedBottom(harness)
 
     harness.manager.handleCommand(
-      .resizePane(harness.worktree, paneToken: panes.left, direction: .down, amount: 120))
+      .resizePane(harness.worktree, paneToken: panes.left, direction: .down, amount: .points(120)))
     #expect(dividerRatios(harness).stack == 0.5)
 
     harness.manager.handleCommand(
-      .resizePane(harness.worktree, paneToken: panes.top, direction: .up, amount: 120))
+      .resizePane(harness.worktree, paneToken: panes.top, direction: .up, amount: .points(120)))
     #expect(dividerRatios(harness).stack == 0.375)
 
     harness.manager.handleCommand(
-      .resizePane(harness.worktree, paneToken: panes.left, direction: .right, amount: 160))
+      .resizePane(harness.worktree, paneToken: panes.left, direction: .right, amount: .points(160)))
     #expect(dividerRatios(harness).columns == 0.625)
+  }
+
+  @Test(.dependencies) func resizePaneWithARatioSetsThatPanesShareOfItsSplit() async {
+    let harness = makeHarness(makeContent: { SizedTabContent(id: $0.contentID) })
+    let panes = await layOutLeftPaneBesideTopOverFocusedBottom(harness)
+
+    harness.manager.handleCommand(
+      .resizePane(harness.worktree, paneToken: panes.left, direction: .left, amount: .ratio(0.4)))
+    #expect(dividerRatios(harness).columns == 0.4)
+
+    harness.manager.handleCommand(
+      .resizePane(harness.worktree, paneToken: panes.top, direction: .right, amount: .ratio(0.3)))
+    #expect(dividerRatios(harness).columns == 0.7)
+
+    harness.manager.handleCommand(.resizePane(harness.worktree, direction: .up, amount: .ratio(0.75)))
+    #expect(dividerRatios(harness).stack == 0.25)
   }
 
   @Test(.dependencies) func anchoredCreateLandsInTheAnchorsPane() async {

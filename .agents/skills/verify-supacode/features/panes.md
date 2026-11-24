@@ -7,7 +7,7 @@ The terminal area of a worktree is a split tree of panes, and each pane holds ta
 - `pane-split` splits the focused or given pane horizontally or vertically.
 - `pane-focus` focuses a pane by id or by direction.
 - `pane-zoom` toggles zoom on a pane.
-- `pane-resize` moves a pane's divider by a number of points (default 10).
+- `pane-resize` moves a pane's divider by a number of points (default 10), or with `--ratio` sets the pane's share (0.1 to 0.9) of the nearest split along the direction's axis.
 - `pane-equalize` resets every split ratio.
 - `pane-close` closes a pane and all its tabs.
 - `pane-window` toggles a pane's window mode (`⌘⇧M`).
@@ -40,5 +40,5 @@ Preconditions:
 - `pane split -d` takes only `h`/`horizontal` or `v`/`vertical`, so it splits right or down. `-d left` fails in the CLI. Splitting left or up needs the File menu or the tab strip's `Splits and Window Mode` menu, which need headed input.
 - `pane focus -d` and `pane resize -d` take `left|right|up|down` or `l|r|u|d`.
 - While a pane is zoomed or windowed, `pane list` still prints every pane. Read the visible count from the AX `group` name.
-- `pane resize` on a windowed pane fails with exit `1` (`It is in window mode, so it has no divider to move.`) and leaves an alert in the main window. Dismiss it as described in `SKILL.md` under Alerts. `--amount 0` fails in the CLI with exit `64`.
+- `pane resize` on a windowed pane fails with exit `1` (`It is in window mode, so it has no divider to move.`) and leaves an alert in the main window. Dismiss it as described in `SKILL.md` under Alerts. `--amount 0`, `--ratio` outside 0.1 to 0.9, and `--amount` with `--ratio` fail in the CLI with exit `64`.
 - An unknown pane id fails with `The pane could not be found. It may have been closed.` and leaves an alert in the main window. Dismiss it as described in `SKILL.md` under Alerts.
