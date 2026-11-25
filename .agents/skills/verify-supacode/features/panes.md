@@ -30,7 +30,9 @@ Preconditions:
 - **Prove the new pane is live.** Run `$S cli <run> -- tab send -w "$W" -t "$NT" -i 'pwd > /tmp/sv-<run>/pane-pwd.txt'`. The file contains `/tmp/sv-<run>/seed-repo` (possibly `/private/tmp/...`).
 - **Focus.** Run `$S cli <run> -- pane focus -w "$W" -d left`. `pane list -w "$W" --focused` prints `$P1`. After a `-d v` split, use `-d up` instead. `pane focus -w "$W" -p "$NT"` focuses the new pane by its tab id.
 - **Zoom.** Run `$S cli <run> -- pane zoom -w "$W"` and capture `$S shot <run> pane-zoomed` and `$S ax <run> pane-zoomed`. Only one pane is visible, and the AX `group` reads `Terminal split: 1 pane`. Running zoom again restores `2 panes`.
-- **Resize and equalize.** Take `$S shot <run> pane-resize-before`, run `$S cli <run> -- pane resize -w "$W" -p "$P1" -d right --amount 200`, and take `$S shot <run> pane-resize-after`. The divider moves right. `$S cli <run> -- pane equalize -w "$W"` puts it back at 50/50 (`$S shot <run> pane-equalize-after`).
+- **Resize by points.** Take `$S shot <run> pane-resize-before`, run `$S cli <run> -- pane resize -w "$W" -p "$P1" -d right --amount 200`, and take `$S shot <run> pane-resize-after`. The divider moves right.
+- **Resize by ratio.** Run `$S cli <run> -- pane resize -w "$W" -p "$P1" -d right --ratio 0.25` and take `$S shot <run> pane-resize-ratio-after`. In the screenshot, `$P1` fills a quarter of the split's width. After a `-d v` split, use `-d down` for both resize commands and check the height instead.
+- **Equalize.** Run `$S cli <run> -- pane equalize -w "$W"` and take `$S shot <run> pane-equalize-after`. The divider is back at 50/50.
 - **Window mode.** Run `$S cli <run> -- pane window -w "$W" -p "$NT"`. `$S windows <run>` lists one more window, titled after the pane's tab, and the main window's AX `group` reads `Terminal split: 1 pane`. Running the same command again closes that window and restores `2 panes`.
 - **Close.** Run `$S cli <run> -- pane close -w "$W" -p "$NT"`. `pane list` is back to `$P1`, `tab list` no longer has `$NT`, and polling the run's zmx list (see `SKILL.md` under Evidence) shows `supa-<$NT lowercased>` gone. The session ends after `pane close` returns.
 
@@ -41,4 +43,5 @@ Preconditions:
 - `pane focus -d` and `pane resize -d` take `left|right|up|down` or `l|r|u|d`.
 - While a pane is zoomed or windowed, `pane list` still prints every pane. Read the visible count from the AX `group` name.
 - `pane resize` on a windowed pane fails with exit `1` (`It is in window mode, so it has no divider to move.`) and leaves an alert in the main window. Dismiss it as described in `SKILL.md` under Alerts. `--amount 0`, `--ratio` outside 0.1 to 0.9, and `--amount` with `--ratio` fail in the CLI with exit `64`.
+- With `--ratio`, `-d` only picks the axis: `-d left --ratio 0.75` still gives `$P1` three quarters. When no split runs along that axis, such as `-d up` on a side-by-side pair, the command exits `0` and nothing changes, not even zoom, so prove a ratio from the screenshot. A ratio that applies also clears zoom.
 - An unknown pane id fails with `The pane could not be found. It may have been closed.` and leaves an alert in the main window. Dismiss it as described in `SKILL.md` under Alerts.
