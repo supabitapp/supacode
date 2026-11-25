@@ -1192,8 +1192,9 @@ struct RepositoriesFeature {
         let buttonLabel = count == 1 ? "Delete worktree" : "Delete \(count) worktrees"
         let message: String =
           switch (count, deleteBranchOnDeleteWorktree, allMissing) {
-          case (1, _, true): "Removes the orphan worktree entry from this repository."
-          case (_, _, true): "Removes \(count) orphan worktree entries from this repository."
+          case (1, _, true): "Removes the orphan worktree entry from this repository and closes any open terminals."
+          case (_, _, true):
+            "Removes \(count) orphan worktree entries from this repository and closes any open terminals."
           case (1, true, false): "This deletes the worktree directory and its local branch."
           case (1, false, false): "This deletes the worktree directory but keeps the local branch."
           case (_, true, false):

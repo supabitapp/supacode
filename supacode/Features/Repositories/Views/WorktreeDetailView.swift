@@ -43,10 +43,11 @@ struct WorktreeDetailView: View {
       selectedWorktree: selectedWorktree,
       selectedWorktreeSummaries: selectedWorktreeSummaries
     )
-    let hasActiveWorktree = hasActiveWorktree(
-      repositories: repositories, loadingInfo: loadingInfo,
+    let terminalAccess = terminalAccess(
+      state: state, loadingInfo: loadingInfo,
       selectedWorktree: selectedWorktree, selectedWorktreeSummaries: selectedWorktreeSummaries
     )
+    let hasActiveWorktree = terminalAccess == .full
     // `toolbarNotificationGroupsCache` is observed inside `ToolbarNotificationsButtonHost`
     // instead; reading it here would re-render the body on every notification.
     let repositoriesStore = store.scope(state: \.repositories, action: \.repositories)
@@ -79,8 +80,8 @@ struct WorktreeDetailView: View {
       repositories: repositories,
       loadingInfo: loadingInfo,
       selectedWorktree: selectedWorktree,
-      selectedSlice: selectedRow,
-      selectedWorktreeSummaries: selectedWorktreeSummaries
+      selectedWorktreeSummaries: selectedWorktreeSummaries,
+      terminalAccess: terminalAccess
     )
     // Applied before `.inspector` so the toast stays within the content, not over the inspector.
     .statusToastOverlay(store: repositoriesStore)
@@ -129,7 +130,7 @@ struct WorktreeDetailView: View {
     return applyFocusedActions(
       content: content,
       state: state,
-      hasActiveWorktree: hasActiveWorktree,
+      terminalAccess: terminalAccess,
       canRevealLocally: hasActiveWorktree && selectedWorktree?.host == nil,
       resolvedSelection: resolvedSelection
     )
@@ -246,17 +247,24 @@ struct WorktreeDetailView: View {
     return !repositories.isInitialLoadComplete
   }
 
-  private func hasActiveWorktree(
-    repositories: RepositoriesFeature.State,
+  private func terminalAccess(
+    state: AppFeature.State,
     loadingInfo: WorktreeLoadingInfo?,
     selectedWorktree: Worktree?,
     selectedWorktreeSummaries: [MultiSelectedWorktreeSummary]
-  ) -> Bool {
-    selectedWorktree != nil
-      && loadingInfo == nil
-      && !shouldShowMultiSelectionSummary(
-        repositories: repositories, selectedWorktreeSummaries: selectedWorktreeSummaries)
-      && selectedWorktree?.isMissing != true
+  ) -> TerminalAccess {
+    guard let selectedWorktree,
+      loadingInfo == nil,
+      !shouldShowMultiSelectionSummary(
+        repositories: state.repositories, selectedWorktreeSummaries: selectedWorktreeSummaries)
+    else { return .hidden }
+    return TerminalAccess(worktree: selectedWorktree, layout: state.terminals.layouts[id: selectedWorktree.id]?.layout)
+  }
+
+  private func requestDeleteWorktree(_ worktree: Worktree, repositories: RepositoriesFeature.State) {
+    guard let repositoryID = repositories.sidebarItems[id: worktree.id]?.repositoryID else { return }
+    let target = RepositoriesFeature.DeleteWorktreeTarget(worktreeID: worktree.id, repositoryID: repositoryID)
+    store.send(.repositories(.requestDeleteSidebarItems([target])))
   }
 
   @ViewBuilder
@@ -264,8 +272,8 @@ struct WorktreeDetailView: View {
     repositories: RepositoriesFeature.State,
     loadingInfo: WorktreeLoadingInfo?,
     selectedWorktree: Worktree?,
-    selectedSlice: SelectedWorktreeSlice?,
-    selectedWorktreeSummaries: [MultiSelectedWorktreeSummary]
+    selectedWorktreeSummaries: [MultiSelectedWorktreeSummary],
+    terminalAccess: TerminalAccess
   ) -> some View {
     Group {
       if repositories.isShowingArchivedWorktrees {
@@ -286,15 +294,9 @@ struct WorktreeDetailView: View {
         ) {
           store.send(.repositories(.requestRemoveFailedRepository(failedRepositoryID)))
         }
-      } else if let selectedWorktree, selectedWorktree.isMissing {
+      } else if let selectedWorktree, selectedWorktree.isMissing, terminalAccess == .hidden {
         MissingWorktreeDetailView(worktree: selectedWorktree) {
-          guard let repositoryID = repositories.sidebarItems[id: selectedWorktree.id]?.repositoryID
-          else { return }
-          let target = RepositoriesFeature.DeleteWorktreeTarget(
-            worktreeID: selectedWorktree.id,
-            repositoryID: repositoryID
-          )
-          store.send(.repositories(.requestDeleteSidebarItems([target])))
+          requestDeleteWorktree(selectedWorktree, repositories: repositories)
         }
       } else if let selectedWorktree {
         let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
@@ -308,17 +310,20 @@ struct WorktreeDetailView: View {
           terminalsStore: store.scope(state: \.terminals, action: \.terminals),
           runtime: ContentRuntime.liveValue,
           forceAutoFocus: shouldFocusTerminal,
-          isLifecycleBusy: selectedSlice?.lifecycle.isBusy ?? false,
+          isLifecycleBusy: repositories.selectedWorktreeSlice?.lifecycle.isBusy ?? false,
           newTerminal: FocusedAction(
-            isEnabled: hasActiveWorktree(
-              repositories: repositories,
-              loadingInfo: loadingInfo,
-              selectedWorktree: selectedWorktree,
-              selectedWorktreeSummaries: selectedWorktreeSummaries
-            ),
+            isEnabled: terminalAccess == .full,
             token: selectedWorktree.id
           ) { store.send(.newTerminalInWorktree(selectedWorktree.id)) }
         )
+        .environment(\.allowsNewTabs, terminalAccess == .full)
+        .safeAreaInset(edge: .top, spacing: 0) {
+          if terminalAccess == .existingTabsOnly {
+            MissingWorktreeBanner(worktree: selectedWorktree) {
+              requestDeleteWorktree(selectedWorktree, repositories: repositories)
+            }
+          }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.container, edges: .bottom)
         // The subtree is stable across a switch, so `onAppear` fires only once;
@@ -349,10 +354,12 @@ struct WorktreeDetailView: View {
   private func applyFocusedActions<Content: View>(
     content: Content,
     state: AppFeature.State,
-    hasActiveWorktree: Bool,
+    terminalAccess: TerminalAccess,
     canRevealLocally: Bool,
     resolvedSelection: OpenWorktreeAction?
   ) -> some View {
+    let hasActiveWorktree = terminalAccess == .full
+    let showsTerminals = terminalAccess != .hidden
     // Reading the layout re-runs this body on its churn, but the FocusedAction
     // (isEnabled, token) dedup keeps AppKit from rebuilding the menu.
     let hasFocusedTab = Self.hasFocusedTab(in: state, worktreeID: state.repositories.selectedWorktreeID)
@@ -374,44 +381,44 @@ struct WorktreeDetailView: View {
       .focusedSceneAction(\.newTerminalAction, enabled: hasActiveWorktree) {
         store.send(.newTerminal)
       }
-      // Lock and validity are enforced by the terminal model, so this only gates on an active worktree.
-      .focusedSceneAction(\.renameTabAction, enabled: hasActiveWorktree) {
+      // Lock and validity are enforced by the terminal model, so this only gates on visible terminals.
+      .focusedSceneAction(\.renameTabAction, enabled: showsTerminals) {
         store.send(.renameSelectedTerminalTab)
       }
       .focusedAction(\.splitTerminalAction, enabled: hasActiveWorktree) { direction in
         store.send(.splitTerminal(direction))
       }
-      .focusedSceneAction(\.toggleWindowModeAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.toggleWindowModeAction, enabled: showsTerminals) {
         store.send(.toggleWindowModeForFocusedPane)
       }
-      .focusedAction(\.toggleSplitZoomAction, enabled: hasActiveWorktree) {
+      .focusedAction(\.toggleSplitZoomAction, enabled: showsTerminals) {
         store.send(.toggleSplitZoom)
       }
-      .focusedAction(\.equalizeSplitsAction, enabled: hasActiveWorktree) {
+      .focusedAction(\.equalizeSplitsAction, enabled: showsTerminals) {
         store.send(.equalizeSplits)
       }
-      .focusedAction(\.focusSplitAction, enabled: hasActiveWorktree) { direction in
+      .focusedAction(\.focusSplitAction, enabled: showsTerminals) { direction in
         store.send(.focusSplit(direction))
       }
-      .focusedAction(\.resizePaneAction, enabled: hasActiveWorktree) { direction in
+      .focusedAction(\.resizePaneAction, enabled: showsTerminals) { direction in
         store.send(.resizePane(direction))
       }
-      .focusedAction(\.closeTabAction, enabled: hasActiveWorktree && hasFocusedTab) {
+      .focusedAction(\.closeTabAction, enabled: showsTerminals && hasFocusedTab) {
         store.send(.closeTab)
       }
-      .focusedAction(\.closeSurfaceAction, enabled: hasActiveWorktree && hasFocusedTab) {
+      .focusedAction(\.closeSurfaceAction, enabled: showsTerminals && hasFocusedTab) {
         store.send(.closeSurface)
       }
-      .focusedSceneAction(\.startSearchAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.startSearchAction, enabled: showsTerminals) {
         store.send(.startSearch)
       }
-      .focusedSceneAction(\.searchSelectionAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.searchSelectionAction, enabled: showsTerminals) {
         store.send(.searchSelection)
       }
-      .focusedSceneAction(\.navigateSearchNextAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.navigateSearchNextAction, enabled: showsTerminals) {
         store.send(.navigateSearchNext)
       }
-      .focusedSceneAction(\.navigateSearchPreviousAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.navigateSearchPreviousAction, enabled: showsTerminals) {
         store.send(.navigateSearchPrevious)
       }
       .focusedSceneAction(\.runScriptAction, enabled: hasActiveWorktree) {
@@ -1035,29 +1042,6 @@ private struct FailedRepositoryDetailView: View {
         action: requestRemove
       )
       .help("Remove this repository from Supacode. Files on disk are untouched.")
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-  }
-}
-
-private struct MissingWorktreeDetailView: View {
-  let worktree: Worktree
-  let requestDelete: () -> Void
-
-  var body: some View {
-    ContentUnavailableView {
-      Label("Working directory missing", systemImage: "exclamationmark.triangle.fill")
-        .foregroundStyle(.orange)
-    } description: {
-      VStack(spacing: 6) {
-        Text("Restore the directory to keep working here, or delete this worktree to clean up.")
-        Text(worktree.workingDirectory.path(percentEncoded: false))
-          .monospaced()
-          .textSelection(.enabled)
-      }
-    } actions: {
-      Button("Delete Worktree…", systemImage: "trash", role: .destructive, action: requestDelete)
-        .help("Delete this worktree from Supacode.")
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }

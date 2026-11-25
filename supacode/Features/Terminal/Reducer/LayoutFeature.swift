@@ -46,9 +46,9 @@ nonisolated struct NewTabSpec: Equatable, Sendable {
 }
 
 /// Creates live content for a tab; the real surface-backed factory is wired
-/// by the integration layer.
+/// by the integration layer. `nil` refuses the request, leaving the layout untouched.
 nonisolated struct LayoutContentFactory: Sendable {
-  var make: @MainActor @Sendable (ContentRequest) -> any TabContent
+  var make: @MainActor @Sendable (ContentRequest) -> (any TabContent)?
 }
 
 nonisolated extension LayoutContentFactory: DependencyKey {
@@ -754,7 +754,7 @@ extension LayoutFeature {
         inheritedFrom: nil
       )
     )
-    guard contentRuntime.provision(content, at: geometry) else {
+    guard let content, contentRuntime.provision(content, at: geometry) else {
       Self.logger.warning("wakeTab provision refused for \(snapshot.id.rawValue)")
       return .none
     }
@@ -1113,15 +1113,18 @@ extension LayoutFeature {
     }
   }
 
-  /// Creates and provisions content; false when the runtime refuses
-  /// (tombstoned or already registered), dropping the freshly made content
-  /// unprovisioned.
+  /// Creates and provisions content; false when the factory refuses the
+  /// request or the runtime refuses the content (tombstoned or already
+  /// registered), dropping the freshly made content unprovisioned.
   private func provisionContent(
     _ request: ContentRequest,
     at geometry: ContentGeometry,
     operation: StaticString
   ) -> Bool {
-    let content = layoutContentFactory.make(request)
+    guard let content = layoutContentFactory.make(request) else {
+      Self.logger.info("\(operation) refused by the content factory for \(request.contentID.rawValue)")
+      return false
+    }
     guard contentRuntime.provision(content, at: geometry) else {
       Self.logger.warning("\(operation) provision refused for content \(request.contentID.rawValue)")
       return false

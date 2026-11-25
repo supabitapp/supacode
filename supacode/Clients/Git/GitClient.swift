@@ -126,7 +126,7 @@ struct GitClient {
     let entries = try JSONDecoder().decode([GitWtWorktreeEntry].self, from: data)
       .filter { !$0.isBare }
     let worktreeEntries = entries.enumerated().map { index, entry in
-      let worktreeURL = URL(fileURLWithPath: entry.path).standardizedFileURL
+      let worktreeURL = Self.listedWorktreeURL(path: entry.path)
       // Orphan signal: working dir is gone (lock state checked separately when reconciling).
       let isMissing = !fileManager.fileExists(atPath: entry.path)
       let isAttached = !entry.branch.isEmpty
@@ -1339,9 +1339,9 @@ struct GitClient {
 
   nonisolated func removeWorktree(_ worktree: Worktree, deleteBranch: Bool) async throws -> URL {
     let rootPath = worktree.repositoryRootURL.path(percentEncoded: false)
-    // `worktreePath` feeds the git command, which runs over `shell` (ssh for a
+    // `gitWorktreeURL` feeds the git command, which runs over `shell` (ssh for a
     // remote worktree), so it's the display path for either kind.
-    let worktreePath = worktree.workingDirectory.standardizedFileURL.path(percentEncoded: false)
+    var gitWorktreeURL = worktree.workingDirectory.standardizedFileURL
     // The lock release / relocate / trash steps are *local* filesystem work, so
     // they run only when a local URL exists. A remote worktree's
     // `localWorkingDirectory` is nil, so a coincidental local path at the same
@@ -1351,8 +1351,19 @@ struct GitClient {
     if let localWorktreeURL = worktree.localWorkingDirectory?.standardizedFileURL {
       await releaseSupacodeLock(forWorktreeAt: localWorktreeURL, repoRoot: worktree.repositoryRootURL)
       relocatedURL = Self.relocateWorktreeDirectory(localWorktreeURL)
+      // Git resolves a worktree whose directory is gone only by the exact path it registered.
+      if worktree.isMissing,
+        let entry = await adminEntry(forWorktreeAt: localWorktreeURL, repoRoot: worktree.repositoryRootURL)
+      {
+        gitWorktreeURL = entry.worktreeDirectory
+      }
     } else {
       relocatedURL = nil
+    }
+    // Git cannot match a missing worktree's path that ends in a slash.
+    var worktreePath = gitWorktreeURL.path(percentEncoded: false)
+    while worktreePath.count > 1, worktreePath.hasSuffix("/") {
+      worktreePath.removeLast()
     }
     // Prune is silent on still-locked entries; the --force --force
     // remove below is the actual guarantee.
@@ -1574,6 +1585,28 @@ struct GitClient {
     return result.joined(separator: "/")
   }
 
+  /// A listed worktree's id must not change when its directory is deleted.
+  nonisolated static func listedWorktreeURL(path: String) -> URL {
+    normalizingExistingAncestor(of: URL(filePath: path, directoryHint: .isDirectory)) { $0.standardizedFileURL }
+  }
+
+  /// Foundation's normalizers (trailing slash, `/private` prefix, symlinks) only
+  /// apply to the parts of a path that exist on disk, so normalize the deepest
+  /// existing ancestor and re-append the missing components.
+  nonisolated private static func normalizingExistingAncestor(of url: URL, _ normalize: (URL) -> URL) -> URL {
+    var existing = url
+    var missingComponents: [String] = []
+    while existing.pathComponents.count > 1,
+      !FileManager.default.fileExists(atPath: existing.path(percentEncoded: false))
+    {
+      missingComponents.insert(existing.lastPathComponent, at: 0)
+      existing = existing.deletingLastPathComponent()
+    }
+    return missingComponents.reduce(normalize(existing)) { url, component in
+      url.appending(path: component, directoryHint: .isDirectory)
+    }
+  }
+
   /// Stat the filesystem first so a directory URL built without a trailing-slash
   /// flag (a freshly cloned destination, where `hasDirectoryPath` is false)
   /// resolves to itself, not its parent (which runs `wt` outside the repo).
@@ -1634,25 +1667,19 @@ struct GitClient {
       Self.removeSupacodeLock(at: adminDir)
       return
     }
-    guard let entries = try? await worktreeAdminEntries(for: repoRoot) else { return }
-    let target = Self.canonicalPath(of: worktreeURL)
-    guard
-      let match = entries.first(where: {
-        Self.canonicalPath(of: $0.worktreeDirectory) == target
-      })
-    else { return }
+    guard let match = await adminEntry(forWorktreeAt: worktreeURL, repoRoot: repoRoot) else { return }
     Self.removeSupacodeLock(at: match.adminDirectory)
   }
 
-  // `resolvingSymlinksInPath` skips the leaf when it's missing on disk;
-  // resolve the parent and re-append so orphan paths still normalize.
+  nonisolated private func adminEntry(forWorktreeAt worktreeURL: URL, repoRoot: URL) async -> WorktreeAdminEntry? {
+    guard let entries = try? await worktreeAdminEntries(for: repoRoot) else { return nil }
+    let target = Self.canonicalPath(of: worktreeURL)
+    return entries.first { Self.canonicalPath(of: $0.worktreeDirectory) == target }
+  }
+
   nonisolated private static func canonicalPath(of url: URL) -> String {
-    let standardized = url.standardizedFileURL
-    let parent = standardized.deletingLastPathComponent()
-    let resolvedParent = parent.resolvingSymlinksInPath()
-    let leaf = standardized.lastPathComponent
-    if leaf.isEmpty { return resolvedParent.path(percentEncoded: false) }
-    return resolvedParent.appending(path: leaf).path(percentEncoded: false)
+    normalizingExistingAncestor(of: url.standardizedFileURL) { $0.resolvingSymlinksInPath() }
+      .path(percentEncoded: false)
   }
 
   nonisolated private static func relocateWorktreeDirectory(_ worktreeURL: URL) -> URL? {

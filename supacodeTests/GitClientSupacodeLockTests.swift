@@ -37,6 +37,22 @@ struct GitClientSupacodeLockTests {
     #expect(adminExists)
   }
 
+  @Test(arguments: [false, true])
+  func worktreeKeepsItsIDWhenItsDirectoryIsDeleted(deletingParent: Bool) async throws {
+    let fixture = try await GitWorktreeFixture()
+    defer { fixture.cleanup() }
+    let worktreeURL = try await fixture.addLinkedWorktree(named: "nested/feature-deleted")
+    let worktreeID = WorktreeID(worktreeURL.path(percentEncoded: false))
+
+    let before = try await GitClient().worktrees(for: fixture.workURL)
+    try FileManager.default.removeItem(at: deletingParent ? worktreeURL.deletingLastPathComponent() : worktreeURL)
+    let after = try await GitClient().worktrees(for: fixture.workURL)
+
+    #expect(before.first { $0.id == worktreeID }?.isMissing == false)
+    #expect(after.first { $0.id == worktreeID }?.isMissing == true)
+    #expect(Set(after.map(\.id)) == Set(before.map(\.id)))
+  }
+
   @Test func reconcileLeavesUserLockUntouched() async throws {
     let fixture = try await GitWorktreeFixture()
     defer { fixture.cleanup() }
@@ -187,6 +203,28 @@ struct GitClientSupacodeLockTests {
     )
 
     _ = try await GitClient().removeWorktree(worktree, deleteBranch: false)
+
+    let adminExists = FileManager.default.fileExists(atPath: adminDir.path(percentEncoded: false))
+    #expect(!adminExists)
+  }
+
+  @Test(arguments: [(false, false), (false, true), (true, false), (true, true)])
+  func removeWorktreeCleansDiscoveredOrphan(userLock: Bool, deletingParent: Bool) async throws {
+    let fixture = try await GitWorktreeFixture()
+    defer { fixture.cleanup() }
+    let worktreeURL = try await fixture.addLinkedWorktree(named: "nested/feature-orphan")
+    let adminDir = fixture.adminDirectory(for: "feature-orphan")
+    if userLock {
+      try "user-set".write(to: adminDir.appending(path: "locked"), atomically: true, encoding: .utf8)
+    } else {
+      GitClient.writeSupacodeLock(at: adminDir)
+    }
+    try FileManager.default.removeItem(at: deletingParent ? worktreeURL.deletingLastPathComponent() : worktreeURL)
+    let orphan = try #require(
+      try await GitClient().worktrees(for: fixture.workURL).first { $0.name == "nested/feature-orphan" }
+    )
+
+    _ = try await GitClient().removeWorktree(orphan, deleteBranch: false)
 
     let adminExists = FileManager.default.fileExists(atPath: adminDir.path(percentEncoded: false))
     #expect(!adminExists)

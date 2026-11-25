@@ -959,6 +959,7 @@ private struct PaneTabStripNewTabControl: View {
   let toggleWindowMode: () -> Void
 
   @Shared(.settingsFile) private var settingsFile
+  @Environment(\.allowsNewTabs) private var allowsNewTabs
 
   var body: some View {
     HStack(spacing: 0) {
@@ -968,13 +969,14 @@ private struct PaneTabStripNewTabControl: View {
         shortcut: AppShortcuts.newTerminalTab,
         action: newTab
       )
+      .disabled(!allowsNewTabs)
       Menu {
         ForEach(TerminalSplitMenuDirection.allCases, id: \.self) { direction in
           Button(direction.title, systemImage: direction.systemImage) {
             split(direction)
           }
           .appKeyboardShortcut(direction.appShortcut.effective(from: settingsFile.global.shortcutOverrides))
-          .disabled(!canSplit)
+          .disabled(!canSplit || !allowsNewTabs)
         }
         Divider()
         Button("Equalize Splits", systemImage: "rectangle.split.2x1", action: equalizeSplits)
@@ -1079,4 +1081,9 @@ private final class MiddleClickNSView: NSView {
   }
 
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+extension EnvironmentValues {
+  /// False when the pane's owner refuses new tabs, so the strip greys out its new-tab and split controls.
+  @Entry var allowsNewTabs = true
 }
