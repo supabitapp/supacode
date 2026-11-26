@@ -30,6 +30,12 @@ export const metadata: Metadata = {
     description: "Native terminal coding agents command center. Run 50+ coding agents in parallel.",
     images: ["/screenshot.png"],
   },
+  other: {
+    "agent:endpoint": "https://supacode.sh/.well-known/search?q={query}",
+    "agent:method": "GET",
+    "agent:instructions":
+      "Search this site with keywords or a natural-language question instead of crawling pages. Results are returned as Markdown. QUERY requests with a plain-text or JSON {\"q\"} body are also accepted.",
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

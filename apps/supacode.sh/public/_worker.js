@@ -292,6 +292,190 @@ const verifiedDownloadResponse = async (request, route) => {
   return responseWithHeaders(cacheResponse, { "x-supacode-cache": "validated" });
 };
 
+const SEARCH_PATH = "/.well-known/search";
+const SEARCH_RESULT_LIMIT = 5;
+const SEARCH_QUERY_LIMIT = 1024;
+const SEARCH_BODY_LIMIT = 8192;
+const SEARCH_TEXT_MEDIA_TYPES = new Set(["text/plain", "application/x-www-form-urlencoded"]);
+const SEARCH_CORS_HEADERS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, HEAD, QUERY",
+  "access-control-allow-headers": "content-type",
+};
+const HTML_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+
+const SEARCH_STOPWORDS = new Set(
+  "a an and are as at be by can could do does for from how i if in is it me my of on or our should so that the this to use using was we what when where which who why will with you your".split(
+    " ",
+  ),
+);
+
+const decodeEntities = (value) =>
+  value.replace(/&(#x[\da-f]+|#\d+|[a-z]+);/gi, (entity, name) => {
+    if (name[0] === "#") {
+      const code = name[1].toLowerCase() === "x" ? parseInt(name.slice(2), 16) : Number(name.slice(1));
+      return Number.isInteger(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+    }
+    return HTML_ENTITIES[name.toLowerCase()] ?? entity;
+  });
+
+const plainText = (html) =>
+  decodeEntities(html.replace(/<[^>]*>/g, " "))
+    .replace(/\s+/g, " ")
+    .trim();
+
+const searchSections = (html) => {
+  const body = (/<body[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html)
+    .replace(/<(script|style|template|svg|nav|footer)\b[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ");
+  const anchors = [...body.matchAll(/<section\b[^>]*\bid="([^"]+)"/gi)];
+  const blocks = [...body.matchAll(/<[a-z]+\b[^>]*\bdata-search-block\b/gi)];
+  const headings = [...body.matchAll(/<(h[1-3]|summary)\b[^>]*>([\s\S]*?)<\/\1>/gi)];
+  return headings
+    .map((heading, index) => {
+      const start = heading.index + heading[0].length;
+      const nextHeading = headings[index + 1]?.index ?? body.length;
+      const nextBlock = blocks.find((block) => block.index >= start)?.index ?? body.length;
+      const anchor = anchors.findLast((match) => match.index <= heading.index)?.[1];
+      return {
+        title: plainText(heading[2]),
+        keywords: anchor?.replaceAll("-", " ") ?? "",
+        path: anchor ? `/#${anchor}` : "/",
+        content: plainText(body.slice(start, Math.min(nextHeading, nextBlock))),
+      };
+    })
+    .filter((section) => section.title || section.content);
+};
+
+const searchTerms = (query) => [
+  ...new Set(
+    query
+      .toLowerCase()
+      .match(/[\p{L}\p{N}]+/gu)
+      ?.filter((term) => term.length > 1 && !SEARCH_STOPWORDS.has(term)),
+  ),
+];
+
+const occurrences = (haystack, term) => haystack.split(term).length - 1;
+
+const rankSections = (sections, terms) => {
+  const ranked = sections
+    .map((section) => {
+      const title = `${section.title} ${section.keywords}`.toLowerCase();
+      const content = section.content.toLowerCase();
+      const matched = terms.filter((term) => title.includes(term) || content.includes(term));
+      const hits = terms.reduce(
+        (total, term) => total + occurrences(title, term) * 3 + occurrences(content, term),
+        0,
+      );
+      return { ...section, score: matched.length * 10 + hits };
+    })
+    .filter((section) => section.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, SEARCH_RESULT_LIMIT);
+  const top = ranked[0]?.score ?? 1;
+  return ranked.map((section) => ({ ...section, score: section.score / top }));
+};
+
+const searchMarkdown = (query, results) => {
+  const lines = [`# Search results for "${query}"`, ""];
+  if (results.length === 0) {
+    lines.push("No results.", "");
+  }
+  for (const result of results) {
+    lines.push(
+      `## ${result.title || "Supacode"}`,
+      "",
+      `- path: ${result.path}`,
+      `- score: ${result.score.toFixed(3)}`,
+      "",
+      result.content,
+      "",
+    );
+  }
+  return lines.join("\n");
+};
+
+const readBodyText = async (request, limit) => {
+  if (Number(request.headers.get("content-length")) > limit) {
+    return null;
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request.body ?? []) {
+    size += chunk.byteLength;
+    if (size > limit) {
+      return null;
+    }
+    chunks.push(chunk);
+  }
+  return new TextDecoder().decode(await new Blob(chunks).arrayBuffer());
+};
+
+const searchQuery = async (request, url) => {
+  if (request.method === "GET" || request.method === "HEAD") {
+    return { query: url.searchParams.get("q") };
+  }
+  const body = await readBodyText(request, SEARCH_BODY_LIMIT);
+  if (body === null) {
+    return { tooLarge: true };
+  }
+  const mediaType = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (SEARCH_TEXT_MEDIA_TYPES.has(mediaType)) {
+    return { query: body };
+  }
+  if (mediaType !== "application/json") {
+    return { unsupportedMediaType: true };
+  }
+  try {
+    const value = JSON.parse(body)?.q;
+    return { query: typeof value === "string" ? value : null };
+  } catch {
+    return { query: null };
+  }
+};
+
+const searchResponse = async (request, url, env) => {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: SEARCH_CORS_HEADERS });
+  }
+  if (!["GET", "HEAD", "QUERY"].includes(request.method)) {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { Allow: "GET, HEAD, QUERY, OPTIONS" },
+    });
+  }
+  const { query: rawQuery, tooLarge, unsupportedMediaType } = await searchQuery(request, url);
+  if (tooLarge) {
+    return new Response("Search query too large", { status: 413 });
+  }
+  if (unsupportedMediaType) {
+    return new Response("Use a text/plain or application/json body", {
+      status: 415,
+      headers: { "accept-query": "text/plain, application/json" },
+    });
+  }
+  const query = rawQuery?.replace(/\s+/g, " ").trim().slice(0, SEARCH_QUERY_LIMIT);
+  if (!query) {
+    return new Response('Missing search query. Use GET ?q=<query> or QUERY with a body.', {
+      status: 400,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  const page = await env.ASSETS.fetch(new Request(new URL("/", url)));
+  if (!page.ok) {
+    return new Response("Search index unavailable", { status: 503 });
+  }
+  const results = rankSections(searchSections(await page.text()), searchTerms(query));
+  return new Response(request.method === "HEAD" ? null : searchMarkdown(query, results), {
+    headers: {
+      "content-type": "text/markdown; charset=utf-8",
+      "cache-control": VOLATILE_CACHE_CONTROL,
+      ...SEARCH_CORS_HEADERS,
+    },
+  });
+};
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -307,6 +491,9 @@ export default {
 
     if (!env || !env.ASSETS || typeof env.ASSETS.fetch !== "function") {
       return new Response("ASSETS binding not available", { status: 500 });
+    }
+    if (url.pathname === SEARCH_PATH) {
+      return searchResponse(request, url, env);
     }
     return env.ASSETS.fetch(request);
   },
