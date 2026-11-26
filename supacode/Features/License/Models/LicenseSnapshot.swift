@@ -73,6 +73,7 @@ nonisolated struct LicenseMacLimit: Equatable, Sendable {
 
 nonisolated enum LicenseError: Error, Equatable, LocalizedError, Sendable {
   case licenseRequired
+  case updatesRenewalRequired
   case invalidKey
   case invalidEntitlement
   case missingDeviceIdentity
@@ -87,6 +88,11 @@ nonisolated enum LicenseError: Error, Equatable, LocalizedError, Sendable {
     switch self {
     case .licenseRequired:
       "Your five free local worktree creations have been used. Activate a license to create more. SSH creation is free."
+    case .updatesRenewalRequired:
+      """
+      Your five free local worktree creations have been used, and your updates don't cover this version. \
+      Renew them in the license portal, then refresh your license in Settings → License. SSH creation is free.
+      """
     case .invalidKey:
       "Enter a valid Supacode license key."
     case .invalidEntitlement:

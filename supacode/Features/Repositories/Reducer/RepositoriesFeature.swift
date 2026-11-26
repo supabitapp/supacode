@@ -1948,10 +1948,15 @@ struct RepositoriesFeature {
                   licensePermit: permit
                 ))
             } catch {
+              let licenseRequired =
+                switch error as? LicenseError {
+                case .licenseRequired, .updatesRenewalRequired: true
+                default: false
+                }
               await send(
                 .worktreeCreationRejected(
                   pendingID: providedPendingID, message: error.localizedDescription,
-                  licenseRequired: error as? LicenseError == .licenseRequired
+                  licenseRequired: licenseRequired
                 ))
             }
           }

@@ -218,7 +218,7 @@ struct LicenseTests {
       releaseDay: LicenseDay("2026-08-02")
     )
     #expect(try await !session.load().ownsCurrentRelease)
-    await #expect(throws: LicenseError.licenseRequired) {
+    await #expect(throws: LicenseError.updatesRenewalRequired) {
       try await session.authorizeCreation(resource: nil)
     }
   }
@@ -252,7 +252,7 @@ struct LicenseTests {
       releaseDay: LicenseDay("2020-01-02")
     )
     #expect(try await !session.load().ownsCurrentRelease)
-    await #expect(throws: LicenseError.licenseRequired) {
+    await #expect(throws: LicenseError.updatesRenewalRequired) {
       try await session.authorizeCreation(resource: nil)
     }
   }
@@ -416,6 +416,51 @@ struct LicenseTests {
     }
   }
 
+  @Test(.dependencies) func expiredUpdatesPromptRenewalInThePortal() async {
+    let openedURLs = LockIsolated<[URL]>([])
+    let events = LockIsolated<[String]>([])
+    var state = LicenseFeature.State()
+    state.$snapshot.withLock {
+      $0 = LicenseSnapshot(
+        entitlement: LicenseEntitlement(
+          licenseID: "license", deviceID: "device", status: .active,
+          updatesThrough: LicenseDay("2026-06-30"), revision: 1, issuedAt: 1, revocationReason: nil),
+        trialCreations: 5, isDevelopmentBuild: false, releaseDay: LicenseDay("2026-11-20"))
+    }
+    let store = TestStore(initialState: state) {
+      LicenseFeature()
+    } withDependencies: {
+      $0.urlOpener.open = { url in openedURLs.withValue { $0.append(url) } }
+      $0.analyticsClient.capture = { event, _ in events.withValue { $0.append(event) } }
+    }
+
+    await store.send(.purchaseRequired) {
+      $0.alert = AlertState {
+        TextState("Updates Expired")
+      } actions: {
+        ButtonState(role: .cancel) {
+          TextState("Cancel")
+        }
+        ButtonState(action: .portal) {
+          TextState("Open Portal")
+        }
+      } message: {
+        TextState(
+          """
+          Your updates don't cover this version. Renew them in the license portal to create more local worktrees. \
+          Already renewed? Refresh your license in Settings → License.
+          """
+        )
+      }
+    }
+    await store.send(.alert(.presented(.portal))) {
+      $0.alert = nil
+    }
+    await store.receive(\.portal)
+    #expect(openedURLs.value == [URL(string: "https://license.supacode.sh/licenses")!])
+    #expect(events.value.isEmpty)
+  }
+
   @Test(.dependencies) func licenseGatePresentsPurchasePromptInsteadOfActivation() async {
     let storage = SettingsTestStorage()
     let store = withDependencies {
@@ -452,7 +497,8 @@ struct LicenseTests {
     }
   }
 
-  @Test(.dependencies) func exhaustedAllowanceNeverStartsLocalGitCreation() async {
+  @Test(.dependencies, arguments: [LicenseError.licenseRequired, .updatesRenewalRequired])
+  func exhaustedAllowanceNeverStartsLocalGitCreation(error: LicenseError) async {
     let repository = Repository(
       location: .local(URL(fileURLWithPath: "/tmp/license-test-repository")), kind: .git,
       name: "Test", worktrees: []
@@ -464,7 +510,7 @@ struct LicenseTests {
       RepositoriesFeature()
     } withDependencies: {
       $0[LicenseClient.self].isEnforced = true
-      $0[LicenseClient.self].authorizeCreation = { _ in throw LicenseError.licenseRequired }
+      $0[LicenseClient.self].authorizeCreation = { _ in throw error }
       $0[GitClientDependency.self].createWorktreeStream = { _, _, _, _, _, _, _ in
         calls.withValue { $0 += 1 }
         return AsyncThrowingStream { $0.finish() }
@@ -477,7 +523,7 @@ struct LicenseTests {
         baseRefSource: .repositorySetting, fetchOrigin: false
       ))
     await store.receive(\.worktreeCreationRejected)
-    await store.receive(\.delegate)
+    await store.receive(\.delegate.licenseRequired)
     #expect(store.state.pendingWorktrees.isEmpty)
     #expect(calls.value == 0)
   }

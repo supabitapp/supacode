@@ -77,7 +77,8 @@ actor LicenseSession {
     let chargesTrial = isEnforced && !snapshot.ownsCurrentRelease
     let pending = reservations.values.filter(\.chargesTrial).count
     if chargesTrial, snapshot.remainingCreations == 0 {
-      throw LicenseError.licenseRequired
+      throw snapshot.displayStatus == .updatesExpired
+        ? LicenseError.updatesRenewalRequired : LicenseError.licenseRequired
     }
     if chargesTrial, snapshot.remainingCreations <= pending {
       throw LicenseError.trialCreationsPending

@@ -58,6 +58,7 @@ struct LicenseFeature {
 
   enum Alert: Equatable {
     case buy
+    case portal
   }
 
   @CasePathable
@@ -144,6 +145,25 @@ struct LicenseFeature {
         state.isBusy = false
         state.failure = Failure(error)
         return .none
+      case .purchaseRequired where state.snapshot.displayStatus == .updatesExpired:
+        state.alert = AlertState {
+          TextState("Updates Expired")
+        } actions: {
+          ButtonState(role: .cancel) {
+            TextState("Cancel")
+          }
+          ButtonState(action: .portal) {
+            TextState("Open Portal")
+          }
+        } message: {
+          TextState(
+            """
+            Your updates don't cover this version. Renew them in the license portal to create more local worktrees. \
+            Already renewed? Refresh your license in Settings → License.
+            """
+          )
+        }
+        return .none
       case .purchaseRequired:
         state.alert = AlertState {
           TextState("License Required")
@@ -165,6 +185,8 @@ struct LicenseFeature {
         return .none
       case .alert(.presented(.buy)):
         return .send(.buy)
+      case .alert(.presented(.portal)):
+        return .send(.portal)
       case .alert:
         return .none
       case .buy:
