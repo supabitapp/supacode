@@ -1549,9 +1549,9 @@ struct AppFeature {
       case .deeplinkInputConfirmation:
         return .none
 
-      case .repositories(.delegate(.licenseRequired)):
+      case .repositories(.delegate(.licenseRequired(let requirement))):
         analyticsClient.capture("license_gate_shown", ["trial_creations": state.license.snapshot.trialCreations])
-        return .send(.license(.purchaseRequired))
+        return .send(.license(.licenseRequired(requirement)))
       case .repositories(.delegate(.licenseSnapshotUpdated(let snapshot))):
         return .send(.license(.snapshotUpdated(snapshot)))
       case .repositories(.worktreeCreationRejected(let pendingID, let message, _)):

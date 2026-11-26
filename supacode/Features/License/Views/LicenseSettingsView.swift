@@ -103,7 +103,10 @@ private struct LicenseStatusRow: View {
     case .active:
       nil
     case .updatesExpired:
-      "Your updates don't cover this version. Renew them in the license portal."
+      """
+      Your updates don't cover this version. Renew them in the license portal, \
+      or email license@supacode.sh for a Team license, then click Refresh.
+      """
     case .deactivated:
       "This Mac was deactivated. Activate your key again to use it here."
     case .revoked(let reason):

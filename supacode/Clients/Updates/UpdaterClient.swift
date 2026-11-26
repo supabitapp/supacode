@@ -52,7 +52,10 @@ class SparkleUpdateDelegate: NSObject, SPUUpdaterDelegate {
         userInfo: [
           NSLocalizedDescriptionKey: "This update is outside your included updates.",
           NSLocalizedRecoverySuggestionErrorKey:
-            "Renew updates in Supacode's License settings, or keep using your current release.",
+            """
+          Renew updates in the license portal, or email license@supacode.sh for a Team license. \
+          Then refresh your license in Settings → License, or keep using your current release.
+          """,
         ]
       )
     }

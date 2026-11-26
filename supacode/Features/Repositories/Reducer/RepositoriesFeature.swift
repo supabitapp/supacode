@@ -455,7 +455,8 @@ struct RepositoriesFeature {
       pin: Bool = false,
       licensePermit: LicenseCreationPermit? = nil
     )
-    case worktreeCreationRejected(pendingID: Worktree.ID?, message: String, licenseRequired: Bool)
+    case worktreeCreationRejected(
+      pendingID: Worktree.ID?, message: String, licenseRequirement: LicenseRequirement?)
     case remoteWorktreeCreationCompleted(pendingID: Worktree.ID, worktreeID: Worktree.ID)
     case promptedWorktreeCreationDataLoaded(
       repositoryID: Repository.ID,
@@ -675,7 +676,7 @@ struct RepositoriesFeature {
     case openRepositorySettings(Repository.ID)
     case openWorktreeInApp(Worktree.ID, OpenWorktreeAction)
     case worktreeCreated(Worktree)
-    case licenseRequired
+    case licenseRequired(LicenseRequirement)
     case licenseSnapshotUpdated(LicenseSnapshot)
     case runBlockingScript(
       Worktree, repositoryID: Repository.ID, kind: BlockingScriptKind, script: String,
@@ -1948,10 +1949,12 @@ struct RepositoriesFeature {
                   licensePermit: permit
                 ))
             } catch {
+              let licenseRequirement: LicenseRequirement? =
+                if case .licenseRequired(let requirement) = error as? LicenseError { requirement } else { nil }
               await send(
                 .worktreeCreationRejected(
                   pendingID: providedPendingID, message: error.localizedDescription,
-                  licenseRequired: error as? LicenseError == .licenseRequired
+                  licenseRequirement: licenseRequirement
                 ))
             }
           }
@@ -2593,10 +2596,10 @@ struct RepositoriesFeature {
             )
           }
         }
-      case .worktreeCreationRejected(_, let message, let licenseRequired):
-        if licenseRequired {
+      case .worktreeCreationRejected(_, let message, let licenseRequirement):
+        if let licenseRequirement {
           analyticsClient.capture("license_required", nil)
-          return .send(.delegate(.licenseRequired))
+          return .send(.delegate(.licenseRequired(licenseRequirement)))
         }
         state.alert = messageAlert(title: "Unable to create worktree", message: message)
         return .none
@@ -2614,7 +2617,7 @@ struct RepositoriesFeature {
     .run { send in
       if let permit { await licenseClient.cancelCreation(permit) }
       await send(
-        .worktreeCreationRejected(pendingID: pendingID, message: message, licenseRequired: false))
+        .worktreeCreationRejected(pendingID: pendingID, message: message, licenseRequirement: nil))
     }
   }
 
