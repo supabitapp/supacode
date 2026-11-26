@@ -10,12 +10,14 @@ Each sidebar row under a repository is a git worktree. Users create worktrees on
 - `wt-appearance` sets a sidebar title or tint override.
 - `wt-archive` archives and unarchives a worktree.
 - `wt-delete` deletes the worktree folder and its local branch. `Delete local branch with worktree` (`deleteBranchOnDeleteWorktree`) is on by default.
+- `wt-missing` keeps a worktree's open tabs running after its directory is deleted from disk, refuses new terminals there, and offers `Delete Worktree…`.
 
 ## How to get to it (user POV)
 
 - Choose `New Worktree…` (`⌘N`) from the `Worktrees` menu.
 - Choose `Archive Worktree…` (`⌘⌫`), `Delete Worktree…`, or `Customize Appearance…` from the menu bar or the sidebar row's context menu.
 - Choose `Archived Worktrees` (`⌘⌃A`) to see archived rows.
+- Choose `Delete Worktree…` on the `Working directory missing` banner or screen of a worktree whose directory is gone.
 - Run `supacode repo worktree-new` or `supacode worktree focus|pin|unpin|appearance|archive|unarchive|delete|status|list`.
 
 ## Driving it with supacode-verify
@@ -33,6 +35,10 @@ Preconditions:
 - **Archive.** Run `$S cli <run> -- worktree pin -w "$NW"` again and confirm `status=pinned`, so unarchive can prove the pin is dropped. Then run `$S cli <run> -- worktree archive -w "$NW"`. No sheet appears. `worktree list --not-archived` no longer includes it, `worktree status` prints `status=archived`, `archived=true`, and `focused=false`, and the sidebar AX tree drops the row. `git worktree list` still lists it, and its folder stays on disk.
 - **Unarchive.** Run `$S cli <run> -- worktree unarchive -w "$NW"`. `worktree status` prints `status=unpinned` and `archived=false`, even if the row was pinned before archiving.
 - **Delete.** Confirm `git -C "$SEED_REPO" branch --list verify-wt` prints the branch, then run `$S cli <run> -- worktree delete -w "$NW"`. `git -C "$SEED_REPO" worktree list` no longer shows `verify-wt`, its folder is gone, the same `branch --list` prints nothing, and `worktree status -w "$NW"` fails with `Worktree not found: <id>`.
+- **Missing directory: baseline.** Run `MW="$($S cli <run> -- repo worktree-new -r "$R" --branch verify-miss)"`, poll `tab list -w "$MW"` until it prints a UUID, and set `MT` to it. Start a heartbeat with `$S cli <run> -- tab send -w "$MW" -t "$MT" -i "sh -c 'while :; do date +%s >> /tmp/sv-<run>/hb.txt; sleep 1; done'"`, poll until `hb.txt` has lines, and take `$S shot <run> wt-missing-before`.
+- **Missing directory: delete.** Run `rm -rf /tmp/sv-<run>/worktrees/seed-repo/verify-miss`, then reload worktrees with `$S cli <run> -- repo open "$SEED_REPO"`. The reload is asynchronous, so poll `$S ax <run> wt-missing` until it has a `button` named `Delete Worktree…` before any other check. Then `worktree list` still has `$MW`, `tab list -w "$MW"` still prints `$MT`, the run's zmx list (see `SKILL.md` under Evidence) still has `supa-<$MT lowercased>`, and `hb.txt` gains new lines. `$S shot <run> wt-missing` shows a `Working directory missing` banner above the tab strip, a warning icon on the sidebar row, and a greyed New Tab button.
+- **Missing directory: refusals.** Run `$S cli <run> -- tab new -w "$MW"`. It fails with exit `1` and `verify-miss has no working directory on disk. Restore it or delete the worktree.`, raises a `Working directory missing` alert, and `tab list` still prints only `$MT`. Dismiss the alert as described in `SKILL.md` under Alerts. Then run `$S cli <run> -- pane split -w "$MW" -d h`, which fails and alerts the same way while `pane list` keeps one pane, and dismiss again. `tab rename -w "$MW" -t "$MT" --title miss-tab` still works.
+- **Missing directory: close and delete.** Run `$S cli <run> -- tab close -w "$MW" -t "$MT"`. `tab list -w "$MW"` prints nothing, polling the run's zmx list shows `$MT`'s session gone, and `$S shot <run> wt-missing-empty` shows the full `Working directory missing` screen with `Delete Worktree…`. `$S cli <run> -- worktree delete -w "$MW"` removes it from `git -C "$SEED_REPO" worktree list` and deletes branch `verify-miss`.
 
 ## Gotchas
 
@@ -43,4 +49,5 @@ Preconditions:
 - Under the seed config, `Allow dangerous actions` is `CLI only`, so CLI archive and delete run without a confirmation sheet. If the CLI times out, snapshot `--surface sheet` on the run's window and report it.
 - `worktree pin` on the main worktree exits `0` and leaves `status=main`. Archiving the main worktree fails with exit `1` (`Archiving the main worktree is not allowed.`) and leaves an alert in the main window. Dismiss it as described in `SKILL.md` under Alerts.
 - Git reports paths under `/private/tmp`, the resolved form of `/tmp`. Match on the suffix.
+- `worktree status` does not report a missing directory. It still prints `status=unpinned`. Check the screenshot and the `Delete Worktree…` button instead. The banner text is not in the AX tree.
 - Supacode locks the worktrees it creates (`locked` in `git worktree list`). Plain `git worktree remove` refuses them. Delete through the app.
