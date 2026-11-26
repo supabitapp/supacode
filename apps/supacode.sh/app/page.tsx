@@ -290,8 +290,8 @@ export default function Home() {
           </h2>
           <div className="grid gap-8 md:grid-cols-2">
             {videos.map((video) => (
-              <figure key={video.id} className="flex flex-col gap-3">
-                <div className="aspect-video overflow-hidden rounded-xl border border-border/50">
+              <figure key={video.id} className="flex min-w-0 flex-col gap-3">
+                <div className="box-content aspect-video min-h-[200px] overflow-hidden rounded-xl border border-border/50">
                   <iframe
                     src={`https://www.youtube-nocookie.com/embed/${video.id}${video.start ? `?start=${video.start}` : ""}`}
                     title={video.title}
