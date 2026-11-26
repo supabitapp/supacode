@@ -1,7 +1,11 @@
 # Supacode website
 
 This directory contains the landing page and the Cloudflare Pages Worker that
-serves `/download/*` from this repository's GitHub Releases.
+serves `/download/*` from this repository's GitHub Releases. The Worker also
+serves `/.well-known/search`, which lets agents search the landing page by
+section and get Markdown results. It accepts `GET ?q=` and `QUERY` requests
+with a plain-text or JSON `{"q"}` body, and the page advertises it through
+`agent:*` meta tags.
 Install the Bun version in [`package.json`](package.json) and the Node version in
 [`.node-version`](.node-version). Run from this directory:
 
