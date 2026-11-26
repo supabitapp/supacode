@@ -62,6 +62,11 @@ nonisolated enum LicenseDisplayStatus: Equatable, Sendable {
   case transferred
 }
 
+nonisolated enum LicenseRequirement: Equatable, Sendable {
+  case purchase
+  case renewal
+}
+
 nonisolated struct LicenseCreationPermit: Equatable, Sendable {
   let id: UUID
 }
@@ -72,8 +77,7 @@ nonisolated struct LicenseMacLimit: Equatable, Sendable {
 }
 
 nonisolated enum LicenseError: Error, Equatable, LocalizedError, Sendable {
-  case licenseRequired
-  case updatesRenewalRequired
+  case licenseRequired(LicenseRequirement)
   case invalidKey
   case invalidEntitlement
   case missingDeviceIdentity
@@ -86,12 +90,13 @@ nonisolated enum LicenseError: Error, Equatable, LocalizedError, Sendable {
 
   var errorDescription: String? {
     switch self {
-    case .licenseRequired:
+    case .licenseRequired(.purchase):
       "Your five free local worktree creations have been used. Activate a license to create more. SSH creation is free."
-    case .updatesRenewalRequired:
+    case .licenseRequired(.renewal):
       """
       Your five free local worktree creations have been used, and your updates don't cover this version. \
-      Renew them in the license portal, then refresh your license in Settings → License. SSH creation is free.
+      Renew them in the license portal, or email license@supacode.sh for a Team license. \
+      Then refresh your license in Settings → License. SSH creation is free.
       """
     case .invalidKey:
       "Enter a valid Supacode license key."

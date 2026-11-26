@@ -449,7 +449,7 @@ extension RepositoriesFeature {
     return .run { send in
       let finishFailure: @Sendable (String) async -> Void = { message in
         await send(
-          .worktreeCreationRejected(pendingID: pendingID, message: message, licenseRequired: false))
+          .worktreeCreationRejected(pendingID: pendingID, message: message, licenseRequirement: nil))
       }
       let client = GitClient(shell: shell)
       let remoteBranches = (try? await client.localBranchNames(for: repoRoot)) ?? []

@@ -48,7 +48,7 @@ struct LicenseFeature {
     case deactivate
     case refresh
     case completed(Result<LicenseSnapshot, Error>)
-    case purchaseRequired
+    case licenseRequired(LicenseRequirement)
     case alert(PresentationAction<Alert>)
     case snapshotUpdated(LicenseSnapshot)
     case buy
@@ -145,43 +145,8 @@ struct LicenseFeature {
         state.isBusy = false
         state.failure = Failure(error)
         return .none
-      case .purchaseRequired where state.snapshot.displayStatus == .updatesExpired:
-        state.alert = AlertState {
-          TextState("Updates Expired")
-        } actions: {
-          ButtonState(role: .cancel) {
-            TextState("Cancel")
-          }
-          ButtonState(action: .portal) {
-            TextState("Open Portal")
-          }
-        } message: {
-          TextState(
-            """
-            Your updates don't cover this version. Renew them in the license portal to create more local worktrees. \
-            Already renewed? Refresh your license in Settings → License.
-            """
-          )
-        }
-        return .none
-      case .purchaseRequired:
-        state.alert = AlertState {
-          TextState("License Required")
-        } actions: {
-          ButtonState(role: .cancel) {
-            TextState("Cancel")
-          }
-          ButtonState(action: .buy) {
-            TextState("Buy Supacode")
-          }
-        } message: {
-          TextState(
-            """
-            A Supacode license is required to create more local worktrees. \
-            Buy a license on the website, or activate an existing license in Settings → License.
-            """
-          )
-        }
+      case .licenseRequired(let requirement):
+        state.alert = .licenseRequired(requirement)
         return .none
       case .alert(.presented(.buy)):
         return .send(.buy)
@@ -201,5 +166,48 @@ struct LicenseFeature {
       }
     }
     .ifLet(\.$alert, action: \.alert)
+  }
+}
+
+extension AlertState where Action == LicenseFeature.Alert {
+  static func licenseRequired(_ requirement: LicenseRequirement) -> Self {
+    switch requirement {
+    case .purchase:
+      AlertState {
+        TextState("License Required")
+      } actions: {
+        ButtonState(role: .cancel) {
+          TextState("Cancel")
+        }
+        ButtonState(action: .buy) {
+          TextState("Buy Supacode")
+        }
+      } message: {
+        TextState(
+          """
+          A Supacode license is required to create more local worktrees. \
+          Buy a license on the website, or activate an existing license in Settings → License.
+          """
+        )
+      }
+    case .renewal:
+      AlertState {
+        TextState("Updates Expired")
+      } actions: {
+        ButtonState(role: .cancel) {
+          TextState("Cancel")
+        }
+        ButtonState(action: .portal) {
+          TextState("Open Portal")
+        }
+      } message: {
+        TextState(
+          """
+          Your updates don't cover this version. Renew them in the license portal to create more local worktrees, \
+          or email license@supacode.sh for a Team license. Already renewed? Refresh your license in Settings → License.
+          """
+        )
+      }
+    }
   }
 }
