@@ -386,7 +386,7 @@ test("search reports empty results, missing queries, and bad methods", async () 
 
   const post = await fetchSearch("/.well-known/search", { method: "POST", body: "x" });
   assert.equal(post.status, 405);
-  assert.equal(post.headers.get("allow"), "GET, HEAD, QUERY");
+  assert.equal(post.headers.get("allow"), "GET, HEAD, QUERY, OPTIONS");
 });
 
 test("search matches section anchors and keeps blocks separate", async () => {
@@ -414,4 +414,26 @@ test("search rejects oversized QUERY bodies", async () => {
     }),
   });
   assert.equal(streamed.status, 413);
+});
+
+test("search QUERY rejects unsupported media types and answers CORS preflight", async () => {
+  const xml = await fetchSearch("/.well-known/search", {
+    method: "QUERY",
+    headers: { "content-type": "application/xml" },
+    body: "<q>offline</q>",
+  });
+  assert.equal(xml.status, 415);
+  assert.equal(xml.headers.get("accept-query"), "text/plain, application/json");
+
+  const form = await fetchSearch("/.well-known/search", {
+    method: "QUERY",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: "offline",
+  });
+  assert.equal(form.status, 200);
+
+  const preflight = await fetchSearch("/.well-known/search", { method: "OPTIONS" });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("access-control-allow-methods"), "GET, HEAD, QUERY");
+  assert.equal(preflight.headers.get("access-control-allow-headers"), "content-type");
 });

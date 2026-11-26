@@ -296,6 +296,12 @@ const SEARCH_PATH = "/.well-known/search";
 const SEARCH_RESULT_LIMIT = 5;
 const SEARCH_QUERY_LIMIT = 1024;
 const SEARCH_BODY_LIMIT = 8192;
+const SEARCH_TEXT_MEDIA_TYPES = new Set(["text/plain", "application/x-www-form-urlencoded"]);
+const SEARCH_CORS_HEADERS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, HEAD, QUERY",
+  "access-control-allow-headers": "content-type",
+};
 const HTML_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
 const SEARCH_STOPWORDS = new Set(
@@ -414,8 +420,12 @@ const searchQuery = async (request, url) => {
   if (body === null) {
     return { tooLarge: true };
   }
-  if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+  const mediaType = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (SEARCH_TEXT_MEDIA_TYPES.has(mediaType)) {
     return { query: body };
+  }
+  if (mediaType !== "application/json") {
+    return { unsupportedMediaType: true };
   }
   try {
     const value = JSON.parse(body)?.q;
@@ -426,15 +436,24 @@ const searchQuery = async (request, url) => {
 };
 
 const searchResponse = async (request, url, env) => {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: SEARCH_CORS_HEADERS });
+  }
   if (!["GET", "HEAD", "QUERY"].includes(request.method)) {
     return new Response("Method Not Allowed", {
       status: 405,
-      headers: { Allow: "GET, HEAD, QUERY" },
+      headers: { Allow: "GET, HEAD, QUERY, OPTIONS" },
     });
   }
-  const { query: rawQuery, tooLarge } = await searchQuery(request, url);
+  const { query: rawQuery, tooLarge, unsupportedMediaType } = await searchQuery(request, url);
   if (tooLarge) {
     return new Response("Search query too large", { status: 413 });
+  }
+  if (unsupportedMediaType) {
+    return new Response("Use a text/plain or application/json body", {
+      status: 415,
+      headers: { "accept-query": "text/plain, application/json" },
+    });
   }
   const query = rawQuery?.replace(/\s+/g, " ").trim().slice(0, SEARCH_QUERY_LIMIT);
   if (!query) {
@@ -452,7 +471,7 @@ const searchResponse = async (request, url, env) => {
     headers: {
       "content-type": "text/markdown; charset=utf-8",
       "cache-control": VOLATILE_CACHE_CONTROL,
-      "access-control-allow-origin": "*",
+      ...SEARCH_CORS_HEADERS,
     },
   });
 };
