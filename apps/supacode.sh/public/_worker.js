@@ -297,6 +297,12 @@ const SEARCH_RESULT_LIMIT = 5;
 const SEARCH_QUERY_LIMIT = 1024;
 const HTML_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
+const SEARCH_STOPWORDS = new Set(
+  "a an and are as at be by can could do does for from how i if in is it me my of on or our should so that the this to use using was we what when where which who why will with you your".split(
+    " ",
+  ),
+);
+
 const decodeEntities = (value) =>
   value.replace(/&(#x[\da-f]+|#\d+|[a-z]+);/gi, (entity, name) => {
     if (name[0] === "#") {
@@ -310,12 +316,6 @@ const plainText = (html) =>
   decodeEntities(html.replace(/<[^>]*>/g, " "))
     .replace(/\s+/g, " ")
     .trim();
-
-const SEARCH_STOPWORDS = new Set(
-  "a an and are as at be by can could do does for from how i if in is it me my of on or our should so that the this to use using was we what when where which who why will with you your".split(
-    " ",
-  ),
-);
 
 const searchSections = (html) => {
   const body = (/<body[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html)
@@ -409,7 +409,7 @@ const searchResponse = async (request, url, env) => {
       headers: { Allow: "GET, HEAD, QUERY" },
     });
   }
-  const query = (await searchQuery(request, url))?.trim().slice(0, SEARCH_QUERY_LIMIT);
+  const query = (await searchQuery(request, url))?.replace(/\s+/g, " ").trim().slice(0, SEARCH_QUERY_LIMIT);
   if (!query) {
     return new Response('Missing search query. Use GET ?q=<query> or QUERY with a body.', {
       status: 400,
