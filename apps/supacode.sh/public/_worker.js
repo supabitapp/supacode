@@ -295,6 +295,7 @@ const verifiedDownloadResponse = async (request, route) => {
 const SEARCH_PATH = "/.well-known/search";
 const SEARCH_RESULT_LIMIT = 5;
 const SEARCH_QUERY_LIMIT = 1024;
+const SEARCH_BODY_LIMIT = 8192;
 const HTML_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
 const SEARCH_STOPWORDS = new Set(
@@ -321,17 +322,20 @@ const searchSections = (html) => {
   const body = (/<body[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html)
     .replace(/<(script|style|template|svg|nav|footer)\b[\s\S]*?<\/\1>/gi, " ")
     .replace(/<!--[\s\S]*?-->/g, " ");
-  const anchors = [...body.matchAll(/<(?:section|h[1-3])\b[^>]*\bid="([^"]+)"/gi)];
+  const anchors = [...body.matchAll(/<section\b[^>]*\bid="([^"]+)"/gi)];
+  const blocks = [...body.matchAll(/<[a-z]+\b[^>]*\bdata-search-block\b/gi)];
   const headings = [...body.matchAll(/<(h[1-3]|summary)\b[^>]*>([\s\S]*?)<\/\1>/gi)];
   return headings
     .map((heading, index) => {
       const start = heading.index + heading[0].length;
-      const end = headings[index + 1]?.index ?? body.length;
+      const nextHeading = headings[index + 1]?.index ?? body.length;
+      const nextBlock = blocks.find((block) => block.index >= start)?.index ?? body.length;
       const anchor = anchors.findLast((match) => match.index <= heading.index)?.[1];
       return {
         title: plainText(heading[2]),
+        keywords: anchor?.replaceAll("-", " ") ?? "",
         path: anchor ? `/#${anchor}` : "/",
-        content: plainText(body.slice(start, end)),
+        content: plainText(body.slice(start, Math.min(nextHeading, nextBlock))),
       };
     })
     .filter((section) => section.title || section.content);
@@ -351,7 +355,7 @@ const occurrences = (haystack, term) => haystack.split(term).length - 1;
 const rankSections = (sections, terms) => {
   const ranked = sections
     .map((section) => {
-      const title = section.title.toLowerCase();
+      const title = `${section.title} ${section.keywords}`.toLowerCase();
       const content = section.content.toLowerCase();
       const matched = terms.filter((term) => title.includes(term) || content.includes(term));
       const hits = terms.reduce(
@@ -386,20 +390,39 @@ const searchMarkdown = (query, results) => {
   return lines.join("\n");
 };
 
-const searchQuery = async (request, url) => {
-  if (request.method === "GET" || request.method === "HEAD") {
-    return url.searchParams.get("q");
+const readBodyText = async (request, limit) => {
+  if (Number(request.headers.get("content-length")) > limit) {
+    return null;
   }
-  const body = await request.text();
-  if ((request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
-    try {
-      const value = JSON.parse(body)?.q;
-      return typeof value === "string" ? value : null;
-    } catch {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request.body ?? []) {
+    size += chunk.byteLength;
+    if (size > limit) {
       return null;
     }
+    chunks.push(chunk);
   }
-  return body;
+  return new TextDecoder().decode(await new Blob(chunks).arrayBuffer());
+};
+
+const searchQuery = async (request, url) => {
+  if (request.method === "GET" || request.method === "HEAD") {
+    return { query: url.searchParams.get("q") };
+  }
+  const body = await readBodyText(request, SEARCH_BODY_LIMIT);
+  if (body === null) {
+    return { tooLarge: true };
+  }
+  if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+    return { query: body };
+  }
+  try {
+    const value = JSON.parse(body)?.q;
+    return { query: typeof value === "string" ? value : null };
+  } catch {
+    return { query: null };
+  }
 };
 
 const searchResponse = async (request, url, env) => {
@@ -409,7 +432,11 @@ const searchResponse = async (request, url, env) => {
       headers: { Allow: "GET, HEAD, QUERY" },
     });
   }
-  const query = (await searchQuery(request, url))?.replace(/\s+/g, " ").trim().slice(0, SEARCH_QUERY_LIMIT);
+  const { query: rawQuery, tooLarge } = await searchQuery(request, url);
+  if (tooLarge) {
+    return new Response("Search query too large", { status: 413 });
+  }
+  const query = rawQuery?.replace(/\s+/g, " ").trim().slice(0, SEARCH_QUERY_LIMIT);
   if (!query) {
     return new Response('Missing search query. Use GET ?q=<query> or QUERY with a body.', {
       status: 400,

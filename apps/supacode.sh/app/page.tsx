@@ -266,6 +266,7 @@ export default function Home() {
             {features.map((feature, index) => (
               <div
                 key={feature.title}
+                data-search-block
                 className="supacode-reveal flex flex-col gap-3 bg-background p-8"
                 style={{ animationDelay: `${540 + index * 60}ms` }}
               >
