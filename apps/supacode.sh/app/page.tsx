@@ -78,6 +78,20 @@ const licenseQuestions = [
   },
 ];
 
+const videos = [
+  {
+    id: "98CM_Yq867c",
+    title: "My new terminal daily driver: Supacode for macOS",
+    author: "Bret Fisher",
+  },
+  {
+    id: "fdbXNWkpPMY",
+    title: "A love letter to Pi",
+    author: "Lucas Meijer",
+    start: 879,
+  },
+];
+
 type PlanId = "basic" | "standard" | "team";
 
 function Plan({
@@ -263,6 +277,36 @@ export default function Home() {
                   {feature.description}
                 </p>
               </div>
+            ))}
+          </div>
+        </section>
+
+        <section aria-labelledby="videos-heading" className="mb-24 md:mb-32">
+          <h2
+            id="videos-heading"
+            className="mb-12 text-center text-sm font-medium uppercase tracking-[0.3em] text-muted-foreground md:mb-16"
+          >
+            Seen in the wild
+          </h2>
+          <div className="grid gap-8 md:grid-cols-2">
+            {videos.map((video) => (
+              <figure key={video.id} className="flex flex-col gap-3">
+                <div className="aspect-video overflow-hidden rounded-xl border border-border/50">
+                  <iframe
+                    src={`https://www.youtube-nocookie.com/embed/${video.id}${video.start ? `?start=${video.start}` : ""}`}
+                    title={video.title}
+                    loading="lazy"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    referrerPolicy="strict-origin-when-cross-origin"
+                    allowFullScreen
+                    className="size-full"
+                  />
+                </div>
+                <figcaption className="text-sm text-pretty text-muted-foreground">
+                  <span className="font-medium text-foreground">{video.title}</span> by{" "}
+                  {video.author}
+                </figcaption>
+              </figure>
             ))}
           </div>
         </section>
