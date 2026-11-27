@@ -319,7 +319,108 @@ struct WorktreeCreationPromptParentTests {
     }
   }
 
-  @Test func immediateDuplicateInStartPromptedClearsPendingCustomization() async {
+  @Test func unusedDuplicateOffersReuseAndDropsPendingCustomization() async {
+    let customization = PendingWorktree.Customization(title: "Mine", color: .blue)
+    let store = TestStore(initialState: makeStateWithPrompt(pendingFor: ["feature/x": customization])) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.localBranchNames = { _ in ["feature/x"] }
+      $0.gitClient.branchAvailability = { _, _ in .reusable }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .startPromptedWorktreeCreation(
+        repositoryID: repoID,
+        branchName: "feature/x",
+        baseRef: nil,
+        fetchOrigin: false,
+        placement: WorktreePlacementOverride(name: nil, path: nil)
+      )
+    )
+    await store.receive(\.promptedWorktreeCreationChecked) {
+      $0.worktreeCreationPrompt?.isValidating = false
+      $0.worktreeCreationPrompt?.validationMessage =
+        "Branch already exists. Turn on Reuse existing branch to check it out."
+      $0.worktreeCreationPrompt?.canReuseExistingBranch = true
+      // A user who renames instead of reusing must not leave it for a later `feature/x`; the
+      // reuse resubmit parks it again from the prompt.
+      $0.pendingCreationCustomizations.removeValue(forKey: self.repoID)
+    }
+  }
+
+  @Test func checkedOutDuplicateNamesItsWorktreeWithoutOfferingReuse() async {
+    // The branch was checked out elsewhere after the user opted into reusing it.
+    var state = makeStateWithPrompt()
+    state.worktreeCreationPrompt?.canReuseExistingBranch = true
+    state.worktreeCreationPrompt?.reuseExistingBranch = true
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.localBranchNames = { _ in ["feature/x"] }
+      $0.gitClient.branchAvailability = { _, _ in .checkedOut("/tmp/elsewhere/feature-x") }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .startPromptedWorktreeCreation(
+        repositoryID: repoID,
+        branchName: "feature/x",
+        baseRef: nil,
+        fetchOrigin: false,
+        placement: WorktreePlacementOverride(name: nil, path: nil),
+        reuseExistingBranch: true
+      )
+    )
+    await store.receive(\.promptedWorktreeCreationChecked) {
+      $0.worktreeCreationPrompt?.isValidating = false
+      $0.worktreeCreationPrompt?.validationMessage = "Branch is already checked out at '/tmp/elsewhere/feature-x'."
+      $0.worktreeCreationPrompt?.canReuseExistingBranch = false
+      $0.worktreeCreationPrompt?.reuseExistingBranch = false
+    }
+  }
+
+  @Test func reuseResubmitStartsTheCreationWithReuse() async {
+    let store = TestStore(initialState: makeStateWithPrompt()) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.uuid = .incrementing
+      $0.gitClient.localBranchNames = { _ in ["feature/x"] }
+      $0.gitClient.branchAvailability = { _, _ in .reusable }
+      // Stop the creation right after it starts; its git work is covered elsewhere.
+      $0.gitClient.isValidBranchName = { _, _ in false }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .worktreeCreationPrompt(
+        .presented(
+          .delegate(
+            .submit(
+              repositoryID: repoID,
+              branchName: "feature/x",
+              baseRef: nil,
+              upstream: .automatic,
+              fetchOrigin: false,
+              placement: WorktreePlacementOverride(name: nil, path: nil),
+              title: nil,
+              color: nil,
+              reuseExistingBranch: true
+            )
+          )))
+    )
+    await store.receive(\.promptedWorktreeCreationChecked) {
+      $0.worktreeCreationPrompt = nil
+    }
+    await store.receive({ action in
+      action[case: \.createWorktreeInRepository]?.reuseExistingBranch == true
+    })
+    await store.receive(\.createRandomWorktreeFailed)
+    await store.finish()
+  }
+
+  @Test(arguments: [true, false])
+  func immediateDuplicateInStartPromptedClearsPendingCustomization(isAttached: Bool) async {
     // First-pass duplicate check (runs before the async branch-list fetch) is a normal
     // prompt-flow rejection. The pending entry must be cleared.
     var state = makeStateWithPrompt(
@@ -332,6 +433,7 @@ struct WorktreeCreationPromptParentTests {
       detail: "detail",
       workingDirectory: URL(fileURLWithPath: "\(repoID)/feature-x"),
       repositoryRootURL: URL(fileURLWithPath: repoID.rawValue),
+      isAttached: isAttached,
     )
     let repo = state.repositories[id: repoID]!
     var worktrees = repo.worktrees
@@ -355,7 +457,11 @@ struct WorktreeCreationPromptParentTests {
       )
     ) {
       $0.worktreeCreationPrompt?.isValidating = false
-      $0.worktreeCreationPrompt?.validationMessage = "Branch name already exists."
+      // Only an attached worktree's name is a branch, so only it names the checkout.
+      $0.worktreeCreationPrompt?.validationMessage =
+        isAttached
+        ? "Branch is already checked out at '\(existing.workingDirectory.path(percentEncoded: false))'."
+        : "Branch name already exists."
       $0.pendingCreationCustomizations.removeValue(forKey: self.repoID)
     }
   }

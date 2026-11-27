@@ -170,7 +170,7 @@ supacode surface list …    # Deprecated: use `supacode tab list`.
 ```
 supacode repo list                                                     # List repository IDs.
 supacode repo open <path>                                              # Open repository.
-supacode repo worktree-new [-r <id>] [--branch <name>] [--base <ref>] [--upstream <ref> | --no-upstream] [--fetch] [--name <folder>] [--location <dir>] [--pin] [--background]  # Create worktree (prints the new worktree ID to stdout; --upstream sets the new branch's tracking branch, --no-upstream clears it; --pin pins it as soon as creation starts, local repositories only).
+supacode repo worktree-new [-r <id>] [--branch <name>] [--base <ref>] [--upstream <ref> | --no-upstream] [--fetch] [--name <folder>] [--location <dir>] [--pin] [--reuse-existing-branch] [--background]  # Create worktree (prints the new worktree ID to stdout; --upstream sets the new branch's tracking branch, --no-upstream clears it; --pin pins it as soon as creation starts, local repositories only; --reuse-existing-branch checks out an existing --branch that no worktree has, local repositories only).
 ```
 
 ### Settings
@@ -236,6 +236,7 @@ action that would otherwise focus its target (`tab new`, `tab send`,
 | `--ratio` | - | - | The pane's share (0.1 to 0.9) of the nearest split along `--direction`'s axis for `pane resize`. Replaces `--amount`. |
 | `--id` | `-n` | random | UUID for a new tab. |
 | `--focused` | `-f` | - | Print only the focused item in `list` commands. |
+| `--reuse-existing-branch` | - | - | For `repo worktree-new`: check out `--branch` if it exists and no worktree has it, instead of refusing the name. `--base`, `--fetch`, and `--upstream` apply only when the branch is created. |
 | `--background` | - | - | Do not move the selection or focus; see Background Mode. |
 | `--surface` | `-s` | `$SUPACODE_SURFACE_ID` | Deprecated. Surface UUID for the deprecated `surface` commands. |
 | `--timeout` | - | app default | Seconds to wait for the app's response; `0` waits indefinitely. |

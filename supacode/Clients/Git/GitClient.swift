@@ -13,6 +13,7 @@ enum GitOperation: String {
   case gitCommonDir = "git_common_dir"
   case repoIsBare = "repo_is_bare"
   case branchNames = "branch_names"
+  case branchAvailability = "branch_availability"
   case branchNameValidation = "branch_name_validation"
   case branchRefs = "branch_refs"
   case defaultRemoteBranchRef = "default_remote_branch_ref"
@@ -499,6 +500,33 @@ struct GitClient {
       names.insert(String(refname.dropFirst(prefix.count)).lowercased())
     }
     return names
+  }
+
+  /// Classifies `branch` in one call: `%(worktreepath)` is empty unless a worktree has it checked out.
+  nonisolated func branchAvailability(_ branch: String, for repoRoot: URL) async throws -> GitBranchAvailability {
+    let output = try await runGit(
+      operation: .branchAvailability,
+      arguments: [
+        "-C",
+        repoRoot.path(percentEncoded: false),
+        "for-each-ref",
+        // `:` can't appear in a ref, and unlike a tab it survives `ShellClient` trimming the
+        // output, which would strip the separator off a line whose worktree path is empty.
+        "--format=%(refname):%(worktreepath)",
+        "refs/heads/\(branch)",
+      ]
+    )
+    return Self.parseBranchAvailability(output, branch: branch)
+  }
+
+  /// Matches the exact, case-sensitive ref, since the pattern also lists `refs/heads/<branch>/…`.
+  nonisolated static func parseBranchAvailability(_ output: String, branch: String) -> GitBranchAvailability {
+    let prefix = "refs/heads/\(branch):"
+    for line in output.split(whereSeparator: \.isNewline) where line.hasPrefix(prefix) {
+      let worktreePath = String(line.dropFirst(prefix.count))
+      return worktreePath.isEmpty ? .reusable : .checkedOut(worktreePath)
+    }
+    return .absent
   }
 
   // Failures (collision, invalid ref, missing source) surface as
