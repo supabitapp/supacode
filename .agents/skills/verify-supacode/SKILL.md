@@ -151,13 +151,13 @@ Teardown works in this order:
 1. Checks that the pid still runs this checkout's binary, then sends SIGTERM, and SIGKILL after 10 seconds.
 2. Kills each zmx session listed in this run's `ZMX_DIR` and waits for its `zmx attach` process to exit.
 3. Removes the socket.
-4. Restores the defaults domain from `defaults-before.plist`, or deletes the domain if it did not exist before. When another Supacode is running at that point, it leaves the domain alone and prints the backup path.
+4. Restores the defaults domain from `defaults-before.plist`, or deletes the domain if it did not exist before. Launch records which case applied in `defaults-before.status` (`present` or `absent`), and writes `defaults-before.plist` only for `present`. When another Supacode is running at that point, it leaves the domain alone and prints the backup path.
 5. Checks agent integration files against the launch snapshot, as described under Isolation.
 6. Deletes `/tmp/sv-<run>` and releases the lock.
 
 Teardown exits non-zero when it could not restore something. The stderr message names the file to review.
 
-It never kills by process name. The evidence dir stays. Run teardown after every failed attempt too. To confirm the restore, run `defaults export app.supabit.supacode - | diff - <(plutil -convert xml1 -o - $EVIDENCE/defaults-before.plist)`.
+It never kills by process name. The evidence dir stays. Run teardown after every failed attempt too. To confirm the restore when `defaults-before.status` is `present`, run `defaults export app.supabit.supacode - | diff - <(plutil -convert xml1 -o - $EVIDENCE/defaults-before.plist)`. When it is `absent`, `defaults read app.supabit.supacode` must print an empty dict. macOS can keep an empty domain listed after the delete, and that is harmless.
 
 ## Feature map
 
