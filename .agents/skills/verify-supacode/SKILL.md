@@ -20,7 +20,7 @@ A Debug build shares bundle id `app.supabit.supacode` with any installed release
 
 - `XDG_CONFIG_HOME` is pointed at a scratch dir, so `config.json`, `routes.json`, `repos.json`, and `agents.json` are private to the run.
 - `ZMX_DIR` is pointed at a scratch dir, so terminal sessions are private and teardown can kill them.
-- UserDefaults (sidebar order, layouts, onboarding flags) cannot be redirected. `HOME` overrides do not reach `FileManager.homeDirectoryForCurrentUser` or cfprefsd. The helper exports the domain to `defaults-before.plist` at launch and imports it back at teardown.
+- UserDefaults (sidebar order, layouts, onboarding flags) cannot be redirected. `HOME` overrides do not reach `FileManager.homeDirectoryForCurrentUser` or cfprefsd. The helper snapshots the domain at launch and restores it at teardown.
 - A fresh config dir triggers the legacy relocation migrator, which moves files out of `~/.supacode`. Launch refuses when `~/.supacode/{settings,sidebar,layouts}.json` or `ghostty.config` exists. The check uses the account home from `dscl`, the same home the app resolves, not `$HOME`.
 - On startup the app re-installs any agent integration it finds outdated (skills and hooks under `~/.claude`, `~/.codex`, `~/.gemini`, and the other agent config dirs). It writes the account's real home, and no setting turns this off. Launch copies every small file in those dirs that mentions Supacode to `agent-files-before/`. Teardown restores changed files under `skills/supacode*`. A changed shared config file (`settings.json`, `config.toml`, and so on) may also hold edits another tool made during the run, so teardown does not auto-restore it. Instead it writes the diff and a `cp` restore command to `agent-files-report.txt`, warns, and exits non-zero. It also reports new Supacode-bearing files. On a non-zero teardown, relay that report to the user.
 - Launch refuses when any `supacode.app/Contents/MacOS/supacode` process is running. That includes the user's own Supacode and another verify run. Only one verify run can exist per user, because the UserDefaults snapshot and restore would race. A lock at `/tmp/supacode-verify-<uid>.lock` enforces this, and teardown releases it. Never quit the user's app to make room. Report the refusal instead.
@@ -131,7 +131,7 @@ Artifacts go to `<repo>/.build/verify-supacode/<run>/`. The directory is gitigno
 - `$S shot <run> <name> [window]` writes `<name>.png`. It captures the main window by default, and any window id you pass must belong to the run's pid.
 - `cli.log` holds every CLI call with its output and exit code.
 - `app.log` holds app stdout and stderr. It is usually empty, because SupaLogger output is buffered.
-- `launch-repo-open.txt`, `defaults-before.plist`, `zmx-sessions-killed.txt`, and `worktrees-at-teardown.txt` are written by the helper.
+- `launch-repo-open.txt`, `defaults-before.status`, `defaults-before.plist` (only when the status is `present`), `zmx-sessions-killed.txt`, and `worktrees-at-teardown.txt` are written by the helper.
 
 These are the proof standards:
 
@@ -151,13 +151,13 @@ Teardown works in this order:
 1. Checks that the pid still runs this checkout's binary, then sends SIGTERM, and SIGKILL after 10 seconds.
 2. Kills each zmx session listed in this run's `ZMX_DIR` and waits for its `zmx attach` process to exit.
 3. Removes the socket.
-4. Restores the defaults domain from `defaults-before.plist`, or deletes the domain if it did not exist before. When another Supacode is running at that point, it leaves the domain alone and prints the backup path.
+4. Restores the defaults domain from `defaults-before.plist`, or deletes the domain if it did not exist before. Launch records which case applied in `defaults-before.status` (`present` or `absent`), and writes `defaults-before.plist` only for `present`. When another Supacode is running at that point, it skips the restore, leaves the domain alone, and prints the backup path. That path exists only when the status is `present`.
 5. Checks agent integration files against the launch snapshot, as described under Isolation.
 6. Deletes `/tmp/sv-<run>` and releases the lock.
 
 Teardown exits non-zero when it could not restore something. The stderr message names the file to review.
 
-It never kills by process name. The evidence dir stays. Run teardown after every failed attempt too. To confirm the restore, run `defaults export app.supabit.supacode - | diff - <(plutil -convert xml1 -o - $EVIDENCE/defaults-before.plist)`.
+It never kills by process name. The evidence dir stays. Run teardown after every failed attempt too. To confirm the restore when `defaults-before.status` is `present`, run `defaults export app.supabit.supacode - | diff - <(plutil -convert xml1 -o - $EVIDENCE/defaults-before.plist)`. When it is `absent`, `defaults read app.supabit.supacode` must either print an empty dict or report that the domain does not exist. Any other result means the restore failed. macOS can keep an empty domain listed after the delete, and that is harmless.
 
 ## Feature map
 
